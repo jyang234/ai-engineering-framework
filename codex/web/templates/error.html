@@ -1,0 +1,9 @@
+{{ template "base" . }}
+
+{{ define "content" }}
+<div class="error-page">
+    <h1>Error</h1>
+    <p class="error-message">{{ .error }}</p>
+    <a href="/" class="btn">Back to Home</a>
+</div>
+{{ end }}

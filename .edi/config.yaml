@@ -1,0 +1,14 @@
+# EDI Project Configuration
+version: "1"
+
+# Project information
+project:
+  name: ""  # Auto-detected from directory name if empty
+
+# Override global settings as needed
+# agent: coder
+# recall:
+#   enabled: true
+# briefing:
+#   include_history: true
+#   history_entries: 3

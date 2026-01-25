@@ -1,0 +1,43 @@
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test coverage
+coverage.out
+coverage.html
+
+# Dependencies
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Models (download separately)
+models/*.onnx
+models/*/
+
+# Local config
+.env
+.env.local
+
+# Database files
+*.db
+*.db-journal
+
+# Logs
+*.log
+
+# Docker
+qdrant_data/

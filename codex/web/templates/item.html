@@ -1,0 +1,30 @@
+{{ template "base" . }}
+
+{{ define "content" }}
+<div class="item-page">
+    <div class="item-header">
+        <span class="item-type {{ .item.Type }}">{{ .item.Type }}</span>
+        <h1>{{ .item.Title }}</h1>
+    </div>
+
+    <div class="item-meta">
+        <span>ID: {{ .item.ID }}</span>
+        <span>Scope: {{ .item.Scope }}</span>
+        <span>Created: {{ .item.CreatedAt }}</span>
+    </div>
+
+    {{ if .item.Tags }}
+    <div class="item-tags">
+        {{ range .item.Tags }}<span class="tag">{{ . }}</span>{{ end }}
+    </div>
+    {{ end }}
+
+    <div class="item-content">
+        <pre>{{ .item.Content }}</pre>
+    </div>
+
+    <div class="item-actions">
+        <a href="/search" class="btn">Back to Search</a>
+    </div>
+</div>
+{{ end }}

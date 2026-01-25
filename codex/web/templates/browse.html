@@ -1,0 +1,30 @@
+{{ template "base" . }}
+
+{{ define "content" }}
+<div class="browse-page">
+    <h1>Browse Knowledge</h1>
+
+    <div class="filters">
+        <label>Type:</label>
+        <select name="type">
+            <option value="">All</option>
+            <option value="pattern" {{ if eq .type "pattern" }}selected{{ end }}>Patterns</option>
+            <option value="decision" {{ if eq .type "decision" }}selected{{ end }}>Decisions</option>
+            <option value="failure" {{ if eq .type "failure" }}selected{{ end }}>Failures</option>
+            <option value="code" {{ if eq .type "code" }}selected{{ end }}>Code</option>
+            <option value="doc" {{ if eq .type "doc" }}selected{{ end }}>Documentation</option>
+        </select>
+
+        <label>Scope:</label>
+        <select name="scope">
+            <option value="">All</option>
+            <option value="global" {{ if eq .scope "global" }}selected{{ end }}>Global</option>
+            <option value="project" {{ if eq .scope "project" }}selected{{ end }}>Project</option>
+        </select>
+    </div>
+
+    <div class="browse-list">
+        <p class="placeholder">Browse functionality coming soon...</p>
+    </div>
+</div>
+{{ end }}

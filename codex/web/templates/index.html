@@ -1,0 +1,35 @@
+{{ template "base" . }}
+
+{{ define "content" }}
+<div class="hero">
+    <h1>Codex Knowledge Base</h1>
+    <p>Search patterns, decisions, failures, and code across your organization.</p>
+
+    <form action="/search" method="get" class="search-form">
+        <input type="text" name="q" placeholder="Search knowledge..." autofocus>
+        <button type="submit">Search</button>
+    </form>
+</div>
+
+<div class="quick-links">
+    <h2>Browse by Type</h2>
+    <div class="type-grid">
+        <a href="/browse?type=pattern" class="type-card">
+            <h3>Patterns</h3>
+            <p>Reusable solutions and best practices</p>
+        </a>
+        <a href="/browse?type=decision" class="type-card">
+            <h3>Decisions</h3>
+            <p>Architecture Decision Records</p>
+        </a>
+        <a href="/browse?type=failure" class="type-card">
+            <h3>Failures</h3>
+            <p>Documented issues and fixes</p>
+        </a>
+        <a href="/browse?type=code" class="type-card">
+            <h3>Code</h3>
+            <p>Indexed code snippets</p>
+        </a>
+    </div>
+</div>
+{{ end }}

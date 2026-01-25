@@ -1,0 +1,39 @@
+{{ template "base" . }}
+
+{{ define "content" }}
+<div class="search-page">
+    <form action="/search" method="get" class="search-form">
+        <input type="text" name="q" value="{{ .query }}" placeholder="Search knowledge...">
+        <button type="submit">Search</button>
+    </form>
+
+    {{ if .query }}
+    <div class="results-header">
+        <h2>Results for "{{ .query }}"</h2>
+        <p>Found {{ .count }} items</p>
+    </div>
+
+    <div class="results-list">
+        {{ range .results }}
+        <div class="result-item">
+            <div class="result-header">
+                <span class="result-type {{ .Type }}">{{ .Type }}</span>
+                <a href="/item/{{ .ID }}" class="result-title">{{ .Title }}</a>
+            </div>
+            <p class="result-content">{{ .Content | truncate 200 }}</p>
+            <div class="result-meta">
+                <span class="score">Score: {{ printf "%.2f" .Score }}</span>
+                {{ if .Tags }}
+                <span class="tags">
+                    {{ range .Tags }}<span class="tag">{{ . }}</span>{{ end }}
+                </span>
+                {{ end }}
+            </div>
+        </div>
+        {{ else }}
+        <p class="no-results">No results found.</p>
+        {{ end }}
+    </div>
+    {{ end }}
+</div>
+{{ end }}
