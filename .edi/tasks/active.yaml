@@ -1,0 +1,18 @@
+version: 1
+last_sync: 2026-01-25T19:53:08.864148-05:00
+last_session_id: a01c1764-7a7d-4104-9de1-47e153354cd4
+tasks:
+    - id: "11"
+      subject: Integration testing and EDI integration
+      description: |-
+        Final integration:
+        - Write integration tests for full pipeline
+        - Update EDI to optionally use Codex v1 MCP server
+        - Update edi/internal/cli/recall_server.go to launch codex MCP
+        - Test end-to-end: edi → codex MCP → Claude Code
+        - Document environment variables and setup steps
+        - Verify latency < 500ms for typical queries
+      active_form: Integration testing
+      status: pending
+      created_at: 2026-01-25T12:42:33.518796965-05:00
+      updated_at: 2026-01-25T12:42:33.518796965-05:00

@@ -221,3 +221,87 @@ func (s *MetadataStore) GetFlightRecorderEntries(sessionID string) ([]*FlightRec
 
 	return entries, nil
 }
+
+// ListItems retrieves items with optional filters and pagination
+func (s *MetadataStore) ListItems(itemType, scope string, limit, offset int) ([]*ItemRecord, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+
+	query := "SELECT id, type, title, content, tags, scope, source, metadata, created_at, updated_at FROM items WHERE 1=1"
+	args := []interface{}{}
+
+	if itemType != "" {
+		query += " AND type = ?"
+		args = append(args, itemType)
+	}
+
+	if scope != "" {
+		query += " AND scope = ?"
+		args = append(args, scope)
+	}
+
+	query += " ORDER BY updated_at DESC LIMIT ? OFFSET ?"
+	args = append(args, limit, offset)
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []*ItemRecord
+	for rows.Next() {
+		var item ItemRecord
+		var tagsJSON, metaJSON string
+
+		err := rows.Scan(&item.ID, &item.Type, &item.Title, &item.Content, &tagsJSON, &item.Scope, &item.Source, &metaJSON, &item.CreatedAt, &item.UpdatedAt)
+		if err != nil {
+			return nil, err
+		}
+
+		json.Unmarshal([]byte(tagsJSON), &item.Tags)
+		json.Unmarshal([]byte(metaJSON), &item.Metadata)
+		items = append(items, &item)
+	}
+
+	return items, nil
+}
+
+// DeleteItem removes an item from the metadata store
+func (s *MetadataStore) DeleteItem(id string) error {
+	_, err := s.db.Exec("DELETE FROM items WHERE id = ?", id)
+	return err
+}
+
+// CountItems returns count of items, optionally filtered by type
+func (s *MetadataStore) CountItems(itemType string) (int, error) {
+	var count int
+	var err error
+	if itemType == "" {
+		err = s.db.QueryRow("SELECT COUNT(*) FROM items").Scan(&count)
+	} else {
+		err = s.db.QueryRow("SELECT COUNT(*) FROM items WHERE type = ?", itemType).Scan(&count)
+	}
+	return count, err
+}
+
+// CountItemsByType returns counts grouped by type
+func (s *MetadataStore) CountItemsByType() (map[string]int, error) {
+	rows, err := s.db.Query("SELECT type, COUNT(*) FROM items GROUP BY type")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	counts := make(map[string]int)
+	for rows.Next() {
+		var itemType string
+		var count int
+		if err := rows.Scan(&itemType, &count); err != nil {
+			return nil, err
+		}
+		counts[itemType] = count
+	}
+	return counts, nil
+}

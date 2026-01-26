@@ -1,4 +1,4 @@
-module github.com/user/edi
+module github.com/anthropics/aef/edi
 
 go 1.22
 

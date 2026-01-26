@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
-	"github.com/user/edi/internal/recall"
+	"github.com/anthropics/aef/edi/internal/recall"
 )
 
 var recallCmd = &cobra.Command{

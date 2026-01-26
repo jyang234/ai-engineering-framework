@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/user/edi/internal/config"
+	"github.com/anthropics/aef/edi/internal/config"
 )
 
 // SessionSummary holds summarized info about a recent session

@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/anthropics/aef/codex/internal/embedding"
 	"github.com/anthropics/aef/codex/internal/reranking"
@@ -12,11 +13,43 @@ import (
 // SearchEngine orchestrates search and indexing operations
 type SearchEngine struct {
 	config   Config
-	qdrant   *storage.QdrantStorage
-	metadata *storage.MetadataStore
-	voyage   *embedding.VoyageClient
-	openai   *embedding.OpenAIClient
-	reranker *reranking.Reranker
+	qdrant   vectorStore
+	metadata metadataStore
+	voyage   codeEmbedder
+	openai   docEmbedder
+	reranker rerankerInterface
+}
+
+// Internal interfaces for testability
+type vectorStore interface {
+	Upsert(ctx context.Context, item interface{}, vector []float32) error
+	HybridSearch(ctx context.Context, params storage.SearchParams) ([]storage.SearchCandidate, error)
+	Delete(ctx context.Context, id string) error
+}
+
+type metadataStore interface {
+	SaveItem(item *storage.ItemRecord) error
+	GetItem(id string) (*storage.ItemRecord, error)
+	ListItems(itemType, scope string, limit, offset int) ([]*storage.ItemRecord, error)
+	DeleteItem(id string) error
+	CountItemsByType() (map[string]int, error)
+	RecordFeedback(feedback *storage.FeedbackRecord) error
+	LogFlightRecorder(entry *storage.FlightRecorderRecord) error
+	Close() error
+}
+
+type codeEmbedder interface {
+	EmbedCode(ctx context.Context, texts []string) ([]float32, error)
+	EmbedCodeQuery(ctx context.Context, query string) ([]float32, error)
+}
+
+type docEmbedder interface {
+	EmbedDocuments(ctx context.Context, texts []string) ([][]float32, error)
+}
+
+type rerankerInterface interface {
+	Rerank(query string, docs []reranking.Document, topK int) ([]reranking.RerankResult, error)
+	Close()
 }
 
 // NewSearchEngine creates a new search engine instance
@@ -186,6 +219,115 @@ func (e *SearchEngine) RecordFeedback(feedback *Feedback) error {
 // LogFlightRecorder logs an entry to the flight recorder
 func (e *SearchEngine) LogFlightRecorder(entry *FlightRecorderEntry) error {
 	return e.metadata.LogFlightRecorder(entryToRecord(entry))
+}
+
+// Index indexes content through the appropriate pipeline (code, doc, or manual)
+func (e *SearchEngine) Index(ctx context.Context, req IndexRequest) (*IndexResult, error) {
+	indexer, err := NewIndexer(e)
+	if err != nil {
+		return nil, err
+	}
+	defer indexer.Close()
+
+	return indexer.IndexFile(ctx, req)
+}
+
+// IndexDirectory indexes all files in a directory
+func (e *SearchEngine) IndexDirectory(ctx context.Context, dirPath string, scope string) ([]IndexResult, error) {
+	indexer, err := NewIndexer(e)
+	if err != nil {
+		return nil, err
+	}
+	defer indexer.Close()
+
+	return indexer.IndexDirectory(ctx, dirPath, scope)
+}
+
+// NewIndexer creates an indexer for this engine (for advanced use cases)
+func (e *SearchEngine) NewIndexer() (*Indexer, error) {
+	return NewIndexer(e)
+}
+
+// MigrateFromV0 migrates items from a RECALL v0 SQLite database to this engine
+func (e *SearchEngine) MigrateFromV0(ctx context.Context, v0DBPath string) (*MigrationStats, error) {
+	return MigrateV0ToV1(ctx, v0DBPath, e)
+}
+
+// MigrateFromV0WithProgress migrates with progress callback
+func (e *SearchEngine) MigrateFromV0WithProgress(ctx context.Context, v0DBPath string, progress MigrationProgressCallback) (*MigrationStats, error) {
+	return MigrateV0ToV1WithProgress(ctx, v0DBPath, e, progress)
+}
+
+// List retrieves items with filters and pagination
+func (e *SearchEngine) List(ctx context.Context, itemType, scope string, limit, offset int) ([]Item, error) {
+	records, err := e.metadata.ListItems(itemType, scope, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]Item, len(records))
+	for i, r := range records {
+		items[i] = *itemFromRecord(r)
+	}
+
+	return items, nil
+}
+
+// Update updates an existing item
+func (e *SearchEngine) Update(ctx context.Context, item *Item) error {
+	// Verify item exists
+	_, err := e.metadata.GetItem(item.ID)
+	if err != nil {
+		return fmt.Errorf("item not found: %w", err)
+	}
+
+	// Update timestamp
+	item.UpdatedAt = time.Now()
+
+	// Regenerate embedding
+	var vec []float32
+	if item.Type == "pattern" || item.Type == "failure" || item.Type == "code" {
+		vec, err = e.voyage.EmbedCode(ctx, []string{item.Content})
+		if err != nil {
+			return fmt.Errorf("failed to embed code content: %w", err)
+		}
+	} else {
+		vecs, embedErr := e.openai.EmbedDocuments(ctx, []string{item.Content})
+		if embedErr != nil {
+			return fmt.Errorf("failed to embed document content: %w", embedErr)
+		}
+		vec = vecs[0]
+	}
+
+	// Update in Qdrant
+	if err := e.qdrant.Upsert(ctx, item, vec); err != nil {
+		return fmt.Errorf("failed to update in Qdrant: %w", err)
+	}
+
+	// Update metadata
+	if err := e.metadata.SaveItem(itemToRecord(item)); err != nil {
+		return fmt.Errorf("failed to update metadata: %w", err)
+	}
+
+	return nil
+}
+
+// Delete removes an item from both Qdrant and metadata store
+func (e *SearchEngine) Delete(ctx context.Context, id string) error {
+	// Delete from Qdrant (may fail if not implemented, continue anyway)
+	_ = e.qdrant.Delete(ctx, id)
+
+	// Delete from metadata store
+	if err := e.metadata.DeleteItem(id); err != nil {
+		return fmt.Errorf("failed to delete from metadata: %w", err)
+	}
+
+	return nil
+}
+
+// Stats returns item statistics
+func (e *SearchEngine) Stats(ctx context.Context) (map[string]int, error) {
+	return e.metadata.CountItemsByType()
 }
 
 // Helper functions

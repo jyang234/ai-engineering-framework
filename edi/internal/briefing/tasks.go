@@ -1,9 +1,9 @@
 package briefing
 
 import (
-	"encoding/json"
 	"os"
-	"path/filepath"
+
+	"github.com/anthropics/aef/edi/internal/tasks"
 )
 
 // TaskStatus represents the status of tasks
@@ -26,49 +26,41 @@ type TaskItem struct {
 }
 
 func loadTaskStatus(projectPath string) (*TaskStatus, error) {
-	home, _ := os.UserHomeDir()
-	tasksDir := filepath.Join(home, ".claude", "tasks")
-
 	status := &TaskStatus{}
 
-	// Find task list directories
-	entries, err := os.ReadDir(tasksDir)
-	if err != nil {
-		return status, nil // No tasks is fine
+	// Check if this is an EDI project
+	ediDir := projectPath + "/.edi"
+	if _, err := os.Stat(ediDir); os.IsNotExist(err) {
+		return status, nil // Not an EDI project
 	}
 
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
+	// Load tasks from manifest
+	manifest, err := tasks.LoadManifest(projectPath)
+	if err != nil {
+		return status, nil // Error loading manifest, return empty status
+	}
+
+	for _, task := range manifest.Tasks {
+		status.Total++
+
+		item := TaskItem{
+			ID:          task.ID,
+			Description: task.Subject,
+			Status:      task.Status,
+			Blocks:      task.Blocks,
+			BlockedBy:   task.BlockedBy,
 		}
 
-		sessionDir := filepath.Join(tasksDir, entry.Name())
-		taskFiles, _ := os.ReadDir(sessionDir)
-
-		for _, tf := range taskFiles {
-			if filepath.Ext(tf.Name()) != ".json" {
-				continue
-			}
-
-			taskPath := filepath.Join(sessionDir, tf.Name())
-			task, err := loadTask(taskPath)
-			if err != nil {
-				continue
-			}
-
-			status.Total++
-
-			switch task.Status {
-			case "completed", "done":
-				status.Completed++
-			case "in_progress", "active":
-				status.InProgress++
-				status.InProgressItems = append(status.InProgressItems, task)
-			default:
-				status.Pending++
-				if len(task.BlockedBy) == 0 {
-					status.ReadyItems = append(status.ReadyItems, task)
-				}
+		switch task.Status {
+		case "completed", "done":
+			status.Completed++
+		case "in_progress", "active":
+			status.InProgress++
+			status.InProgressItems = append(status.InProgressItems, item)
+		default:
+			status.Pending++
+			if len(task.BlockedBy) == 0 {
+				status.ReadyItems = append(status.ReadyItems, item)
 			}
 		}
 	}
@@ -76,16 +68,3 @@ func loadTaskStatus(projectPath string) (*TaskStatus, error) {
 	return status, nil
 }
 
-func loadTask(path string) (TaskItem, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return TaskItem{}, err
-	}
-
-	var task TaskItem
-	if err := json.Unmarshal(data, &task); err != nil {
-		return TaskItem{}, err
-	}
-
-	return task, nil
-}

@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/user/edi/internal/cli"
+	"github.com/anthropics/aef/edi/internal/cli"
 )
 
 var version = "dev"

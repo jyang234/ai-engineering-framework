@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/user/edi/internal/agents"
+	"github.com/anthropics/aef/edi/internal/agents"
 )
 
 var agentCmd = &cobra.Command{

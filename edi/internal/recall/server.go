@@ -340,7 +340,17 @@ func (s *Server) handleCallTool(req *MCPRequest) *MCPResponse {
 		}
 	}
 
-	resultJSON, _ := json.Marshal(result)
+	resultJSON, err := json.Marshal(result)
+	if err != nil {
+		return &MCPResponse{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Result: CallToolResult{
+				Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error marshaling result: %v", err)}},
+				IsError: true,
+			},
+		}
+	}
 	return &MCPResponse{
 		JSONRPC: "2.0",
 		ID:      req.ID,

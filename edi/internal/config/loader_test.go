@@ -7,6 +7,8 @@ import (
 )
 
 func TestDefaultConfig(t *testing.T) {
+	t.Parallel()
+
 	cfg := DefaultConfig()
 
 	if cfg.Version != "1" {
@@ -31,11 +33,8 @@ func TestDefaultConfig(t *testing.T) {
 }
 
 func TestWriteDefault(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "config-test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(tmpDir)
+	t.Parallel()
+	tmpDir := t.TempDir()
 
 	path := filepath.Join(tmpDir, "config.yaml")
 	if err := WriteDefault(path); err != nil {
@@ -60,11 +59,8 @@ func TestWriteDefault(t *testing.T) {
 }
 
 func TestWriteProjectDefault(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "config-test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(tmpDir)
+	t.Parallel()
+	tmpDir := t.TempDir()
 
 	path := filepath.Join(tmpDir, "config.yaml")
 	if err := WriteProjectDefault(path); err != nil {

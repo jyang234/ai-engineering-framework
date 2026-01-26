@@ -7,6 +7,8 @@ import (
 )
 
 func TestParseAgentFile(t *testing.T) {
+	t.Parallel()
+
 	content := []byte(`---
 name: test-agent
 description: A test agent
@@ -54,6 +56,8 @@ This is the system prompt content.
 }
 
 func TestParseAgentFileNoFrontmatter(t *testing.T) {
+	t.Parallel()
+
 	content := []byte(`# Test Agent
 
 This is just a system prompt without frontmatter.
@@ -76,11 +80,8 @@ This is just a system prompt without frontmatter.
 }
 
 func TestLoadAgentFile(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "agent-test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(tmpDir)
+	t.Parallel()
+	tmpDir := t.TempDir()
 
 	agentContent := `---
 name: coder

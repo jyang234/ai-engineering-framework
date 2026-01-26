@@ -2,19 +2,14 @@ package recall
 
 import (
 	"encoding/json"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
 )
 
 func TestStorage(t *testing.T) {
-	// Create temp database
-	tmpDir, err := os.MkdirTemp("", "recall-test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(tmpDir)
+	t.Parallel()
+	tmpDir := t.TempDir()
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	storage, err := NewStorage(dbPath)
@@ -84,6 +79,8 @@ func TestStorage(t *testing.T) {
 }
 
 func TestMCPProtocol(t *testing.T) {
+	t.Parallel()
+
 	// Test MCP message parsing
 	initMsg := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}`
 

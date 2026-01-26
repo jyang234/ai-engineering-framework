@@ -24,7 +24,10 @@ func SaveHistory(projectPath string, entry *HistoryEntry) error {
 	path := filepath.Join(historyDir, filename)
 
 	// Write frontmatter + body
-	content := formatHistoryEntry(entry)
+	content, err := formatHistoryEntry(entry)
+	if err != nil {
+		return fmt.Errorf("failed to format history entry: %w", err)
+	}
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		return fmt.Errorf("failed to write history file: %w", err)
 	}
@@ -32,7 +35,7 @@ func SaveHistory(projectPath string, entry *HistoryEntry) error {
 	return nil
 }
 
-func formatHistoryEntry(entry *HistoryEntry) string {
+func formatHistoryEntry(entry *HistoryEntry) (string, error) {
 	// Build frontmatter
 	frontmatter := struct {
 		SessionID         string    `yaml:"session_id"`
@@ -50,9 +53,12 @@ func formatHistoryEntry(entry *HistoryEntry) string {
 		DecisionsCaptured: entry.DecisionsCaptured,
 	}
 
-	frontmatterYAML, _ := yaml.Marshal(frontmatter)
+	frontmatterYAML, err := yaml.Marshal(frontmatter)
+	if err != nil {
+		return "", fmt.Errorf("marshal frontmatter: %w", err)
+	}
 
-	return fmt.Sprintf("---\n%s---\n\n%s", string(frontmatterYAML), entry.Summary)
+	return fmt.Sprintf("---\n%s---\n\n%s", string(frontmatterYAML), entry.Summary), nil
 }
 
 // FlightRecorderFile manages flight recorder JSONL output

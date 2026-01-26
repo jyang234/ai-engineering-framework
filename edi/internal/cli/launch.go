@@ -7,9 +7,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
-	"github.com/user/edi/internal/briefing"
-	"github.com/user/edi/internal/config"
-	"github.com/user/edi/internal/launch"
+	"github.com/anthropics/aef/edi/internal/briefing"
+	"github.com/anthropics/aef/edi/internal/config"
+	"github.com/anthropics/aef/edi/internal/launch"
+	"github.com/anthropics/aef/edi/internal/tasks"
 )
 
 func runLaunch(cmd *cobra.Command, args []string) error {
@@ -19,8 +20,19 @@ func runLaunch(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	// Generate session ID
-	sessionID := uuid.New().String()
+	// Get project path
+	cwd, _ := os.Getwd()
+
+	// Sync tasks and get session ID
+	sessionID, err := tasks.SyncOnLaunch(cwd)
+	if err != nil {
+		if verbose {
+			fmt.Fprintf(os.Stderr, "Warning: task sync failed: %v\n", err)
+		}
+	}
+	if sessionID == "" {
+		sessionID = uuid.New().String()
+	}
 
 	// Install slash commands to .claude/commands/
 	if err := launch.InstallCommands(); err != nil {
@@ -38,7 +50,6 @@ func runLaunch(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get project name for briefing
-	cwd, _ := os.Getwd()
 	projectName := filepath.Base(cwd)
 	if cfg.Project.Name != "" {
 		projectName = cfg.Project.Name
@@ -48,8 +59,15 @@ func runLaunch(cmd *cobra.Command, args []string) error {
 	if brief != nil {
 		home, _ := os.UserHomeDir()
 		briefingPath := filepath.Join(home, ".edi", "cache", "current-briefing.md")
-		os.MkdirAll(filepath.Dir(briefingPath), 0755)
-		os.WriteFile(briefingPath, []byte(brief.Render(projectName)), 0644)
+		if err := os.MkdirAll(filepath.Dir(briefingPath), 0755); err != nil {
+			if verbose {
+				fmt.Fprintf(os.Stderr, "Warning: failed to create briefing cache directory: %v\n", err)
+			}
+		} else if err := os.WriteFile(briefingPath, []byte(brief.Render(projectName)), 0644); err != nil {
+			if verbose {
+				fmt.Fprintf(os.Stderr, "Warning: failed to write briefing file: %v\n", err)
+			}
+		}
 	}
 
 	// Build session context

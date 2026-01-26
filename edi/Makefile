@@ -1,4 +1,4 @@
-.PHONY: build test install clean build-all lint fmt
+.PHONY: build test test-integration test-all install clean build-all lint fmt
 
 VERSION := 0.1.0
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
@@ -11,10 +11,20 @@ all: build
 # Build for current platform
 build:
 	go build $(CGO_TAGS) $(LDFLAGS) -o bin/$(BINARY) ./cmd/edi
+	go build $(CGO_TAGS) -o bin/task-sync-hook ./cmd/task-sync-hook
 
 # Run tests
 test:
 	go test $(CGO_TAGS) -v ./...
+
+# Run integration tests only
+test-integration: build
+	go test -tags "fts5 integration" -v ./internal/recall ./internal/integration
+
+# Run all tests including integration
+test-all: build
+	go test $(CGO_TAGS) -v ./...
+	go test -tags "fts5 integration" -v ./internal/recall ./internal/integration
 
 # Run tests with coverage
 test-coverage:
@@ -25,6 +35,8 @@ test-coverage:
 install: build
 	mkdir -p ~/.local/bin
 	cp bin/$(BINARY) ~/.local/bin/
+	mkdir -p ~/.edi/bin
+	cp bin/task-sync-hook ~/.edi/bin/
 
 # Install globally (requires sudo)
 install-global: build
@@ -68,11 +80,13 @@ dev:
 # Help
 help:
 	@echo "Available targets:"
-	@echo "  build       - Build for current platform"
-	@echo "  build-all   - Build for all supported platforms"
-	@echo "  test        - Run tests"
-	@echo "  install     - Install to ~/.local/bin"
-	@echo "  clean       - Remove build artifacts"
-	@echo "  lint        - Run linter"
-	@echo "  fmt         - Format code"
-	@echo "  tidy        - Tidy dependencies"
+	@echo "  build            - Build for current platform"
+	@echo "  build-all        - Build for all supported platforms"
+	@echo "  test             - Run unit tests"
+	@echo "  test-integration - Run integration tests only"
+	@echo "  test-all         - Run all tests (unit + integration)"
+	@echo "  install          - Install to ~/.local/bin"
+	@echo "  clean            - Remove build artifacts"
+	@echo "  lint             - Run linter"
+	@echo "  fmt              - Format code"
+	@echo "  tidy             - Tidy dependencies"

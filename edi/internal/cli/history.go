@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/user/edi/internal/briefing"
+	"github.com/anthropics/aef/edi/internal/briefing"
 )
 
 var historyCmd = &cobra.Command{

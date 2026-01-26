@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/user/edi/internal/agents"
-	"github.com/user/edi/internal/briefing"
-	"github.com/user/edi/internal/config"
+	"github.com/anthropics/aef/edi/internal/agents"
+	"github.com/anthropics/aef/edi/internal/briefing"
+	"github.com/anthropics/aef/edi/internal/config"
 )
 
 // BuildContext generates the session context file and returns its path

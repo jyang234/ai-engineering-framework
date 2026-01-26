@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -132,14 +133,24 @@ func (s *Storage) Search(query string, types []string, scope string, limit int) 
 		}
 
 		if tagsJSON.Valid {
-			json.Unmarshal([]byte(tagsJSON.String), &item.Tags)
+			if err := json.Unmarshal([]byte(tagsJSON.String), &item.Tags); err != nil {
+				log.Printf("warning: failed to parse tags for item %s: %v", item.ID, err)
+			}
 		}
 		if projectPath.Valid {
 			item.ProjectPath = projectPath.String
 		}
 
-		item.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
-		item.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
+		if t, err := time.Parse(time.RFC3339, createdAt); err != nil {
+			log.Printf("warning: failed to parse created_at for item %s: %v", item.ID, err)
+		} else {
+			item.CreatedAt = t
+		}
+		if t, err := time.Parse(time.RFC3339, updatedAt); err != nil {
+			log.Printf("warning: failed to parse updated_at for item %s: %v", item.ID, err)
+		} else {
+			item.UpdatedAt = t
+		}
 
 		items = append(items, item)
 	}
@@ -149,9 +160,12 @@ func (s *Storage) Search(query string, types []string, scope string, limit int) 
 
 // Add adds a new item to the knowledge base
 func (s *Storage) Add(item *Item) error {
-	tagsJSON, _ := json.Marshal(item.Tags)
+	tagsJSON, err := json.Marshal(item.Tags)
+	if err != nil {
+		return fmt.Errorf("marshal tags: %w", err)
+	}
 
-	_, err := s.db.Exec(`
+	_, err = s.db.Exec(`
 		INSERT INTO items (id, type, title, content, tags, scope, project_path, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
@@ -188,14 +202,24 @@ func (s *Storage) Get(id string) (*Item, error) {
 	}
 
 	if tagsJSON.Valid {
-		json.Unmarshal([]byte(tagsJSON.String), &item.Tags)
+		if err := json.Unmarshal([]byte(tagsJSON.String), &item.Tags); err != nil {
+			log.Printf("warning: failed to parse tags for item %s: %v", item.ID, err)
+		}
 	}
 	if projectPath.Valid {
 		item.ProjectPath = projectPath.String
 	}
 
-	item.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
-	item.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
+	if t, err := time.Parse(time.RFC3339, createdAt); err != nil {
+		log.Printf("warning: failed to parse created_at for item %s: %v", item.ID, err)
+	} else {
+		item.CreatedAt = t
+	}
+	if t, err := time.Parse(time.RFC3339, updatedAt); err != nil {
+		log.Printf("warning: failed to parse updated_at for item %s: %v", item.ID, err)
+	} else {
+		item.UpdatedAt = t
+	}
 
 	return &item, nil
 }
@@ -226,9 +250,12 @@ func (s *Storage) RecordFeedback(itemID, sessionID string, useful bool, context 
 
 // LogFlightRecorder logs an entry to the flight recorder
 func (s *Storage) LogFlightRecorder(entry *FlightRecorderEntry) error {
-	metadataJSON, _ := json.Marshal(entry.Metadata)
+	metadataJSON, err := json.Marshal(entry.Metadata)
+	if err != nil {
+		return fmt.Errorf("marshal metadata: %w", err)
+	}
 
-	_, err := s.db.Exec(`
+	_, err = s.db.Exec(`
 		INSERT INTO flight_recorder (session_id, timestamp, type, content, rationale, metadata)
 		VALUES (?, ?, ?, ?, ?, ?)
 	`,
@@ -271,12 +298,18 @@ func (s *Storage) GetFlightRecorderEntries(sessionID string) ([]FlightRecorderEn
 			return nil, err
 		}
 
-		entry.Timestamp, _ = time.Parse(time.RFC3339, timestamp)
+		if t, err := time.Parse(time.RFC3339, timestamp); err != nil {
+			log.Printf("warning: failed to parse timestamp for flight recorder entry %d: %v", entry.ID, err)
+		} else {
+			entry.Timestamp = t
+		}
 		if rationale.Valid {
 			entry.Rationale = rationale.String
 		}
 		if metadataJSON.Valid {
-			json.Unmarshal([]byte(metadataJSON.String), &entry.Metadata)
+			if err := json.Unmarshal([]byte(metadataJSON.String), &entry.Metadata); err != nil {
+				log.Printf("warning: failed to parse metadata for flight recorder entry %d: %v", entry.ID, err)
+			}
 		}
 
 		entries = append(entries, entry)

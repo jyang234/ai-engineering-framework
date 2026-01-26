@@ -3,34 +3,43 @@ package briefing
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/user/edi/internal/config"
+	"github.com/anthropics/aef/edi/internal/config"
 )
 
 func TestGenerate(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "briefing-test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(tmpDir)
+	// Note: Cannot use t.Parallel() because Generate() uses os.Getwd()
+	tmpDir := t.TempDir()
 
 	// Create .edi directory structure
 	ediDir := filepath.Join(tmpDir, ".edi")
-	os.MkdirAll(ediDir, 0755)
-	os.MkdirAll(filepath.Join(ediDir, "history"), 0755)
+	if err := os.MkdirAll(ediDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(ediDir, "history"), 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Create a profile
 	profile := `# Test Project
 
 A test project for unit testing.
 `
-	os.WriteFile(filepath.Join(ediDir, "profile.md"), []byte(profile), 0644)
+	if err := os.WriteFile(filepath.Join(ediDir, "profile.md"), []byte(profile), 0644); err != nil {
+		t.Fatal(err)
+	}
 
-	// Change to temp directory
-	originalDir, _ := os.Getwd()
-	os.Chdir(tmpDir)
+	// Change to temp directory - required because Generate() uses os.Getwd()
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
 	defer os.Chdir(originalDir)
 
 	cfg := config.DefaultConfig()
@@ -39,26 +48,31 @@ A test project for unit testing.
 		t.Fatalf("Generate failed: %v", err)
 	}
 
-	if brief == "" {
+	if brief == nil {
+		t.Fatal("Expected non-nil briefing")
+	}
+
+	// Render the briefing
+	rendered := brief.Render("test-project")
+	if rendered == "" {
 		t.Error("Expected non-empty briefing")
 	}
 
 	// Should include profile content
-	if !containsSubstring(brief, "Project Context") {
+	if !strings.Contains(rendered, "Project Context") {
 		t.Error("Expected briefing to include profile section")
 	}
 }
 
 func TestLoadRecentHistory(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "history-test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(tmpDir)
+	t.Parallel()
+	tmpDir := t.TempDir()
 
 	// Create history directory
 	historyDir := filepath.Join(tmpDir, ".edi", "history")
-	os.MkdirAll(historyDir, 0755)
+	if err := os.MkdirAll(historyDir, 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Create a history entry
 	historyContent := `---
@@ -75,7 +89,9 @@ agent: coder
 - Fixed bug Y
 `
 	historyFile := filepath.Join(historyDir, "2026-01-25-test-ses.md")
-	os.WriteFile(historyFile, []byte(historyContent), 0644)
+	if err := os.WriteFile(historyFile, []byte(historyContent), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	entries, err := LoadRecentHistory(tmpDir, 10)
 	if err != nil {
@@ -94,11 +110,8 @@ agent: coder
 }
 
 func TestSaveHistory(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "history-test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(tmpDir)
+	t.Parallel()
+	tmpDir := t.TempDir()
 
 	entry := &HistoryEntry{
 		SessionID: "save-test-12345678",
@@ -122,8 +135,4 @@ func TestSaveHistory(t *testing.T) {
 	if len(entries) != 1 {
 		t.Errorf("Expected 1 history file, got %d", len(entries))
 	}
-}
-
-func containsSubstring(s, substr string) bool {
-	return len(s) > 0 && len(substr) > 0 && (s == substr || len(s) > len(substr) && (s[:len(substr)] == substr || containsSubstring(s[1:], substr)))
 }

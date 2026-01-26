@@ -14,6 +14,8 @@ tools:
   - flight_recorder_log
 skills:
   - edi-core
+  - coding
+  - testing
 ---
 
 # Coder Agent

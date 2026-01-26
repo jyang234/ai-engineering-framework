@@ -1,6 +1,8 @@
 package web
 
 import (
+	"html/template"
+
 	"github.com/gin-gonic/gin"
 
 	"github.com/anthropics/aef/codex/internal/core"
@@ -20,6 +22,22 @@ func NewServer(engine *core.SearchEngine) *Server {
 		engine: engine,
 		router: router,
 	}
+
+	// Set up template functions
+	router.SetFuncMap(template.FuncMap{
+		"truncate": func(s string, length int) string {
+			if len(s) <= length {
+				return s
+			}
+			return s[:length] + "..."
+		},
+		"slice": func(s string, start, end int) string {
+			if len(s) <= end {
+				return s
+			}
+			return s[start:end]
+		},
+	})
 
 	// Load templates
 	router.LoadHTMLGlob("web/templates/*")

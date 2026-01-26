@@ -6,7 +6,7 @@ import (
 	"os/exec"
 
 	"github.com/spf13/cobra"
-	"github.com/user/edi/internal/config"
+	"github.com/anthropics/aef/edi/internal/config"
 	"gopkg.in/yaml.v3"
 )
 
