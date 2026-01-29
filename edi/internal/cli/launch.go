@@ -70,6 +70,20 @@ func runLaunch(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Validate backend requirements (e.g., Codex needs binary and APIs)
+	if err := launch.ValidateCodexRequirements(cfg); err != nil {
+		return fmt.Errorf("backend validation failed: %w", err)
+	}
+
+	// Update MCP configuration for RECALL server
+	if cfg.Recall.Enabled {
+		if err := launch.UpdateMCPConfig(cwd, cfg, sessionID); err != nil {
+			if verbose {
+				fmt.Fprintf(os.Stderr, "Warning: failed to update MCP config: %v\n", err)
+			}
+		}
+	}
+
 	// Build session context
 	contextPath, err := launch.BuildContext(cfg, sessionID, brief, projectName)
 	if err != nil {

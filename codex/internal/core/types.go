@@ -6,13 +6,16 @@ import (
 
 // Config holds configuration for the search engine
 type Config struct {
-	QdrantAddr      string
-	CollectionName  string
 	VoyageAPIKey    string
 	OpenAIAPIKey    string
 	AnthropicAPIKey string
 	ModelsPath      string
 	MetadataDBPath  string
+
+	// ScoreThreshold sets the minimum score as a ratio of the top result's score.
+	// Results scoring below topScore * ScoreThreshold are dropped.
+	// 0 disables thresholding. Typical value: 0.5
+	ScoreThreshold float64
 }
 
 // Item represents a knowledge item in Codex
@@ -66,7 +69,7 @@ type FlightRecorderEntry struct {
 	ID        string         `json:"id"`
 	SessionID string         `json:"session_id"`
 	Timestamp time.Time      `json:"timestamp"`
-	Type      string         `json:"type"` // decision, error, milestone, observation
+	Type      string         `json:"type"` // decision, error, milestone, observation, retrieval_query, retrieval_judgment
 	Content   string         `json:"content"`
 	Rationale string         `json:"rationale,omitempty"`
 	Metadata  map[string]any `json:"metadata,omitempty"`

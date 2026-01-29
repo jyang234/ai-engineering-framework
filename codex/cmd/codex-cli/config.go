@@ -9,8 +9,6 @@ import (
 
 // Config holds CLI configuration loaded from environment
 type Config struct {
-	QdrantAddr      string
-	CollectionName  string
 	VoyageAPIKey    string
 	OpenAIAPIKey    string
 	AnthropicAPIKey string
@@ -21,8 +19,6 @@ type Config struct {
 // LoadConfig loads configuration from environment variables
 func LoadConfig() *Config {
 	return &Config{
-		QdrantAddr:      getEnv("QDRANT_ADDR", "localhost:6334"),
-		CollectionName:  getEnv("CODEX_COLLECTION", "codex_v1"),
 		VoyageAPIKey:    os.Getenv("VOYAGE_API_KEY"),
 		OpenAIAPIKey:    os.Getenv("OPENAI_API_KEY"),
 		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
@@ -34,8 +30,6 @@ func LoadConfig() *Config {
 // ToEngineConfig converts to core.Config
 func (c *Config) ToEngineConfig() core.Config {
 	return core.Config{
-		QdrantAddr:      c.QdrantAddr,
-		CollectionName:  c.CollectionName,
 		VoyageAPIKey:    c.VoyageAPIKey,
 		OpenAIAPIKey:    c.OpenAIAPIKey,
 		AnthropicAPIKey: c.AnthropicAPIKey,

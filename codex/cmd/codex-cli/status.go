@@ -14,7 +14,7 @@ var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show system status and statistics",
 	Long: `Display Codex system status including:
-- Qdrant connection status
+- SQLite storage status
 - Item counts by type
 - Configuration summary
 - API key status`,
@@ -29,8 +29,6 @@ func runStatus(cmd *cobra.Command, args []string) error {
 
 	// Configuration
 	fmt.Println("\nConfiguration:")
-	fmt.Printf("  Qdrant:     %s\n", cfg.QdrantAddr)
-	fmt.Printf("  Collection: %s\n", cfg.CollectionName)
 	fmt.Printf("  Metadata:   %s\n", cfg.MetadataDBPath)
 
 	// API Keys
@@ -48,7 +46,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	// Try to connect and get stats
-	fmt.Println("\nConnecting to Qdrant...")
+	fmt.Println("\nConnecting to storage...")
 
 	ctx := context.Background()
 	engine, err := core.NewSearchEngine(ctx, cfg.ToEngineConfig())

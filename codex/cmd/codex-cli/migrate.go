@@ -16,12 +16,12 @@ var (
 var migrateCmd = &cobra.Command{
 	Use:   "migrate [v0-db-path]",
 	Short: "Migrate from RECALL v0 to Codex v1",
-	Long: `Migrate knowledge items from RECALL v0 (SQLite FTS) to Codex v1 (Qdrant).
+	Long: `Migrate knowledge items from RECALL v0 (SQLite FTS) to Codex v1.
 
 The migration:
 1. Reads all items from the v0 SQLite database
 2. Re-embeds content using appropriate embedding models
-3. Stores in Qdrant with proper vectors
+3. Stores vectors in the SQLite vector store
 4. Preserves metadata in the new SQLite metadata store
 
 Examples:

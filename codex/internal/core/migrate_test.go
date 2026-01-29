@@ -317,7 +317,7 @@ func TestMigrationProgressCallback(t *testing.T) {
 // TestMigrateV0ToV1 tests the full migration
 // Note: This is an integration test that would require a real SearchEngine
 func TestMigrateV0ToV1_Integration(t *testing.T) {
-	t.Skip("Integration test - requires SearchEngine with Qdrant connection")
+	t.Skip("Integration test - requires SearchEngine with embedding API keys")
 
 	dbPath, cleanup := createTestV0Database(t)
 	defer cleanup()

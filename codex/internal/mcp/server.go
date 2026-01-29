@@ -92,8 +92,14 @@ type ToolContent struct {
 
 // Run starts the MCP server on stdio
 func (s *Server) Run(ctx context.Context) error {
-	reader := bufio.NewReader(os.Stdin)
-	writer := os.Stdout
+	return s.RunForIO(ctx, os.Stdin, os.Stdout)
+}
+
+// RunForIO starts the MCP server reading from r and writing to w.
+// This allows in-process testing via io.Pipe.
+func (s *Server) RunForIO(ctx context.Context, r io.Reader, w io.Writer) error {
+	reader := bufio.NewReader(r)
+	writer := w
 
 	for {
 		select {

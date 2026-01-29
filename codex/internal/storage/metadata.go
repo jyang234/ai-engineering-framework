@@ -9,8 +9,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	_ "github.com/mattn/go-sqlite3"
 )
+
+// GenerateID creates a new UUID for an item.
+func GenerateID() string {
+	return uuid.New().String()
+}
 
 // MetadataStore handles SQLite metadata storage
 type MetadataStore struct {
@@ -68,7 +74,7 @@ func NewMetadataStore(dbPath string) (*MetadataStore, error) {
 		return nil, err
 	}
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=ON")
 	if err != nil {
 		return nil, err
 	}
@@ -122,10 +128,63 @@ func (s *MetadataStore) migrate() error {
 		CREATE INDEX IF NOT EXISTS idx_items_scope ON items(scope);
 		CREATE INDEX IF NOT EXISTS idx_feedback_item ON feedback(item_id);
 		CREATE INDEX IF NOT EXISTS idx_flight_session ON flight_recorder(session_id);
+		CREATE INDEX IF NOT EXISTS idx_flight_type ON flight_recorder(type);
+
+		CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
+			title, content, tags,
+			content=items, content_rowid=rowid,
+			tokenize='porter unicode61'
+		);
 	`
 
 	_, err := s.db.Exec(schema)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Create triggers to keep FTS in sync with items table
+	triggers := `
+		CREATE TRIGGER IF NOT EXISTS items_ai AFTER INSERT ON items BEGIN
+			INSERT INTO items_fts(rowid, title, content, tags)
+			VALUES (new.rowid, new.title, new.content, new.tags);
+		END;
+
+		CREATE TRIGGER IF NOT EXISTS items_ad AFTER DELETE ON items BEGIN
+			INSERT INTO items_fts(items_fts, rowid, title, content, tags)
+			VALUES ('delete', old.rowid, old.title, old.content, old.tags);
+		END;
+
+		CREATE TRIGGER IF NOT EXISTS items_au AFTER UPDATE ON items BEGIN
+			INSERT INTO items_fts(items_fts, rowid, title, content, tags)
+			VALUES ('delete', old.rowid, old.title, old.content, old.tags);
+			INSERT INTO items_fts(rowid, title, content, tags)
+			VALUES (new.rowid, new.title, new.content, new.tags);
+		END;
+	`
+	if _, err = s.db.Exec(triggers); err != nil {
+		return err
+	}
+
+	// Rebuild FTS index only if it's empty but items table has data.
+	// This handles first-time setup and recovery; triggers keep it in sync otherwise.
+	var ftsCount, itemCount int
+	if err = s.db.QueryRow("SELECT COUNT(*) FROM items_fts").Scan(&ftsCount); err != nil {
+		return fmt.Errorf("count items_fts: %w", err)
+	}
+	if err = s.db.QueryRow("SELECT COUNT(*) FROM items").Scan(&itemCount); err != nil {
+		return fmt.Errorf("count items: %w", err)
+	}
+	if ftsCount == 0 && itemCount > 0 {
+		_, err = s.db.Exec("INSERT INTO items_fts(items_fts) VALUES('rebuild')")
+		return err
+	}
+	return nil
+}
+
+// DB returns the underlying database connection.
+// Used to share the SQLite connection with VecStore.
+func (s *MetadataStore) DB() *sql.DB {
+	return s.db
 }
 
 // Close closes the database connection
@@ -135,12 +194,22 @@ func (s *MetadataStore) Close() error {
 
 // SaveItem saves an item to the metadata store
 func (s *MetadataStore) SaveItem(item *ItemRecord) error {
-	tagsJSON, _ := json.Marshal(item.Tags)
-	metaJSON, _ := json.Marshal(item.Metadata)
+	tagsJSON, err := json.Marshal(item.Tags)
+	if err != nil {
+		return fmt.Errorf("marshal tags: %w", err)
+	}
+	metaJSON, err := json.Marshal(item.Metadata)
+	if err != nil {
+		return fmt.Errorf("marshal metadata: %w", err)
+	}
 
-	_, err := s.db.Exec(`
-		INSERT OR REPLACE INTO items (id, type, title, content, tags, scope, source, metadata, created_at, updated_at)
+	_, err = s.db.Exec(`
+		INSERT INTO items (id, type, title, content, tags, scope, source, metadata, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			type=excluded.type, title=excluded.title, content=excluded.content,
+			tags=excluded.tags, scope=excluded.scope, source=excluded.source,
+			metadata=excluded.metadata, updated_at=excluded.updated_at
 	`, item.ID, item.Type, item.Title, item.Content, string(tagsJSON), item.Scope, item.Source, string(metaJSON), item.CreatedAt, item.UpdatedAt)
 
 	return err
@@ -164,8 +233,16 @@ func (s *MetadataStore) GetItem(id string) (*ItemRecord, error) {
 		return nil, err
 	}
 
-	json.Unmarshal([]byte(tagsJSON), &item.Tags)
-	json.Unmarshal([]byte(metaJSON), &item.Metadata)
+	if tagsJSON != "" {
+		if err := json.Unmarshal([]byte(tagsJSON), &item.Tags); err != nil {
+			return nil, fmt.Errorf("unmarshal tags for %s: %w", id, err)
+		}
+	}
+	if metaJSON != "" {
+		if err := json.Unmarshal([]byte(metaJSON), &item.Metadata); err != nil {
+			return nil, fmt.Errorf("unmarshal metadata for %s: %w", id, err)
+		}
+	}
 
 	return &item, nil
 }
@@ -182,9 +259,12 @@ func (s *MetadataStore) RecordFeedback(feedback *FeedbackRecord) error {
 
 // LogFlightRecorder logs an entry to the flight recorder
 func (s *MetadataStore) LogFlightRecorder(entry *FlightRecorderRecord) error {
-	metaJSON, _ := json.Marshal(entry.Metadata)
+	metaJSON, err := json.Marshal(entry.Metadata)
+	if err != nil {
+		return fmt.Errorf("marshal flight recorder metadata: %w", err)
+	}
 
-	_, err := s.db.Exec(`
+	_, err = s.db.Exec(`
 		INSERT INTO flight_recorder (id, session_id, timestamp, type, content, rationale, metadata)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 	`, entry.ID, entry.SessionID, entry.Timestamp, entry.Type, entry.Content, entry.Rationale, string(metaJSON))
@@ -215,11 +295,15 @@ func (s *MetadataStore) GetFlightRecorderEntries(sessionID string) ([]*FlightRec
 			return nil, err
 		}
 
-		json.Unmarshal([]byte(metaJSON), &entry.Metadata)
+		if metaJSON != "" {
+			if err := json.Unmarshal([]byte(metaJSON), &entry.Metadata); err != nil {
+				return nil, fmt.Errorf("unmarshal flight recorder metadata: %w", err)
+			}
+		}
 		entries = append(entries, &entry)
 	}
 
-	return entries, nil
+	return entries, rows.Err()
 }
 
 // ListItems retrieves items with optional filters and pagination
@@ -229,7 +313,7 @@ func (s *MetadataStore) ListItems(itemType, scope string, limit, offset int) ([]
 	}
 
 	query := "SELECT id, type, title, content, tags, scope, source, metadata, created_at, updated_at FROM items WHERE 1=1"
-	args := []interface{}{}
+	args := []any{}
 
 	if itemType != "" {
 		query += " AND type = ?"
@@ -260,12 +344,78 @@ func (s *MetadataStore) ListItems(itemType, scope string, limit, offset int) ([]
 			return nil, err
 		}
 
-		json.Unmarshal([]byte(tagsJSON), &item.Tags)
-		json.Unmarshal([]byte(metaJSON), &item.Metadata)
+		if tagsJSON != "" {
+			if err := json.Unmarshal([]byte(tagsJSON), &item.Tags); err != nil {
+				return nil, fmt.Errorf("unmarshal tags: %w", err)
+			}
+		}
+		if metaJSON != "" {
+			if err := json.Unmarshal([]byte(metaJSON), &item.Metadata); err != nil {
+				return nil, fmt.Errorf("unmarshal metadata: %w", err)
+			}
+		}
 		items = append(items, &item)
 	}
 
-	return items, nil
+	return items, rows.Err()
+}
+
+// KeywordSearch performs FTS5 full-text search on items.
+// Returns results ranked by BM25 relevance score.
+func (s *MetadataStore) KeywordSearch(query string, limit int) ([]KeywordResult, error) {
+	if strings.TrimSpace(query) == "" {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+
+	// Sanitize query for FTS5: escape double quotes and wrap in quotes
+	// to prevent FTS5 syntax errors from special characters (AND, OR, *, etc.)
+	sanitized := strings.ReplaceAll(query, `"`, `""`)
+	sanitized = `"` + sanitized + `"`
+
+	rows, err := s.db.Query(`
+		SELECT i.id, i.type, i.title, i.content, i.tags, i.scope,
+		       -rank AS score
+		FROM items_fts f
+		JOIN items i ON i.rowid = f.rowid
+		WHERE items_fts MATCH ?
+		ORDER BY rank
+		LIMIT ?
+	`, sanitized, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []KeywordResult
+	for rows.Next() {
+		var r KeywordResult
+		var tagsJSON string
+		err := rows.Scan(&r.ID, &r.Type, &r.Title, &r.Content, &tagsJSON, &r.Scope, &r.Score)
+		if err != nil {
+			return nil, err
+		}
+		if tagsJSON != "" {
+			if err := json.Unmarshal([]byte(tagsJSON), &r.Tags); err != nil {
+				return nil, fmt.Errorf("unmarshal tags: %w", err)
+			}
+		}
+		results = append(results, r)
+	}
+	return results, rows.Err()
+}
+
+// KeywordResult represents a keyword search result with BM25 score.
+type KeywordResult struct {
+	ID      string
+	Type    string
+	Title   string
+	Content string
+	Tags    []string
+	Scope   string
+	Score   float64
 }
 
 // DeleteItem removes an item from the metadata store
@@ -303,5 +453,5 @@ func (s *MetadataStore) CountItemsByType() (map[string]int, error) {
 		}
 		counts[itemType] = count
 	}
-	return counts, nil
+	return counts, rows.Err()
 }

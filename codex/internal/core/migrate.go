@@ -35,7 +35,7 @@ type V0Item struct {
 	UpdatedAt string
 }
 
-// MigrateV0ToV1 migrates items from RECALL v0 (SQLite FTS) to Codex v1 (Qdrant)
+// MigrateV0ToV1 migrates items from RECALL v0 (SQLite FTS) to Codex v1
 func MigrateV0ToV1(ctx context.Context, v0DBPath string, engine *SearchEngine) (*MigrationStats, error) {
 	stats := &MigrationStats{
 		StartTime: time.Now(),

@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/anthropics/aef/codex/internal/embedding"
@@ -13,62 +14,38 @@ import (
 // SearchEngine orchestrates search and indexing operations
 type SearchEngine struct {
 	config   Config
-	qdrant   vectorStore
-	metadata metadataStore
-	voyage   codeEmbedder
-	openai   docEmbedder
-	reranker rerankerInterface
+	vecStore VectorStorage
+	metadata MetadataStorage
+	keywords KeywordSearcher
+	voyage   CodeEmbedder
+	openai   DocEmbedder
+	reranker Reranker
 }
 
-// Internal interfaces for testability
-type vectorStore interface {
-	Upsert(ctx context.Context, item interface{}, vector []float32) error
-	HybridSearch(ctx context.Context, params storage.SearchParams) ([]storage.SearchCandidate, error)
-	Delete(ctx context.Context, id string) error
+// SearchEngineDeps holds dependencies for constructing a SearchEngine.
+type SearchEngineDeps struct {
+	Config   Config
+	VecStore VectorStorage
+	Metadata MetadataStorage
+	Keywords KeywordSearcher
+	Voyage   CodeEmbedder
+	OpenAI   DocEmbedder
+	Reranker Reranker
 }
 
-type metadataStore interface {
-	SaveItem(item *storage.ItemRecord) error
-	GetItem(id string) (*storage.ItemRecord, error)
-	ListItems(itemType, scope string, limit, offset int) ([]*storage.ItemRecord, error)
-	DeleteItem(id string) error
-	CountItemsByType() (map[string]int, error)
-	RecordFeedback(feedback *storage.FeedbackRecord) error
-	LogFlightRecorder(entry *storage.FlightRecorderRecord) error
-	Close() error
-}
-
-type codeEmbedder interface {
-	EmbedCode(ctx context.Context, texts []string) ([]float32, error)
-	EmbedCodeQuery(ctx context.Context, query string) ([]float32, error)
-}
-
-type docEmbedder interface {
-	EmbedDocuments(ctx context.Context, texts []string) ([][]float32, error)
-}
-
-type rerankerInterface interface {
-	Rerank(query string, docs []reranking.Document, topK int) ([]reranking.RerankResult, error)
-	Close()
-}
-
-// NewSearchEngine creates a new search engine instance
+// NewSearchEngine creates a new search engine with SQLite-backed vector storage.
 func NewSearchEngine(ctx context.Context, config Config) (*SearchEngine, error) {
-	// Initialize Qdrant storage
-	qdrant, err := storage.NewQdrantStorage(config.QdrantAddr, config.CollectionName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to Qdrant: %w", err)
-	}
-
-	// Ensure collection exists with proper config
-	if err := qdrant.EnsureCollection(ctx); err != nil {
-		return nil, fmt.Errorf("failed to ensure collection: %w", err)
-	}
-
 	// Initialize metadata store
 	metadata, err := storage.NewMetadataStore(config.MetadataDBPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open metadata store: %w", err)
+	}
+
+	// Initialize vector store sharing the same SQLite database
+	vecStore, err := storage.NewVecStore(metadata.DB())
+	if err != nil {
+		metadata.Close()
+		return nil, fmt.Errorf("failed to initialize vector store: %w", err)
 	}
 
 	// Initialize embedding clients
@@ -76,93 +53,165 @@ func NewSearchEngine(ctx context.Context, config Config) (*SearchEngine, error) 
 	openai := embedding.NewOpenAIClient(config.OpenAIAPIKey)
 
 	// Initialize reranker (optional - may fail if models not present)
-	var reranker *reranking.Reranker
+	var reranker Reranker
 	if config.ModelsPath != "" {
-		reranker, err = reranking.NewReranker(config.ModelsPath)
-		if err != nil {
-			// Log warning but continue - reranking is optional
-			fmt.Printf("Warning: reranker not available: %v\n", err)
+		r, rErr := reranking.NewReranker(config.ModelsPath)
+		if rErr != nil {
+			log.Printf("Warning: reranker not available: %v\n", rErr)
+		} else {
+			reranker = r
 		}
 	}
 
 	return &SearchEngine{
 		config:   config,
-		qdrant:   qdrant,
+		vecStore: vecStore,
 		metadata: metadata,
+		keywords: metadata,
 		voyage:   voyage,
 		openai:   openai,
 		reranker: reranker,
 	}, nil
 }
 
+// NewSearchEngineWithDeps creates a search engine with explicit dependencies (for testing).
+func NewSearchEngineWithDeps(deps SearchEngineDeps) *SearchEngine {
+	return &SearchEngine{
+		config:   deps.Config,
+		vecStore: deps.VecStore,
+		metadata: deps.Metadata,
+		keywords: deps.Keywords,
+		voyage:   deps.Voyage,
+		openai:   deps.OpenAI,
+		reranker: deps.Reranker,
+	}
+}
+
 // Close releases all resources
 func (e *SearchEngine) Close() error {
-	if e.metadata != nil {
-		e.metadata.Close()
-	}
 	if e.reranker != nil {
 		e.reranker.Close()
+	}
+	if e.metadata != nil {
+		return e.metadata.Close()
 	}
 	return nil
 }
 
-// Search performs a hybrid search with optional reranking
+// Search performs hybrid search: vector similarity + FTS5 keyword + RRF fusion,
+// with optional reranking.
 func (e *SearchEngine) Search(ctx context.Context, req SearchRequest) ([]SearchResult, error) {
 	if req.Limit <= 0 {
 		req.Limit = 10
 	}
 
-	// Generate query embedding using Voyage (optimized for code queries)
-	queryVec, err := e.voyage.EmbedCodeQuery(ctx, req.Query)
-	if err != nil {
-		return nil, fmt.Errorf("failed to embed query: %w", err)
-	}
-
-	// Perform hybrid search (vector + BM25)
-	candidateLimit := req.Limit
-	if e.reranker != nil {
-		candidateLimit = 50 // Get more candidates for reranking
-	}
-
-	candidates, err := e.qdrant.HybridSearch(ctx, storage.SearchParams{
-		Query:       req.Query,
-		QueryVector: queryVec,
-		Types:       req.Types,
-		Scope:       req.Scope,
-		Limit:       candidateLimit,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("hybrid search failed: %w", err)
-	}
-
-	// Convert to search results
-	results := make([]SearchResult, len(candidates))
-	for i, c := range candidates {
-		results[i] = SearchResult{
-			Item: Item{
-				ID:      c.ID,
-				Type:    c.Type,
-				Title:   c.Title,
-				Content: c.Content,
-				Tags:    c.Tags,
-				Scope:   c.Scope,
-			},
-			Score: c.Score,
+	candidateLimit := 50
+	if e.reranker == nil && req.Limit < candidateLimit {
+		candidateLimit = req.Limit * 3 // over-fetch for fusion but not too much
+		if candidateLimit < 20 {
+			candidateLimit = 20
 		}
 	}
 
-	// Apply reranking if available
+	// 1. Embed query with BOTH models for dual-space vector search
+	voyageVec, err := e.voyage.EmbedCodeQuery(ctx, req.Query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to embed query with voyage: %w", err)
+	}
+
+	openaiVecs, err := e.openai.EmbedDocuments(ctx, []string{req.Query})
+	if err != nil {
+		return nil, fmt.Errorf("failed to embed query with openai: %w", err)
+	}
+	openaiVec := openaiVecs[0]
+
+	// 2. Vector search in both embedding spaces
+	voyageResults := e.vecStore.Search(ctx, voyageVec, candidateLimit)
+	openaiResults := e.vecStore.Search(ctx, openaiVec, candidateLimit)
+
+	// 3. Keyword search (FTS5 BM25)
+	var keywordResults []SearchResult
+	if e.keywords != nil {
+		kwResults, err := e.keywords.KeywordSearch(req.Query, candidateLimit)
+		if err != nil {
+			// Log but don't fail -- vector results are still valid
+			log.Printf("Warning: keyword search failed: %v\n", err)
+		} else {
+			for _, kw := range kwResults {
+				keywordResults = append(keywordResults, SearchResult{
+					Item: Item{
+						ID:      kw.ID,
+						Type:    kw.Type,
+						Title:   kw.Title,
+						Content: kw.Content,
+						Tags:    kw.Tags,
+						Scope:   kw.Scope,
+					},
+					Score: kw.Score,
+				})
+			}
+		}
+	}
+
+	// 4. 3-way RRF fusion (voyage vectors + openai vectors + keywords)
+	results := reciprocalRankFusionMulti(
+		[][]storage.ScoredResult{voyageResults, openaiResults},
+		keywordResults, 60,
+	)
+
+	// 5. Hydrate metadata for vector-only results (those missing Title/Content)
+	for i := range results {
+		if results[i].Title == "" && results[i].Content == "" && e.metadata != nil {
+			record, err := e.metadata.GetItem(results[i].ID)
+			if err == nil {
+				results[i].Item = *itemFromRecord(record)
+			}
+		}
+	}
+
+	// 6. Apply type/scope filters
+	if len(req.Types) > 0 || req.Scope != "" {
+		typeSet := make(map[string]bool, len(req.Types))
+		for _, t := range req.Types {
+			typeSet[t] = true
+		}
+		var filtered []SearchResult
+		for _, r := range results {
+			if len(typeSet) > 0 && !typeSet[r.Type] {
+				continue
+			}
+			if req.Scope != "" && r.Scope != req.Scope {
+				continue
+			}
+			filtered = append(filtered, r)
+		}
+		results = filtered
+	}
+
+	// 7. Apply reranking if available
 	if e.reranker != nil && len(results) > 0 {
 		reranked, err := e.reranker.Rerank(req.Query, toDocuments(results), req.Limit)
 		if err != nil {
-			// Fall back to non-reranked results
-			fmt.Printf("Warning: reranking failed: %v\n", err)
+			log.Printf("Warning: reranking failed: %v\n", err)
 		} else {
 			results = applyRerankScores(results, reranked)
 		}
 	}
 
-	// Limit results
+	// 8. Score threshold cutoff — drop results below ratio of top score
+	if e.config.ScoreThreshold > 0 && len(results) > 0 {
+		minScore := results[0].Score * e.config.ScoreThreshold
+		cutoff := len(results)
+		for i, r := range results {
+			if r.Score < minScore {
+				cutoff = i
+				break
+			}
+		}
+		results = results[:cutoff]
+	}
+
+	// 9. Limit results
 	if len(results) > req.Limit {
 		results = results[:req.Limit]
 	}
@@ -198,14 +247,14 @@ func (e *SearchEngine) Add(ctx context.Context, item *Item) error {
 		vec = vecs[0]
 	}
 
-	// Store in Qdrant
-	if err := e.qdrant.Upsert(ctx, item, vec); err != nil {
-		return fmt.Errorf("failed to store in Qdrant: %w", err)
-	}
-
-	// Store metadata
+	// Store metadata first (easier to clean up than orphaned vectors)
 	if err := e.metadata.SaveItem(itemToRecord(item)); err != nil {
 		return fmt.Errorf("failed to save metadata: %w", err)
+	}
+
+	// Store vector
+	if err := e.vecStore.Upsert(ctx, item.ID, vec); err != nil {
+		return fmt.Errorf("failed to store vector: %w", err)
 	}
 
 	return nil
@@ -219,6 +268,27 @@ func (e *SearchEngine) RecordFeedback(feedback *Feedback) error {
 // LogFlightRecorder logs an entry to the flight recorder
 func (e *SearchEngine) LogFlightRecorder(entry *FlightRecorderEntry) error {
 	return e.metadata.LogFlightRecorder(entryToRecord(entry))
+}
+
+// GetFlightRecorderEntries retrieves flight recorder entries for a session.
+func (e *SearchEngine) GetFlightRecorderEntries(sessionID string) ([]*FlightRecorderEntry, error) {
+	records, err := e.metadata.GetFlightRecorderEntries(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	entries := make([]*FlightRecorderEntry, len(records))
+	for i, r := range records {
+		entries[i] = &FlightRecorderEntry{
+			ID:        r.ID,
+			SessionID: r.SessionID,
+			Timestamp: r.Timestamp,
+			Type:      r.Type,
+			Content:   r.Content,
+			Rationale: r.Rationale,
+			Metadata:  r.Metadata,
+		}
+	}
+	return entries, nil
 }
 
 // Index indexes content through the appropriate pipeline (code, doc, or manual)
@@ -299,23 +369,23 @@ func (e *SearchEngine) Update(ctx context.Context, item *Item) error {
 		vec = vecs[0]
 	}
 
-	// Update in Qdrant
-	if err := e.qdrant.Upsert(ctx, item, vec); err != nil {
-		return fmt.Errorf("failed to update in Qdrant: %w", err)
-	}
-
-	// Update metadata
+	// Update metadata first (matching Add() convention)
 	if err := e.metadata.SaveItem(itemToRecord(item)); err != nil {
 		return fmt.Errorf("failed to update metadata: %w", err)
+	}
+
+	// Update vector
+	if err := e.vecStore.Upsert(ctx, item.ID, vec); err != nil {
+		return fmt.Errorf("failed to update vector: %w", err)
 	}
 
 	return nil
 }
 
-// Delete removes an item from both Qdrant and metadata store
+// Delete removes an item from both vector store and metadata store
 func (e *SearchEngine) Delete(ctx context.Context, id string) error {
-	// Delete from Qdrant (may fail if not implemented, continue anyway)
-	_ = e.qdrant.Delete(ctx, id)
+	// Delete from vector store (best-effort)
+	_ = e.vecStore.Delete(ctx, id)
 
 	// Delete from metadata store
 	if err := e.metadata.DeleteItem(id); err != nil {

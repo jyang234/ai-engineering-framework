@@ -10,6 +10,7 @@ allowed_tools:
   - recall_search
 skills:
   - edi-core
+  - retrieval-judge
 ---
 
 # EDI Researcher Subagent

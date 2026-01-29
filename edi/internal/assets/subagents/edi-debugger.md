@@ -11,6 +11,7 @@ allowed_tools:
   - flight_recorder_log
 skills:
   - edi-core
+  - retrieval-judge
 ---
 
 # EDI Debugger Subagent

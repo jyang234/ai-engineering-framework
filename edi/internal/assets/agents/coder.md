@@ -14,6 +14,7 @@ tools:
   - flight_recorder_log
 skills:
   - edi-core
+  - retrieval-judge
   - coding
   - testing
 ---

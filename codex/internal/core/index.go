@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,7 +45,7 @@ func NewIndexer(engine *SearchEngine) (*Indexer, error) {
 		chunker, err := chunking.NewContextualChunker(engine.config.AnthropicAPIKey)
 		if err != nil {
 			// Log but continue - contextual enrichment is optional
-			fmt.Printf("Warning: contextual chunker not available: %v\n", err)
+			log.Printf("Warning: contextual chunker not available: %v\n", err)
 		} else {
 			ctxChunker = chunker
 		}
@@ -53,7 +54,7 @@ func NewIndexer(engine *SearchEngine) (*Indexer, error) {
 	return &Indexer{
 		codeEmbedder: engine.voyage,
 		docEmbedder:  engine.openai,
-		vectorStore:  engine.qdrant,
+		vectorStore:  engine.vecStore,
 		metaStore:    engine.metadata,
 		codeChunker:  astChunker,
 		docChunker:   ctxChunker,
@@ -142,7 +143,7 @@ func (idx *Indexer) IndexDirectory(ctx context.Context, dirPath string, scope st
 		// Read file content
 		content, err := os.ReadFile(path)
 		if err != nil {
-			fmt.Printf("Warning: failed to read %s: %v\n", path, err)
+			log.Printf("Warning: failed to read %s: %v\n", path, err)
 			return nil
 		}
 
@@ -153,7 +154,7 @@ func (idx *Indexer) IndexDirectory(ctx context.Context, dirPath string, scope st
 			Scope:    scope,
 		})
 		if err != nil {
-			fmt.Printf("Warning: failed to index %s: %v\n", path, err)
+			log.Printf("Warning: failed to index %s: %v\n", path, err)
 			return nil
 		}
 
@@ -212,14 +213,14 @@ func (idx *Indexer) indexCode(ctx context.Context, req IndexRequest) (*IndexResu
 			UpdatedAt: now,
 		}
 
-		// Store in vector storage
-		if err := idx.vectorStore.Upsert(ctx, item, vec); err != nil {
-			return nil, fmt.Errorf("failed to store chunk %d: %w", i, err)
-		}
-
-		// Store metadata
+		// Store metadata first
 		if err := idx.metaStore.SaveItem(itemToRecord(item)); err != nil {
 			return nil, fmt.Errorf("failed to save chunk %d metadata: %w", i, err)
+		}
+
+		// Store in vector storage
+		if err := idx.vectorStore.Upsert(ctx, item.ID, vec); err != nil {
+			return nil, fmt.Errorf("failed to store chunk %d: %w", i, err)
 		}
 	}
 
@@ -238,7 +239,7 @@ func (idx *Indexer) indexDoc(ctx context.Context, req IndexRequest) (*IndexResul
 		docChunks, err := idx.docChunker.ChunkDocument(ctx, req.Content, req.FilePath)
 		if err != nil {
 			// Fall back to basic chunking on error
-			fmt.Printf("Warning: contextual chunking failed, using basic: %v\n", err)
+			log.Printf("Warning: contextual chunking failed, using basic: %v\n", err)
 			chunks = basicDocChunking(req.Content, req.FilePath)
 		} else {
 			for _, dc := range docChunks {
@@ -285,14 +286,14 @@ func (idx *Indexer) indexDoc(ctx context.Context, req IndexRequest) (*IndexResul
 			UpdatedAt: now,
 		}
 
-		// Store in vector storage
-		if err := idx.vectorStore.Upsert(ctx, item, vecs[0]); err != nil {
-			return nil, fmt.Errorf("failed to store doc chunk %d: %w", i, err)
-		}
-
-		// Store metadata
+		// Store metadata first
 		if err := idx.metaStore.SaveItem(itemToRecord(item)); err != nil {
 			return nil, fmt.Errorf("failed to save doc chunk %d metadata: %w", i, err)
+		}
+
+		// Store in vector storage
+		if err := idx.vectorStore.Upsert(ctx, item.ID, vecs[0]); err != nil {
+			return nil, fmt.Errorf("failed to store doc chunk %d: %w", i, err)
 		}
 	}
 
@@ -345,14 +346,14 @@ func (idx *Indexer) indexManual(ctx context.Context, req IndexRequest) (*IndexRe
 		UpdatedAt: now,
 	}
 
-	// Store in vector storage
-	if err = idx.vectorStore.Upsert(ctx, item, vec); err != nil {
-		return nil, fmt.Errorf("failed to store item: %w", err)
-	}
-
-	// Store metadata
+	// Store metadata first
 	if err = idx.metaStore.SaveItem(itemToRecord(item)); err != nil {
 		return nil, fmt.Errorf("failed to save metadata: %w", err)
+	}
+
+	// Store in vector storage
+	if err = idx.vectorStore.Upsert(ctx, item.ID, vec); err != nil {
+		return nil, fmt.Errorf("failed to store item: %w", err)
 	}
 
 	return &IndexResult{

@@ -10,6 +10,9 @@ type Config struct {
 	// RECALL configuration
 	Recall RecallConfig `yaml:"recall" mapstructure:"recall"`
 
+	// Codex v1 backend configuration (when recall.backend = "codex")
+	Codex CodexConfig `yaml:"codex" mapstructure:"codex"`
+
 	// Briefing configuration
 	Briefing BriefingConfig `yaml:"briefing" mapstructure:"briefing"`
 
@@ -25,7 +28,17 @@ type Config struct {
 
 // RecallConfig configures the RECALL knowledge system
 type RecallConfig struct {
-	Enabled bool `yaml:"enabled" mapstructure:"enabled"`
+	Enabled bool   `yaml:"enabled" mapstructure:"enabled"`
+	Backend string `yaml:"backend" mapstructure:"backend"` // "v0" (default) or "codex"
+}
+
+// CodexConfig configures the Codex v1 backend (hybrid vector search)
+type CodexConfig struct {
+	QdrantAddr   string `yaml:"qdrant_addr" mapstructure:"qdrant_addr"`     // Qdrant server address (default: localhost:6334)
+	Collection   string `yaml:"collection" mapstructure:"collection"`       // Qdrant collection name (default: recall)
+	ModelsPath   string `yaml:"models_path" mapstructure:"models_path"`     // Path to ONNX reranker models
+	MetadataDB   string `yaml:"metadata_db" mapstructure:"metadata_db"`     // Path to SQLite metadata DB
+	BinaryPath   string `yaml:"binary_path" mapstructure:"binary_path"`     // Path to recall-mcp binary (optional)
 }
 
 // BriefingConfig configures session briefing generation

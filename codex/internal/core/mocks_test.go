@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/anthropics/aef/codex/internal/chunking"
@@ -100,10 +101,9 @@ func (m *MockDocEmbedder) EmbedDocuments(ctx context.Context, texts []string) ([
 // MockVectorStorage implements VectorStorage for testing
 type MockVectorStorage struct {
 	mu            sync.Mutex
-	Items         map[string]*Item
 	Vectors       map[string][]float32
-	UpsertFunc    func(ctx context.Context, item any, vector []float32) error
-	SearchFunc    func(ctx context.Context, params storage.SearchParams) ([]storage.SearchCandidate, error)
+	UpsertFunc    func(ctx context.Context, itemID string, vector []float32) error
+	SearchFunc    func(ctx context.Context, queryVec []float32, limit int) []storage.ScoredResult
 	UpsertCount   int
 	SearchCount   int
 	FailOnUpsert  int
@@ -112,12 +112,11 @@ type MockVectorStorage struct {
 
 func NewMockVectorStorage() *MockVectorStorage {
 	return &MockVectorStorage{
-		Items:   make(map[string]*Item),
 		Vectors: make(map[string][]float32),
 	}
 }
 
-func (m *MockVectorStorage) Upsert(ctx context.Context, item any, vector []float32) error {
+func (m *MockVectorStorage) Upsert(ctx context.Context, itemID string, vector []float32) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -127,59 +126,82 @@ func (m *MockVectorStorage) Upsert(ctx context.Context, item any, vector []float
 		return ErrMockStorage
 	}
 
-	// Type assert to *Item
-	typedItem, ok := item.(*Item)
-	if !ok {
-		return errors.New("item must be *Item")
-	}
-
 	if m.UpsertFunc != nil {
-		return m.UpsertFunc(ctx, typedItem, vector)
+		return m.UpsertFunc(ctx, itemID, vector)
 	}
 
-	m.Items[typedItem.ID] = typedItem
-	m.Vectors[typedItem.ID] = vector
+	m.Vectors[itemID] = vector
 	return nil
 }
 
-func (m *MockVectorStorage) HybridSearch(ctx context.Context, params storage.SearchParams) ([]storage.SearchCandidate, error) {
+func (m *MockVectorStorage) Search(ctx context.Context, queryVec []float32, limit int) []storage.ScoredResult {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	m.SearchCount++
 
 	if m.FailOnSearch {
-		return nil, ErrMockStorage
+		return nil
 	}
 
 	if m.SearchFunc != nil {
-		return m.SearchFunc(ctx, params)
+		return m.SearchFunc(ctx, queryVec, limit)
 	}
 
 	// Return stored items as search results
-	var results []storage.SearchCandidate
-	for id, item := range m.Items {
-		results = append(results, storage.SearchCandidate{
-			ID:      id,
-			Type:    item.Type,
-			Title:   item.Title,
-			Content: item.Content,
-			Score:   0.9,
+	var results []storage.ScoredResult
+	for id := range m.Vectors {
+		results = append(results, storage.ScoredResult{
+			ID:    id,
+			Score: 0.9,
 		})
-		if len(results) >= params.Limit {
+		if len(results) >= limit {
 			break
 		}
 	}
-	return results, nil
+	return results
 }
 
 func (m *MockVectorStorage) Delete(ctx context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	delete(m.Items, id)
 	delete(m.Vectors, id)
 	return nil
+}
+
+// MockKeywordSearcher implements KeywordSearcher for testing
+type MockKeywordSearcher struct {
+	mu           sync.Mutex
+	SearchFunc   func(query string, limit int) ([]storage.KeywordResult, error)
+	CallCount    int
+	FailOnSearch bool
+	Results      []storage.KeywordResult
+}
+
+func NewMockKeywordSearcher() *MockKeywordSearcher {
+	return &MockKeywordSearcher{}
+}
+
+func (m *MockKeywordSearcher) KeywordSearch(query string, limit int) ([]storage.KeywordResult, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.CallCount++
+
+	if m.FailOnSearch {
+		return nil, ErrMockStorage
+	}
+
+	if m.SearchFunc != nil {
+		return m.SearchFunc(query, limit)
+	}
+
+	if m.Results != nil {
+		return m.Results, nil
+	}
+
+	return nil, nil
 }
 
 // MockMetadataStorage implements MetadataStorage for testing
@@ -248,6 +270,19 @@ func (m *MockMetadataStorage) LogFlightRecorder(entry *storage.FlightRecorderRec
 	return nil
 }
 
+func (m *MockMetadataStorage) GetFlightRecorderEntries(sessionID string) ([]*storage.FlightRecorderRecord, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var entries []*storage.FlightRecorderRecord
+	for _, e := range m.FlightRecorder {
+		if e.SessionID == sessionID {
+			entries = append(entries, e)
+		}
+	}
+	return entries, nil
+}
+
 func (m *MockMetadataStorage) Close() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -266,7 +301,6 @@ func (m *MockMetadataStorage) ListItems(itemType, scope string, limit, offset in
 
 	var result []*storage.ItemRecord
 	for _, item := range m.Items {
-		// Apply filters
 		if itemType != "" && item.Type != itemType {
 			continue
 		}
@@ -276,7 +310,6 @@ func (m *MockMetadataStorage) ListItems(itemType, scope string, limit, offset in
 		result = append(result, item)
 	}
 
-	// Apply pagination
 	if offset >= len(result) {
 		return []*storage.ItemRecord{}, nil
 	}
@@ -344,7 +377,6 @@ func (m *MockCodeChunker) ChunkFile(content []byte, lang, filePath string) ([]ch
 		return m.ChunkFunc(content, lang, filePath)
 	}
 
-	// Default: return one chunk with the entire content
 	return []chunking.CodeChunk{
 		{
 			Content:   string(content),
@@ -392,7 +424,6 @@ func (m *MockDocChunker) ChunkDocument(ctx context.Context, content, filePath st
 		return m.ChunkFunc(ctx, content, filePath)
 	}
 
-	// Default: return one chunk
 	return []chunking.DocChunk{
 		{
 			OriginalContent: content,
@@ -421,7 +452,7 @@ func (m *MockIDGenerator) GenerateID() string {
 
 	m.Counter++
 	if m.Prefix != "" {
-		return m.Prefix + "-" + string(rune('0'+m.Counter))
+		return fmt.Sprintf("%s-%d", m.Prefix, m.Counter)
 	}
-	return "mock-id-" + string(rune('0'+m.Counter))
+	return fmt.Sprintf("mock-id-%d", m.Counter)
 }

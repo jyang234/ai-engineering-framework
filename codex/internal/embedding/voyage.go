@@ -15,8 +15,8 @@ const (
 	voyageBaseURL      = "https://api.voyageai.com/v1/embeddings"
 	voyageModel        = "voyage-code-3"
 	voyageBatchSize    = 128 // Voyage API max batch size
-	voyageMaxRetries   = 3
-	voyageInitialDelay = 1 * time.Second
+	voyageMaxRetries   = 5
+	voyageInitialDelay = 2 * time.Second
 )
 
 // VoyageClient handles Voyage AI embeddings

@@ -1,7 +1,7 @@
 # AEF Component Registry
 
 **Purpose**: Quick reference for what exists, what is planned, and where to find details.
-**Updated**: January 25, 2026
+**Updated**: January 26, 2026
 
 ---
 
@@ -14,7 +14,7 @@
 │                                                                          │
 │   ┌──────────────┐   ┌──────────────┐   ┌──────────────┐                │
 │   │     EDI      │   │    Codex     │   │   Learning   │                │
-│   │   (v0 ✅)    │──►│    (v1 📋)   │──►│    (📋)      │                │
+│   │   (v0 ✅)    │◄─►│   (v1 ✅)    │──►│    (📋)      │                │
 │   │ CLI harness  │   │ Hybrid search│   │ Knowledge QA │                │
 │   └──────────────┘   └──────────────┘   └──────────────┘                │
 │          │                                                               │
@@ -45,11 +45,16 @@
 
 **Capabilities:**
 - CLI commands: init, launch (default), config, recall, history, agent
-- RECALL MCP server with SQLite FTS5 search
+- RECALL backend selection: v0 (SQLite FTS) or Codex v1 (hybrid vector search)
+- MCP server auto-configuration based on backend
 - 4 core agents (coder, architect, reviewer, incident)
 - 7 subagents for specialized tasks
 - 6 slash commands (/plan, /build, /review, /incident, /task, /end)
 - Session briefings with history integration
+
+**Configuration:**
+- `recall.backend: v0` - SQLite FTS5 (default, zero dependencies)
+- `recall.backend: codex` - Hybrid vector search (requires Qdrant, API keys)
 
 **Known Gaps:**
 - Persona spec not fully integrated into agent/skill files
@@ -61,21 +66,29 @@
 
 | Attribute | Value |
 |-----------|-------|
-| **Status** | 📋 Planned |
-| **Prerequisites** | EDI Phase 2 complete |
-| **Purpose** | Upgrade RECALL from FTS to production-grade hybrid retrieval |
+| **Status** | ✅ v1 Implemented |
+| **Location** | `codex/` |
+| **Purpose** | Production-grade hybrid retrieval for RECALL |
 | **Implementation Plan** | `docs/implementation/codex-v1-implementation-plan.md` |
 
-**Planned Capabilities:**
-- Qdrant for vector + BM25 search
+**Capabilities:**
+- Qdrant for vector + BM25 search with RRF fusion
 - Voyage Code-3 embeddings for code
-- text-embedding-3-large for docs
-- Multi-stage reranking (BGE models)
+- OpenAI text-embedding-3-large for docs
+- Multi-stage reranking (BGE models via ONNX)
 - AST-aware chunking (Tree-sitter)
 - Contextual retrieval (Claude Haiku)
 - Web UI for browsing knowledge
+- MCP server (drop-in replacement for RECALL v0)
 
-**Expected Improvement:** Top-10 recall from ~60% to ~85%
+**Requirements:**
+- Qdrant server running (`docker run -p 6333:6333 -p 6334:6334 qdrant/qdrant`)
+- `VOYAGE_API_KEY` for code embeddings
+- `OPENAI_API_KEY` for document embeddings
+
+**EDI Integration:**
+- Set `recall.backend: codex` in `~/.edi/config.yaml`
+- EDI automatically generates MCP config for Codex
 
 ---
 
@@ -118,14 +131,14 @@
 ## Dependency Graph
 
 ```
-EDI v0 (✅)
-    │
-    ├──► Codex v1 (📋)
-    │        │
-    │        └──► Learning Architecture (📋)
+EDI v0 (✅) ◄───► Codex v1 (✅)
+    │                  │
+    │                  └──► Learning Architecture (📋)
     │
     └──► Sandbox (📋) [independent]
 ```
+
+EDI can use either RECALL v0 (built-in) or Codex v1 (external) as its knowledge backend.
 
 ---
 
@@ -146,6 +159,8 @@ EDI v0 (✅)
 
 ## Quick Start
 
+### EDI with RECALL v0 (default, zero dependencies)
+
 ```bash
 # Build and install EDI
 cd edi && make build && make install
@@ -158,4 +173,25 @@ cd your-project && edi init
 
 # Start session
 edi
+```
+
+### EDI with Codex v1 (hybrid vector search)
+
+```bash
+# Start Qdrant
+docker run -p 6333:6333 -p 6334:6334 qdrant/qdrant
+
+# Build Codex
+cd codex && make build
+cp bin/recall-mcp ~/.edi/bin/
+
+# Set API keys
+export VOYAGE_API_KEY=voy-xxx
+export OPENAI_API_KEY=sk-xxx
+
+# Initialize with Codex backend
+edi init --global --backend codex
+
+# Start session (uses Codex automatically)
+cd your-project && edi init && edi
 ```

@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/anthropics/aef/codex/internal/chunking"
+	"github.com/anthropics/aef/codex/internal/reranking"
 	"github.com/anthropics/aef/codex/internal/storage"
 )
 
@@ -27,36 +28,43 @@ type DocEmbedder interface {
 }
 
 // VectorStorage stores and searches vector embeddings.
-// Implementations: QdrantStorage
+// Implementations: VecStore (SQLite + brute-force KNN)
 type VectorStorage interface {
-	// Upsert adds or updates an item with its embedding vector.
-	// item should be *Item but uses any for compatibility with existing storage.
-	Upsert(ctx context.Context, item any, vector []float32) error
+	// Upsert stores a vector for the given item ID.
+	Upsert(ctx context.Context, itemID string, vector []float32) error
 
-	// HybridSearch performs combined vector + keyword search.
-	HybridSearch(ctx context.Context, params storage.SearchParams) ([]storage.SearchCandidate, error)
+	// Search returns the top-K items by cosine similarity.
+	Search(ctx context.Context, queryVec []float32, limit int) []storage.ScoredResult
 
 	// Delete removes an item by ID.
-	Delete(ctx context.Context, id string) error
+	Delete(ctx context.Context, itemID string) error
+}
+
+// KeywordSearcher performs full-text keyword search.
+// Implementations: MetadataStore (FTS5)
+type KeywordSearcher interface {
+	KeywordSearch(query string, limit int) ([]storage.KeywordResult, error)
 }
 
 // MetadataStorage stores item metadata and auxiliary data.
 // Implementations: MetadataStore (SQLite)
 type MetadataStorage interface {
-	// SaveItem persists item metadata.
 	SaveItem(item *storage.ItemRecord) error
-
-	// GetItem retrieves item metadata by ID.
 	GetItem(id string) (*storage.ItemRecord, error)
-
-	// RecordFeedback stores user feedback on search results.
+	ListItems(itemType, scope string, limit, offset int) ([]*storage.ItemRecord, error)
+	DeleteItem(id string) error
+	CountItemsByType() (map[string]int, error)
 	RecordFeedback(feedback *storage.FeedbackRecord) error
-
-	// LogFlightRecorder logs a flight recorder entry.
 	LogFlightRecorder(entry *storage.FlightRecorderRecord) error
-
-	// Close releases storage resources.
+	GetFlightRecorderEntries(sessionID string) ([]*storage.FlightRecorderRecord, error)
 	Close() error
+}
+
+// Reranker reorders search results using a cross-encoder model.
+// Implementations: reranking.Reranker (BGE/ONNX)
+type Reranker interface {
+	Rerank(query string, docs []reranking.Document, topK int) ([]reranking.RerankResult, error)
+	Close()
 }
 
 // CodeChunker splits code into semantic chunks.

@@ -13,6 +13,7 @@ tools:
   - flight_recorder_log
 skills:
   - edi-core
+  - retrieval-judge
 ---
 
 # Incident Agent

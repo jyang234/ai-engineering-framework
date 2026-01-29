@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -955,7 +956,7 @@ func BenchmarkListItems(b *testing.B) {
 	// Seed with 1000 items
 	for i := 0; i < 1000; i++ {
 		item := makeTestItem(
-			"item-"+string(rune(i)),
+			fmt.Sprintf("item-%d", i),
 			[]string{"pattern", "failure", "decision"}[i%3],
 			[]string{"project", "global"}[i%2],
 		)
@@ -979,7 +980,7 @@ func BenchmarkCountItems(b *testing.B) {
 	// Seed with 1000 items
 	for i := 0; i < 1000; i++ {
 		item := makeTestItem(
-			"item-"+string(rune(i)),
+			fmt.Sprintf("item-%d", i),
 			[]string{"pattern", "failure", "decision"}[i%3],
 			"project",
 		)
@@ -1004,7 +1005,7 @@ func BenchmarkCountItemsByType(b *testing.B) {
 	types := []string{"pattern", "failure", "decision", "context", "runbook"}
 	for i := 0; i < 1000; i++ {
 		item := makeTestItem(
-			"item-"+string(rune(i)),
+			fmt.Sprintf("item-%d", i),
 			types[i%len(types)],
 			"project",
 		)
@@ -1015,4 +1016,91 @@ func BenchmarkCountItemsByType(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		store.CountItemsByType()
 	}
+}
+
+// =============================================================================
+// FTS5 Keyword Search tests
+// =============================================================================
+
+func TestMetadataStore_KeywordSearch_Basic(t *testing.T) {
+	store, cleanup := createTestMetadataStore(t)
+	defer cleanup()
+
+	store.SaveItem(&ItemRecord{
+		ID:      "item1",
+		Type:    "pattern",
+		Title:   "JWT Authentication Pattern",
+		Content: "Use JSON Web Tokens for stateless authentication",
+		Tags:    []string{"auth", "jwt"},
+		Scope:   "global",
+	})
+	store.SaveItem(&ItemRecord{
+		ID:      "item2",
+		Type:    "decision",
+		Title:   "Database Selection",
+		Content: "We chose PostgreSQL for relational data storage",
+		Tags:    []string{"database"},
+		Scope:   "project",
+	})
+
+	results, err := store.KeywordSearch("authentication", 10)
+	if err != nil {
+		t.Fatalf("KeywordSearch failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].ID != "item1" {
+		t.Errorf("expected item1, got %s", results[0].ID)
+	}
+	if results[0].Score <= 0 {
+		t.Errorf("expected positive score, got %f", results[0].Score)
+	}
+}
+
+func TestMetadataStore_KeywordSearch_NoResults(t *testing.T) {
+	store, cleanup := createTestMetadataStore(t)
+	defer cleanup()
+
+	store.SaveItem(&ItemRecord{
+		ID:      "item1",
+		Type:    "pattern",
+		Title:   "Test Item",
+		Content: "Some content",
+		Scope:   "global",
+	})
+
+	results, err := store.KeywordSearch("nonexistent", 10)
+	if err != nil {
+		t.Fatalf("KeywordSearch failed: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected 0 results, got %d", len(results))
+	}
+}
+
+func TestMetadataStore_KeywordSearch_SpecialChars(t *testing.T) {
+	store, cleanup := createTestMetadataStore(t)
+	defer cleanup()
+
+	store.SaveItem(&ItemRecord{
+		ID:      "item1",
+		Type:    "pattern",
+		Title:   "Error Handling",
+		Content: "Use AND/OR operators carefully",
+		Scope:   "global",
+	})
+
+	// These special FTS5 operators should not crash
+	results, err := store.KeywordSearch("AND OR NOT *", 10)
+	if err != nil {
+		t.Fatalf("KeywordSearch with special chars failed: %v", err)
+	}
+	_ = results // just verify no crash
+
+	results, err = store.KeywordSearch(`query with "quotes"`, 10)
+	if err != nil {
+		t.Fatalf("KeywordSearch with quotes failed: %v", err)
+	}
+	_ = results
 }

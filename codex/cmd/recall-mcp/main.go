@@ -32,8 +32,6 @@ func main() {
 
 	// Initialize search engine
 	engine, err := core.NewSearchEngine(ctx, core.Config{
-		QdrantAddr:       getEnv("QDRANT_ADDR", "localhost:6334"),
-		CollectionName:   getEnv("CODEX_COLLECTION", "recall"),
 		VoyageAPIKey:     os.Getenv("VOYAGE_API_KEY"),
 		OpenAIAPIKey:     os.Getenv("OPENAI_API_KEY"),
 		AnthropicAPIKey:  os.Getenv("ANTHROPIC_API_KEY"),

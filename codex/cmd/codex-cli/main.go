@@ -28,13 +28,11 @@ var rootCmd = &cobra.Command{
 Commands:
   index    - Index files or directories into Codex
   search   - Search the knowledge base
-  migrate  - Migrate from RECALL v0 (SQLite FTS) to Codex v1 (Qdrant)
+  migrate  - Migrate from RECALL v0 (SQLite FTS) to Codex v1
   status   - Show system status and statistics
   serve    - Start MCP server and/or web UI
 
 Environment Variables:
-  QDRANT_ADDR        Qdrant server address (default: localhost:6334)
-  CODEX_COLLECTION   Collection name (default: codex_v1)
   VOYAGE_API_KEY     Voyage AI API key (required for code indexing)
   OPENAI_API_KEY     OpenAI API key (required for doc indexing)
   ANTHROPIC_API_KEY  Anthropic API key (optional, contextual enrichment)

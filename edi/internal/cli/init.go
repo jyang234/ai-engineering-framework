@@ -25,19 +25,26 @@ With --global: Creates ~/.edi/ with default agents, commands, and skills.`,
 func init() {
 	initCmd.Flags().Bool("global", false, "Initialize global EDI installation at ~/.edi/")
 	initCmd.Flags().Bool("force", false, "Overwrite existing files")
+	initCmd.Flags().String("backend", "v0", "RECALL backend: 'v0' (SQLite FTS) or 'codex' (hybrid vector search)")
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
 	global, _ := cmd.Flags().GetBool("global")
 	force, _ := cmd.Flags().GetBool("force")
+	backend, _ := cmd.Flags().GetString("backend")
+
+	// Validate backend option
+	if backend != "v0" && backend != "codex" {
+		return fmt.Errorf("invalid backend '%s': must be 'v0' or 'codex'", backend)
+	}
 
 	if global {
-		return initGlobal(force)
+		return initGlobal(force, backend)
 	}
-	return initProject(force)
+	return initProject(force, backend)
 }
 
-func initGlobal(force bool) error {
+func initGlobal(force bool, backend string) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("failed to get home directory: %w", err)
@@ -59,6 +66,8 @@ func initGlobal(force bool) error {
 		filepath.Join(ediHome, "recall"),
 		filepath.Join(ediHome, "cache"),
 		filepath.Join(ediHome, "logs"),
+		filepath.Join(ediHome, "bin"),    // For binaries like recall-mcp
+		filepath.Join(ediHome, "models"), // For ONNX models (Codex)
 	}
 
 	for _, dir := range dirs {
@@ -86,6 +95,15 @@ func initGlobal(force bool) error {
 		return fmt.Errorf("failed to install edi-core skill: %w", err)
 	}
 
+	// Install retrieval-judge skill to Claude's skills directory
+	retrievalJudgeDir := filepath.Join(home, ".claude", "skills", "retrieval-judge")
+	if err := os.MkdirAll(retrievalJudgeDir, 0755); err != nil {
+		return fmt.Errorf("failed to create retrieval-judge skills directory: %w", err)
+	}
+	if err := installRetrievalJudgeSkill(retrievalJudgeDir); err != nil {
+		return fmt.Errorf("failed to install retrieval-judge skill: %w", err)
+	}
+
 	// Install subagents to Claude's agents directory
 	claudeAgentsDir := filepath.Join(home, ".claude", "agents")
 	if err := os.MkdirAll(claudeAgentsDir, 0755); err != nil {
@@ -95,13 +113,25 @@ func initGlobal(force bool) error {
 		return fmt.Errorf("failed to install subagents: %w", err)
 	}
 
-	// Create default config
+	// Create default config with selected backend
 	configPath := filepath.Join(ediHome, "config.yaml")
-	if err := config.WriteDefault(configPath); err != nil {
+	if err := config.WriteDefaultWithBackend(configPath, backend); err != nil {
 		return fmt.Errorf("failed to write config: %w", err)
 	}
 
-	fmt.Println("Initialized global EDI at ~/.edi/")
+	// Show Codex-specific guidance if selected
+	if backend == "codex" {
+		fmt.Println("Initialized global EDI at ~/.edi/ with Codex backend")
+		fmt.Println("")
+		fmt.Println("IMPORTANT: Codex backend requires additional setup:")
+		fmt.Println("  1. Start Qdrant: docker run -p 6333:6333 -p 6334:6334 qdrant/qdrant")
+		fmt.Println("  2. Build Codex: cd codex && make build")
+		fmt.Println("  3. Install binary: cp codex/bin/recall-mcp ~/.edi/bin/")
+		fmt.Println("  4. Set API keys: export VOYAGE_API_KEY=... OPENAI_API_KEY=...")
+		fmt.Println("")
+	} else {
+		fmt.Println("Initialized global EDI at ~/.edi/")
+	}
 	fmt.Println("")
 	fmt.Println("Created:")
 	fmt.Println("  ~/.edi/agents/         - Agent definitions")
@@ -123,7 +153,9 @@ func initGlobal(force bool) error {
 	return nil
 }
 
-func initProject(force bool) error {
+func initProject(force bool, backend string) error {
+	// Note: backend is not used for project init - project inherits from global config
+	_ = backend
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("failed to get current directory: %w", err)
@@ -220,6 +252,20 @@ func installEdiCoreSkill(dstDir string) error {
 	content, err := assets.EdiCoreSkill.ReadFile("skills/edi-core/SKILL.md")
 	if err != nil {
 		return fmt.Errorf("failed to read edi-core skill: %w", err)
+	}
+
+	dstPath := filepath.Join(dstDir, "SKILL.md")
+	if err := os.WriteFile(dstPath, content, 0644); err != nil {
+		return fmt.Errorf("failed to write skill: %w", err)
+	}
+
+	return nil
+}
+
+func installRetrievalJudgeSkill(dstDir string) error {
+	content, err := assets.RetrievalJudgeSkill.ReadFile("skills/retrieval-judge/SKILL.md")
+	if err != nil {
+		return fmt.Errorf("failed to read retrieval-judge skill: %w", err)
 	}
 
 	dstPath := filepath.Join(dstDir, "SKILL.md")

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/anthropics/aef/codex/internal/chunking"
@@ -769,7 +770,7 @@ func TestIndexer_ErrorWrapping(t *testing.T) {
 			t.Errorf("error should wrap ErrMockEmbedding: %v", err)
 		}
 		// Error message should include context
-		if !contains(err.Error(), "chunk") || !contains(err.Error(), "embed") {
+		if !strings.Contains(err.Error(), "chunk") || !strings.Contains(err.Error(), "embed") {
 			t.Errorf("error should mention chunk and embed: %v", err)
 		}
 	})
@@ -1007,10 +1008,10 @@ func TestBuildCodeTitle_AllTypes(t *testing.T) {
 			if got == "" {
 				t.Error("expected non-empty title")
 			}
-			if !contains(got, chunkType) {
+			if !strings.Contains(got, chunkType) {
 				t.Errorf("title %q should contain type %q", got, chunkType)
 			}
-			if !contains(got, "TestName") {
+			if !strings.Contains(got, "TestName") {
 				t.Errorf("title %q should contain name TestName", got)
 			}
 		})
@@ -1031,19 +1032,6 @@ func TestBuildCodeTitle_AllTypes(t *testing.T) {
 	}
 }
 
-// Helper function
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsAt(s, substr))
-}
-
-func containsAt(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}
 
 // Benchmark tests
 func BenchmarkDetectContentType(b *testing.B) {

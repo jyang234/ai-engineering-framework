@@ -72,6 +72,25 @@ func (h *ToolHandler) handleSearch(ctx context.Context, args map[string]interfac
 		return nil, err
 	}
 
+	// Auto-log search for audit trail
+	scores := make([]map[string]interface{}, len(results))
+	for i, r := range results {
+		scores[i] = map[string]interface{}{
+			"id": r.ID, "title": r.Title, "type": r.Type, "score": r.Score,
+		}
+	}
+	_ = h.engine.LogFlightRecorder(&core.FlightRecorderEntry{
+		ID:        uuid.New().String(),
+		SessionID: h.sessionID,
+		Timestamp: time.Now(),
+		Type:      "retrieval_query",
+		Content:   fmt.Sprintf("recall_search: %q → %d results", query, len(results)),
+		Metadata: map[string]interface{}{
+			"query": query, "types": types, "scope": scope,
+			"limit": limit, "results": scores,
+		},
+	})
+
 	return map[string]interface{}{
 		"results": results,
 		"count":   len(results),
@@ -311,7 +330,7 @@ func getToolDefinitions() []Tool {
 				"properties": map[string]interface{}{
 					"type": map[string]interface{}{
 						"type":        "string",
-						"description": "Type: decision, error, milestone, observation",
+						"description": "Type: decision, error, milestone, observation, retrieval_query, retrieval_judgment",
 					},
 					"content": map[string]interface{}{
 						"type":        "string",

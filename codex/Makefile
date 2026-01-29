@@ -1,4 +1,4 @@
-.PHONY: build test lint clean deps qdrant-up qdrant-down models install
+.PHONY: build test test-coverage test-eval test-judge lint clean deps models install
 
 # Build settings
 BINARY_MCP=recall-mcp
@@ -9,7 +9,8 @@ VERSION=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS=-ldflags "-X main.Version=$(VERSION)"
 
 # Go settings
-GOFLAGS=-tags "fts5"
+GO_BUILDFLAGS=-tags "fts5"
+EVALFLAGS=-tags "fts5 evalintegration"
 
 # Default target
 all: build
@@ -18,13 +19,13 @@ all: build
 build: build-mcp build-web build-cli
 
 build-mcp:
-	go build $(GOFLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_MCP) ./cmd/recall-mcp
+	go build $(GO_BUILDFLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_MCP) ./cmd/recall-mcp
 
 build-web:
-	go build $(GOFLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_WEB) ./cmd/codex-web
+	go build $(GO_BUILDFLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_WEB) ./cmd/codex-web
 
 build-cli:
-	go build $(GOFLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_CLI) ./cmd/codex-cli
+	go build $(GO_BUILDFLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_CLI) ./cmd/codex-cli
 
 # Install binaries to GOPATH/bin
 install: build
@@ -34,10 +35,26 @@ install: build
 
 # Run tests
 test:
-	go test $(GOFLAGS) -v ./...
+	go test $(GO_BUILDFLAGS) -v ./...
+
+# Load .env if present
+ifneq (,$(wildcard .env))
+include .env
+export
+endif
+
+# Run retrieval evaluation (requires VOYAGE_API_KEY, OPENAI_API_KEY)
+# Indexes once, then runs all E2E subtests against that single index.
+test-eval:
+	go test $(EVALFLAGS) -v -timeout 15m -run TestE2E -short ./eval/
+
+# Run LLM judge + retrieval evaluation (requires VOYAGE_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY)
+# Indexes twice total: once for E2E subtests, once for judge subtests.
+test-judge:
+	go test $(EVALFLAGS) -v -timeout 45m ./eval/
 
 test-coverage:
-	go test $(GOFLAGS) -v -coverprofile=coverage.out ./...
+	go test $(GO_BUILDFLAGS) -v -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out -o coverage.html
 
 # Lint
@@ -48,16 +65,6 @@ lint:
 deps:
 	go mod download
 	go mod tidy
-
-# Qdrant management
-qdrant-up:
-	docker-compose up -d qdrant
-
-qdrant-down:
-	docker-compose down
-
-qdrant-logs:
-	docker-compose logs -f qdrant
 
 # Download ONNX models for reranking
 models:
