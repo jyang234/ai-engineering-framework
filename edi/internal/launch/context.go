@@ -67,6 +67,10 @@ func BuildContext(cfg *config.Config, sessionID string, brief *briefing.Briefing
 		sb.WriteString("- Look up past decisions (ADRs) for context\n")
 		sb.WriteString("- Search for known issues when troubleshooting\n\n")
 		sb.WriteString("Available tools: recall_search, recall_get, recall_add, recall_feedback, flight_recorder_log\n\n")
+		sb.WriteString("**After EVERY recall_search**: Apply retrieval-judge skill.\n")
+		sb.WriteString("1. Evaluate each result for relevance to the query\n")
+		sb.WriteString("2. Log judgment: flight_recorder_log({type: \"retrieval_judgment\", content: \"X/Y results kept for '<query>'\", metadata: {query, kept, dropped}})\n")
+		sb.WriteString("3. Show summary to user: \"RECALL: X/Y results kept for [query]\"\n\n")
 	}
 
 	// Include slash command instructions

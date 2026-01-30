@@ -101,9 +101,41 @@ func (h *ToolHandler) handleSearch(ctx context.Context, args map[string]interfac
 		},
 	})
 
+	// Compute top score for relative scoring
+	var topScore float64
+	for _, r := range results {
+		if r.Score > topScore {
+			topScore = r.Score
+		}
+	}
+
+	// Build ranked results with score percentage
+	ranked := make([]map[string]interface{}, len(results))
+	for i, r := range results {
+		scorePct := 0.0
+		if topScore > 0 {
+			scorePct = (r.Score / topScore) * 100
+		}
+		ranked[i] = map[string]interface{}{
+			"rank":      i + 1,
+			"id":        r.ID,
+			"type":      r.Type,
+			"title":     r.Title,
+			"content":   r.Content,
+			"tags":      r.Tags,
+			"scope":     r.Scope,
+			"score":     r.Score,
+			"score_pct": fmt.Sprintf("%.0f%%", scorePct),
+		}
+	}
+
 	return map[string]interface{}{
-		"results": results,
-		"count":   len(results),
+		"results": ranked,
+		"count":   len(ranked),
+		"_judge_reminder": fmt.Sprintf(
+			"Apply retrieval-judge skill: evaluate each of the %d results for relevance to query %q. Log judgment via flight_recorder_log(type='retrieval_judgment'), then show 'RECALL: X/%d results kept for %q'.",
+			len(ranked), query, len(ranked), query,
+		),
 	}, nil
 }
 
@@ -264,7 +296,7 @@ func getToolDefinitions() []Tool {
 	return []Tool{
 		{
 			Name:        "recall_search",
-			Description: "Search organizational knowledge for patterns, failures, decisions, and code",
+			Description: "Search organizational knowledge for patterns, failures, decisions, and code. After receiving results, apply retrieval-judge skill: evaluate each result for relevance, keep only directly applicable results, and log judgment via flight_recorder_log.",
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{

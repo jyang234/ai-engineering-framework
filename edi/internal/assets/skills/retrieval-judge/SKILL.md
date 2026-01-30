@@ -5,7 +5,7 @@ description: Evaluate and filter recall_search results for relevance
 
 # Retrieval Judge Skill
 
-When using `recall_search`, apply critical judgment to results rather than treating them as authoritative.
+When using `recall_search`, you MUST apply critical judgment to results rather than treating them as authoritative. This is a mandatory step after every `recall_search` call.
 
 ## Query Construction
 
