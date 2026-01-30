@@ -1,0 +1,34 @@
+# Benchmark: nomic-embed-text (local via Ollama)
+# Date: 2026-01-29
+# Model: nomic-embed-text (137M params, 768-dim)
+# Server: Ollama localhost:11434
+
+## Run 1 (within TestE2E subtests)
+Recall@5:    0.829
+Recall@10:   0.908
+Precision@5: 0.360
+nDCG@10:     0.784
+MRR:         0.842
+
+Per-Category nDCG@10:
+  semantic:         0.761
+  keyword:          0.742
+  hybrid-advantage: 0.860
+
+## Run 2 (FullReport independent harness)
+Recall@5:    0.830
+Recall@10:   0.910
+Precision@5: 0.360
+nDCG@10:     0.762
+MRR:         0.782
+
+Per-Category nDCG@10:
+  semantic:         0.722
+  keyword:          0.720
+  hybrid-advantage: 0.857
+
+## Notes
+- 30 docs indexed in ~30s (no rate limits)
+- 768-dim vectors (25% less storage than Voyage 1024-dim)
+- Zero API cost, fully offline
+- All test thresholds passed (Recall@10 min=0.30, MRR min=0.20)

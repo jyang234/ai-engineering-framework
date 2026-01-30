@@ -1,0 +1,33 @@
+# Benchmark: Voyage Code-3 (API)
+# Date: 2026-01-29
+# Model: voyage-code-3 (1024-dim)
+# Server: api.voyageai.com
+
+## Run 1 (within TestE2E subtests)
+Recall@5:    0.863
+Recall@10:   0.908
+Precision@5: 0.380
+nDCG@10:     0.776
+MRR:         0.792
+
+Per-Category nDCG@10:
+  semantic:         0.822
+  keyword:          0.729
+  hybrid-advantage: 0.778
+
+## Run 2 (FullReport independent harness)
+Recall@5:    0.850
+Recall@10:   0.910
+Precision@5: 0.370
+nDCG@10:     0.800
+MRR:         0.850
+
+Per-Category nDCG@10:
+  semantic:         0.835
+  keyword:          0.743
+  hybrid-advantage: 0.833
+
+## Notes
+- 30 docs indexed in ~24s (API rate ok at this scale, but 3 RPM free-tier limit)
+- 1024-dim vectors
+- Requires VOYAGE_API_KEY

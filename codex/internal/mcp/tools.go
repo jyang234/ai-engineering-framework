@@ -72,7 +72,7 @@ func (h *ToolHandler) handleSearch(ctx context.Context, args map[string]interfac
 		return nil, err
 	}
 
-	// Auto-log search for audit trail
+	// Auto-log successful search for audit trail
 	scores := make([]map[string]interface{}, len(results))
 	for i, r := range results {
 		scores[i] = map[string]interface{}{
@@ -83,7 +83,7 @@ func (h *ToolHandler) handleSearch(ctx context.Context, args map[string]interfac
 		ID:        uuid.New().String(),
 		SessionID: h.sessionID,
 		Timestamp: time.Now(),
-		Type:      "retrieval_query",
+		Type:      core.FlightTypeRetrievalQuery,
 		Content:   fmt.Sprintf("recall_search: %q → %d results", query, len(results)),
 		Metadata: map[string]interface{}{
 			"query": query, "types": types, "scope": scope,
@@ -210,12 +210,13 @@ func (h *ToolHandler) handleFlightRecorderLog(args map[string]interface{}) (inte
 
 func generateID(itemType string) string {
 	prefix := map[string]string{
-		"pattern":  "P",
-		"failure":  "F",
-		"decision": "D",
-		"context":  "C",
-		"code":     "X",
-		"doc":      "O",
+		core.TypePattern:  "P",
+		core.TypeFailure:  "F",
+		core.TypeDecision: "D",
+		core.TypeContext:  "C",
+		core.TypeCode:     "X",
+		core.TypeDoc:      "O",
+		core.TypeRunbook:  "R",
 	}[itemType]
 
 	if prefix == "" {

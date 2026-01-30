@@ -31,10 +31,9 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	fmt.Println("\nConfiguration:")
 	fmt.Printf("  Metadata:   %s\n", cfg.MetadataDBPath)
 
-	// API Keys
-	fmt.Println("\nAPI Keys:")
-	fmt.Printf("  Voyage:    %s\n", keyStatus(cfg.VoyageAPIKey))
-	fmt.Printf("  OpenAI:    %s\n", keyStatus(cfg.OpenAIAPIKey))
+	// Embedding Config
+	fmt.Println("\nEmbedding:")
+	fmt.Printf("  Model:     %s\n", valueOrDefault(cfg.LocalEmbeddingModel, "nomic-embed-text"))
 	fmt.Printf("  Anthropic: %s\n", keyStatus(cfg.AnthropicAPIKey))
 
 	// Models
@@ -78,6 +77,13 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func valueOrDefault(val, def string) string {
+	if val == "" {
+		return def + " (default)"
+	}
+	return val
 }
 
 func keyStatus(key string) string {

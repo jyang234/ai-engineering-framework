@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -131,7 +132,9 @@ func migrateItem(ctx context.Context, v0Item V0Item, indexer *Indexer) (*IndexRe
 	// Parse tags
 	var tags []string
 	if v0Item.Tags != "" {
-		json.Unmarshal([]byte(v0Item.Tags), &tags)
+		if err := json.Unmarshal([]byte(v0Item.Tags), &tags); err != nil {
+			log.Printf("Warning: malformed tags JSON for %s, skipping tags: %v", v0Item.ID, err)
+		}
 	}
 
 	// Determine content type for routing
@@ -152,18 +155,18 @@ func migrateItem(ctx context.Context, v0Item V0Item, indexer *Indexer) (*IndexRe
 // mapV0TypeToV1Type maps RECALL v0 types to Codex v1 types
 func mapV0TypeToV1Type(v0Type string) string {
 	switch v0Type {
-	case "pattern":
-		return "pattern" // Code patterns - use Voyage embeddings
-	case "failure":
-		return "failure" // Failure patterns - use Voyage embeddings
-	case "decision", "adr":
-		return "decision" // Decisions/ADRs - use OpenAI embeddings
-	case "context":
-		return "context" // General context - use OpenAI embeddings
-	case "runbook":
-		return "runbook" // Runbooks - use OpenAI embeddings
+	case TypePattern:
+		return TypePattern // Code patterns - use Voyage embeddings
+	case TypeFailure:
+		return TypeFailure // Failure patterns - use Voyage embeddings
+	case TypeDecision, "adr":
+		return TypeDecision // Decisions/ADRs - use OpenAI embeddings
+	case TypeContext:
+		return TypeContext // General context - use OpenAI embeddings
+	case TypeRunbook:
+		return TypeRunbook // Runbooks - use OpenAI embeddings
 	default:
-		return "context" // Default to context
+		return TypeContext // Default to context
 	}
 }
 

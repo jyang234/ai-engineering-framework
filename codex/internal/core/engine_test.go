@@ -279,12 +279,12 @@ func TestSearchEngine_Update(t *testing.T) {
 			UpdatedAt: time.Now().Add(-time.Hour),
 		}
 
-		codeEmbed := NewMockCodeEmbedder()
+		embed := NewMockEmbedder()
 		vectorStore := NewMockVectorStorage()
 
 		engine := &SearchEngine{
 			metadata: metaStore,
-			voyage:   codeEmbed,
+			embedder: embed,
 			vecStore: vectorStore,
 		}
 
@@ -302,8 +302,8 @@ func TestSearchEngine_Update(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Update failed: %v", err)
 		}
-		if codeEmbed.CallCount != 1 {
-			t.Errorf("expected 1 embed call, got %d", codeEmbed.CallCount)
+		if embed.CallCount != 1 {
+			t.Errorf("expected 1 embed call, got %d", embed.CallCount)
 		}
 		if vectorStore.UpsertCount != 1 {
 			t.Errorf("expected 1 upsert, got %d", vectorStore.UpsertCount)
@@ -344,108 +344,6 @@ func TestSearchEngine_Update(t *testing.T) {
 		}
 	})
 
-	t.Run("Given document type item When Update called Then uses doc embedder", func(t *testing.T) {
-		// Given
-		metaStore := NewMockMetadataStorage()
-		metaStore.Items["item-1"] = &storage.ItemRecord{
-			ID:   "item-1",
-			Type: "decision",
-		}
-
-		docEmbed := NewMockDocEmbedder()
-		vectorStore := NewMockVectorStorage()
-
-		engine := &SearchEngine{
-			metadata: metaStore,
-			openai:   docEmbed,
-			vecStore: vectorStore,
-		}
-
-		// When
-		item := &Item{
-			ID:      "item-1",
-			Type:    "decision",
-			Content: "Decision content",
-		}
-		err := engine.Update(ctx, item)
-
-		// Then
-		if err != nil {
-			t.Fatalf("Update failed: %v", err)
-		}
-		if docEmbed.CallCount != 1 {
-			t.Errorf("expected doc embedder to be called, got %d calls", docEmbed.CallCount)
-		}
-	})
-
-	t.Run("Given code type item When Update called Then uses code embedder", func(t *testing.T) {
-		// Given
-		metaStore := NewMockMetadataStorage()
-		metaStore.Items["item-1"] = &storage.ItemRecord{
-			ID:   "item-1",
-			Type: "code",
-		}
-
-		codeEmbed := NewMockCodeEmbedder()
-		vectorStore := NewMockVectorStorage()
-
-		engine := &SearchEngine{
-			metadata: metaStore,
-			voyage:   codeEmbed,
-			vecStore: vectorStore,
-		}
-
-		// When
-		item := &Item{
-			ID:      "item-1",
-			Type:    "code",
-			Content: "func main() {}",
-		}
-		err := engine.Update(ctx, item)
-
-		// Then
-		if err != nil {
-			t.Fatalf("Update failed: %v", err)
-		}
-		if codeEmbed.CallCount != 1 {
-			t.Errorf("expected code embedder to be called, got %d calls", codeEmbed.CallCount)
-		}
-	})
-
-	t.Run("Given failure type item When Update called Then uses code embedder", func(t *testing.T) {
-		// Given
-		metaStore := NewMockMetadataStorage()
-		metaStore.Items["item-1"] = &storage.ItemRecord{
-			ID:   "item-1",
-			Type: "failure",
-		}
-
-		codeEmbed := NewMockCodeEmbedder()
-		vectorStore := NewMockVectorStorage()
-
-		engine := &SearchEngine{
-			metadata: metaStore,
-			voyage:   codeEmbed,
-			vecStore: vectorStore,
-		}
-
-		// When
-		item := &Item{
-			ID:      "item-1",
-			Type:    "failure",
-			Content: "Error message",
-		}
-		err := engine.Update(ctx, item)
-
-		// Then
-		if err != nil {
-			t.Fatalf("Update failed: %v", err)
-		}
-		if codeEmbed.CallCount != 1 {
-			t.Errorf("expected code embedder to be called for failure type")
-		}
-	})
-
 	t.Run("Given embedding fails When Update called Then returns error", func(t *testing.T) {
 		// Given
 		metaStore := NewMockMetadataStorage()
@@ -454,12 +352,12 @@ func TestSearchEngine_Update(t *testing.T) {
 			Type: "pattern",
 		}
 
-		codeEmbed := NewMockCodeEmbedder()
-		codeEmbed.FailOnCall = 1
+		embed := NewMockEmbedder()
+		embed.FailOnCall = 1
 
 		engine := &SearchEngine{
 			metadata: metaStore,
-			voyage:   codeEmbed,
+			embedder: embed,
 		}
 
 		// When
@@ -479,36 +377,6 @@ func TestSearchEngine_Update(t *testing.T) {
 		}
 	})
 
-	t.Run("Given doc embedding fails When Update called Then returns error", func(t *testing.T) {
-		// Given
-		metaStore := NewMockMetadataStorage()
-		metaStore.Items["item-1"] = &storage.ItemRecord{
-			ID:   "item-1",
-			Type: "decision",
-		}
-
-		docEmbed := NewMockDocEmbedder()
-		docEmbed.FailOnCall = 1
-
-		engine := &SearchEngine{
-			metadata: metaStore,
-			openai:   docEmbed,
-		}
-
-		// When
-		item := &Item{
-			ID:      "item-1",
-			Type:    "decision",
-			Content: "Content",
-		}
-		err := engine.Update(ctx, item)
-
-		// Then
-		if err == nil {
-			t.Fatal("expected error when doc embedding fails")
-		}
-	})
-
 	t.Run("Given vector upsert fails When Update called Then returns error", func(t *testing.T) {
 		// Given
 		metaStore := NewMockMetadataStorage()
@@ -517,13 +385,13 @@ func TestSearchEngine_Update(t *testing.T) {
 			Type: "pattern",
 		}
 
-		codeEmbed := NewMockCodeEmbedder()
+		embed := NewMockEmbedder()
 		vectorStore := NewMockVectorStorage()
 		vectorStore.FailOnUpsert = 1
 
 		engine := &SearchEngine{
 			metadata: metaStore,
-			voyage:   codeEmbed,
+			embedder: embed,
 			vecStore: vectorStore,
 		}
 
@@ -550,12 +418,12 @@ func TestSearchEngine_Update(t *testing.T) {
 		}
 		metaStore.FailOnSave = 1
 
-		codeEmbed := NewMockCodeEmbedder()
+		embed := NewMockEmbedder()
 		vectorStore := NewMockVectorStorage()
 
 		engine := &SearchEngine{
 			metadata: metaStore,
-			voyage:   codeEmbed,
+			embedder: embed,
 			vecStore: vectorStore,
 		}
 
@@ -766,14 +634,12 @@ func TestSearchEngine_Search(t *testing.T) {
 
 	t.Run("Given items exist When Search called Then returns results with scores", func(t *testing.T) {
 		// Given
-		codeEmbed := NewMockCodeEmbedder()
-		docEmbed := NewMockDocEmbedder()
+		embed := NewMockEmbedder()
 		vectorStore := NewMockVectorStorage()
 		vectorStore.Vectors["item-1"] = []float32{1.0}
 
 		engine := &SearchEngine{
-			voyage:   codeEmbed,
-			openai:   docEmbed,
+			embedder: embed,
 			vecStore: vectorStore,
 		}
 
@@ -797,8 +663,7 @@ func TestSearchEngine_Search(t *testing.T) {
 
 	t.Run("Given request with type filter When Search called Then filters results by type", func(t *testing.T) {
 		// Given
-		codeEmbed := NewMockCodeEmbedder()
-		docEmbed := NewMockDocEmbedder()
+		embed := NewMockEmbedder()
 		vectorStore := NewMockVectorStorage()
 		metaStore := NewMockMetadataStorage()
 		metaStore.Items["item-1"] = &storage.ItemRecord{ID: "item-1", Type: "pattern", Title: "P1"}
@@ -807,8 +672,7 @@ func TestSearchEngine_Search(t *testing.T) {
 		vectorStore.Vectors["item-2"] = []float32{1.0}
 
 		engine := &SearchEngine{
-			voyage:   codeEmbed,
-			openai:   docEmbed,
+			embedder: embed,
 			vecStore: vectorStore,
 			metadata: metaStore,
 		}
@@ -833,8 +697,7 @@ func TestSearchEngine_Search(t *testing.T) {
 
 	t.Run("Given request with scope filter When Search called Then filters results by scope", func(t *testing.T) {
 		// Given
-		codeEmbed := NewMockCodeEmbedder()
-		docEmbed := NewMockDocEmbedder()
+		embed := NewMockEmbedder()
 		vectorStore := NewMockVectorStorage()
 		metaStore := NewMockMetadataStorage()
 		metaStore.Items["item-1"] = &storage.ItemRecord{ID: "item-1", Type: "pattern", Scope: "global", Title: "G1"}
@@ -843,8 +706,7 @@ func TestSearchEngine_Search(t *testing.T) {
 		vectorStore.Vectors["item-2"] = []float32{1.0}
 
 		engine := &SearchEngine{
-			voyage:   codeEmbed,
-			openai:   docEmbed,
+			embedder: embed,
 			vecStore: vectorStore,
 			metadata: metaStore,
 		}
@@ -869,8 +731,7 @@ func TestSearchEngine_Search(t *testing.T) {
 
 	t.Run("Given default limit When Search called without limit Then uses default of 10", func(t *testing.T) {
 		// Given
-		codeEmbed := NewMockCodeEmbedder()
-		docEmbed := NewMockDocEmbedder()
+		embed := NewMockEmbedder()
 		vectorStore := NewMockVectorStorage()
 		// Add more items than default limit
 		for i := 0; i < 15; i++ {
@@ -879,8 +740,7 @@ func TestSearchEngine_Search(t *testing.T) {
 		}
 
 		engine := &SearchEngine{
-			voyage:   codeEmbed,
-			openai:   docEmbed,
+			embedder: embed,
 			vecStore: vectorStore,
 		}
 
@@ -901,15 +761,13 @@ func TestSearchEngine_Search(t *testing.T) {
 
 	t.Run("Given embedding fails When Search called Then returns error", func(t *testing.T) {
 		// Given
-		codeEmbed := NewMockCodeEmbedder()
-		codeEmbed.QueryFunc = func(ctx context.Context, query string) ([]float32, error) {
+		embed := NewMockEmbedder()
+		embed.QueryFunc = func(ctx context.Context, query string) ([]float32, error) {
 			return nil, ErrMockEmbedding
 		}
-		docEmbed := NewMockDocEmbedder()
 
 		engine := &SearchEngine{
-			voyage: codeEmbed,
-			openai: docEmbed,
+			embedder: embed,
 		}
 
 		// When
@@ -921,41 +779,34 @@ func TestSearchEngine_Search(t *testing.T) {
 		}
 	})
 
-	t.Run("Given vector search returns empty When Search called Then returns empty results", func(t *testing.T) {
+	t.Run("Given vector search fails When Search called Then returns error", func(t *testing.T) {
 		// Given
-		codeEmbed := NewMockCodeEmbedder()
-		docEmbed := NewMockDocEmbedder()
+		embed := NewMockEmbedder()
 		vectorStore := NewMockVectorStorage()
-		vectorStore.FailOnSearch = true // returns nil results
+		vectorStore.FailOnSearch = true
 
 		engine := &SearchEngine{
-			voyage:   codeEmbed,
-			openai:   docEmbed,
+			embedder: embed,
 			vecStore: vectorStore,
 		}
 
 		// When
-		results, err := engine.Search(ctx, SearchRequest{Query: "test"})
+		_, err := engine.Search(ctx, SearchRequest{Query: "test"})
 
 		// Then
-		if err != nil {
-			t.Fatalf("Search should not fail: %v", err)
-		}
-		if len(results) != 0 {
-			t.Errorf("expected 0 results, got %d", len(results))
+		if err == nil {
+			t.Fatal("expected error when vector search fails")
 		}
 	})
 
 	t.Run("Given no results When Search called Then returns empty slice", func(t *testing.T) {
 		// Given
-		codeEmbed := NewMockCodeEmbedder()
-		docEmbed := NewMockDocEmbedder()
+		embed := NewMockEmbedder()
 		vectorStore := NewMockVectorStorage()
 		// No items in store
 
 		engine := &SearchEngine{
-			voyage:   codeEmbed,
-			openai:   docEmbed,
+			embedder: embed,
 			vecStore: vectorStore,
 		}
 
@@ -971,36 +822,14 @@ func TestSearchEngine_Search(t *testing.T) {
 		}
 	})
 
-	t.Run("Given openai embedding fails When Search called Then returns error", func(t *testing.T) {
+	t.Run("Given vectors exist When Search called Then searches vector store once", func(t *testing.T) {
 		// Given
-		codeEmbed := NewMockCodeEmbedder()
-		docEmbed := NewMockDocEmbedder()
-		docEmbed.FailOnCall = 1
-
-		engine := &SearchEngine{
-			voyage: codeEmbed,
-			openai: docEmbed,
-		}
-
-		// When
-		_, err := engine.Search(ctx, SearchRequest{Query: "test"})
-
-		// Then
-		if err == nil {
-			t.Fatal("expected error when openai embedding fails")
-		}
-	})
-
-	t.Run("Given dual-space vectors When Search called Then searches both spaces", func(t *testing.T) {
-		// Given
-		codeEmbed := NewMockCodeEmbedder()
-		docEmbed := NewMockDocEmbedder()
+		embed := NewMockEmbedder()
 		vectorStore := NewMockVectorStorage()
 		vectorStore.Vectors["item-1"] = []float32{1.0}
 
 		engine := &SearchEngine{
-			voyage:   codeEmbed,
-			openai:   docEmbed,
+			embedder: embed,
 			vecStore: vectorStore,
 		}
 
@@ -1011,30 +840,28 @@ func TestSearchEngine_Search(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Search failed: %v", err)
 		}
-		// Vector store should be searched twice (once per embedding space)
-		if vectorStore.SearchCount != 2 {
-			t.Errorf("expected 2 vector searches (dual-space), got %d", vectorStore.SearchCount)
+		// Vector store should be searched once (single embedding space)
+		if vectorStore.SearchCount != 1 {
+			t.Errorf("expected 1 vector search, got %d", vectorStore.SearchCount)
 		}
 	})
 
 	t.Run("Given score threshold configured When Search called Then drops low-scoring results", func(t *testing.T) {
 		// Given
-		codeEmbed := NewMockCodeEmbedder()
-		docEmbed := NewMockDocEmbedder()
+		embed := NewMockEmbedder()
 		vectorStore := NewMockVectorStorage()
 		// Set up search to return results with varying scores
-		vectorStore.SearchFunc = func(ctx context.Context, queryVec []float32, limit int) []storage.ScoredResult {
+		vectorStore.SearchFunc = func(ctx context.Context, queryVec []float32, limit int) ([]storage.ScoredResult, error) {
 			return []storage.ScoredResult{
 				{ID: "high", Score: 0.95},
 				{ID: "mid", Score: 0.70},
 				{ID: "low", Score: 0.30},
-			}
+			}, nil
 		}
 
 		engine := &SearchEngine{
 			config:   Config{ScoreThreshold: 0.5},
-			voyage:   codeEmbed,
-			openai:   docEmbed,
+			embedder: embed,
 			vecStore: vectorStore,
 		}
 
@@ -1058,8 +885,7 @@ func TestSearchEngine_Search(t *testing.T) {
 
 	t.Run("Given no score threshold When Search called Then returns all results", func(t *testing.T) {
 		// Given
-		codeEmbed := NewMockCodeEmbedder()
-		docEmbed := NewMockDocEmbedder()
+		embed := NewMockEmbedder()
 		vectorStore := NewMockVectorStorage()
 		for i := 0; i < 5; i++ {
 			vectorStore.Vectors[string(rune('a'+i))] = []float32{1.0}
@@ -1067,8 +893,7 @@ func TestSearchEngine_Search(t *testing.T) {
 
 		engine := &SearchEngine{
 			config:   Config{ScoreThreshold: 0}, // disabled
-			voyage:   codeEmbed,
-			openai:   docEmbed,
+			embedder: embed,
 			vecStore: vectorStore,
 		}
 
@@ -1086,8 +911,7 @@ func TestSearchEngine_Search(t *testing.T) {
 
 	t.Run("Given more results than limit When Search called Then truncates to limit", func(t *testing.T) {
 		// Given
-		codeEmbed := NewMockCodeEmbedder()
-		docEmbed := NewMockDocEmbedder()
+		embed := NewMockEmbedder()
 		vectorStore := NewMockVectorStorage()
 		for i := 0; i < 20; i++ {
 			id := "item-" + string(rune('a'+i))
@@ -1095,8 +919,7 @@ func TestSearchEngine_Search(t *testing.T) {
 		}
 
 		engine := &SearchEngine{
-			voyage:   codeEmbed,
-			openai:   docEmbed,
+			embedder: embed,
 			vecStore: vectorStore,
 		}
 
@@ -1223,12 +1046,12 @@ func TestSearchEngine_Add(t *testing.T) {
 
 	t.Run("Given valid pattern item When Add called Then stores in both vector store and metadata", func(t *testing.T) {
 		// Given
-		codeEmbed := NewMockCodeEmbedder()
+		embed := NewMockEmbedder()
 		vectorStore := NewMockVectorStorage()
 		metaStore := NewMockMetadataStorage()
 
 		engine := &SearchEngine{
-			voyage:   codeEmbed,
+			embedder: embed,
 			vecStore: vectorStore,
 			metadata: metaStore,
 		}
@@ -1247,8 +1070,8 @@ func TestSearchEngine_Add(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Add failed: %v", err)
 		}
-		if codeEmbed.CallCount != 1 {
-			t.Errorf("expected 1 embed call, got %d", codeEmbed.CallCount)
+		if embed.CallCount != 1 {
+			t.Errorf("expected 1 embed call, got %d", embed.CallCount)
 		}
 		if vectorStore.UpsertCount != 1 {
 			t.Errorf("expected 1 upsert, got %d", vectorStore.UpsertCount)
@@ -1258,81 +1081,14 @@ func TestSearchEngine_Add(t *testing.T) {
 		}
 	})
 
-	t.Run("Given valid failure item When Add called Then uses code embedder", func(t *testing.T) {
+	t.Run("Given valid decision item When Add called Then embeds and stores successfully", func(t *testing.T) {
 		// Given
-		codeEmbed := NewMockCodeEmbedder()
-		docEmbed := NewMockDocEmbedder()
+		embed := NewMockEmbedder()
 		vectorStore := NewMockVectorStorage()
 		metaStore := NewMockMetadataStorage()
 
 		engine := &SearchEngine{
-			voyage:   codeEmbed,
-			openai:   docEmbed,
-			vecStore: vectorStore,
-			metadata: metaStore,
-		}
-
-		// When
-		item := &Item{
-			ID:      "failure-1",
-			Type:    "failure",
-			Content: "Failure content",
-		}
-		err := engine.Add(ctx, item)
-
-		// Then
-		if err != nil {
-			t.Fatalf("Add failed: %v", err)
-		}
-		if codeEmbed.CallCount != 1 {
-			t.Errorf("expected code embedder to be called")
-		}
-		if docEmbed.CallCount != 0 {
-			t.Errorf("expected doc embedder NOT to be called")
-		}
-	})
-
-	t.Run("Given valid code item When Add called Then uses code embedder", func(t *testing.T) {
-		// Given
-		codeEmbed := NewMockCodeEmbedder()
-		docEmbed := NewMockDocEmbedder()
-		vectorStore := NewMockVectorStorage()
-		metaStore := NewMockMetadataStorage()
-
-		engine := &SearchEngine{
-			voyage:   codeEmbed,
-			openai:   docEmbed,
-			vecStore: vectorStore,
-			metadata: metaStore,
-		}
-
-		// When
-		item := &Item{
-			ID:      "code-1",
-			Type:    "code",
-			Content: "func main() {}",
-		}
-		err := engine.Add(ctx, item)
-
-		// Then
-		if err != nil {
-			t.Fatalf("Add failed: %v", err)
-		}
-		if codeEmbed.CallCount != 1 {
-			t.Errorf("expected code embedder to be called")
-		}
-	})
-
-	t.Run("Given valid decision item When Add called Then uses doc embedder", func(t *testing.T) {
-		// Given
-		codeEmbed := NewMockCodeEmbedder()
-		docEmbed := NewMockDocEmbedder()
-		vectorStore := NewMockVectorStorage()
-		metaStore := NewMockMetadataStorage()
-
-		engine := &SearchEngine{
-			voyage:   codeEmbed,
-			openai:   docEmbed,
+			embedder: embed,
 			vecStore: vectorStore,
 			metadata: metaStore,
 		}
@@ -1349,50 +1105,18 @@ func TestSearchEngine_Add(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Add failed: %v", err)
 		}
-		if docEmbed.CallCount != 1 {
-			t.Errorf("expected doc embedder to be called")
-		}
-		if codeEmbed.CallCount != 0 {
-			t.Errorf("expected code embedder NOT to be called")
+		if embed.CallCount != 1 {
+			t.Errorf("expected embedder to be called once, got %d calls", embed.CallCount)
 		}
 	})
 
-	t.Run("Given valid context item When Add called Then uses doc embedder", func(t *testing.T) {
+	t.Run("Given embedding fails When Add called Then returns error", func(t *testing.T) {
 		// Given
-		docEmbed := NewMockDocEmbedder()
-		vectorStore := NewMockVectorStorage()
-		metaStore := NewMockMetadataStorage()
+		embed := NewMockEmbedder()
+		embed.FailOnCall = 1
 
 		engine := &SearchEngine{
-			openai:   docEmbed,
-			vecStore: vectorStore,
-			metadata: metaStore,
-		}
-
-		// When
-		item := &Item{
-			ID:      "context-1",
-			Type:    "context",
-			Content: "Context content",
-		}
-		err := engine.Add(ctx, item)
-
-		// Then
-		if err != nil {
-			t.Fatalf("Add failed: %v", err)
-		}
-		if docEmbed.CallCount != 1 {
-			t.Errorf("expected doc embedder to be called for context type")
-		}
-	})
-
-	t.Run("Given code embedding fails When Add called Then returns error", func(t *testing.T) {
-		// Given
-		codeEmbed := NewMockCodeEmbedder()
-		codeEmbed.FailOnCall = 1
-
-		engine := &SearchEngine{
-			voyage: codeEmbed,
+			embedder: embed,
 		}
 
 		// When
@@ -1409,38 +1133,15 @@ func TestSearchEngine_Add(t *testing.T) {
 		}
 	})
 
-	t.Run("Given doc embedding fails When Add called Then returns error", func(t *testing.T) {
-		// Given
-		docEmbed := NewMockDocEmbedder()
-		docEmbed.FailOnCall = 1
-
-		engine := &SearchEngine{
-			openai: docEmbed,
-		}
-
-		// When
-		item := &Item{
-			ID:      "item-1",
-			Type:    "decision",
-			Content: "Content",
-		}
-		err := engine.Add(ctx, item)
-
-		// Then
-		if err == nil {
-			t.Fatal("expected error when embedding fails")
-		}
-	})
-
 	t.Run("Given vector upsert fails When Add called Then returns error", func(t *testing.T) {
 		// Given
-		codeEmbed := NewMockCodeEmbedder()
+		embed := NewMockEmbedder()
 		vectorStore := NewMockVectorStorage()
 		vectorStore.FailOnUpsert = 1
 		metaStore := NewMockMetadataStorage()
 
 		engine := &SearchEngine{
-			voyage:   codeEmbed,
+			embedder: embed,
 			vecStore: vectorStore,
 			metadata: metaStore,
 		}
@@ -1461,13 +1162,13 @@ func TestSearchEngine_Add(t *testing.T) {
 
 	t.Run("Given metadata save fails When Add called Then returns error", func(t *testing.T) {
 		// Given
-		codeEmbed := NewMockCodeEmbedder()
+		embed := NewMockEmbedder()
 		vectorStore := NewMockVectorStorage()
 		metaStore := NewMockMetadataStorage()
 		metaStore.FailOnSave = 1
 
 		engine := &SearchEngine{
-			voyage:   codeEmbed,
+			embedder: embed,
 			vecStore: vectorStore,
 			metadata: metaStore,
 		}
@@ -1765,4 +1466,3 @@ func TestItemToRecord(t *testing.T) {
 		}
 	})
 }
-

@@ -25,12 +25,12 @@ type EvalHarness struct {
 }
 
 // NewEvalHarness creates a harness with a real SearchEngine using a temp DB.
+// Uses local Ollama nomic-embed-text model. Set LOCAL_EMBEDDING_URL to override
+// the Ollama endpoint (default: http://localhost:11434/api/embed).
+// Set LOCAL_EMBEDDING_MODEL to override the model (default: nomic-embed-text).
 func NewEvalHarness(ctx context.Context) (*EvalHarness, error) {
-	voyageKey := os.Getenv("VOYAGE_API_KEY")
-	openaiKey := os.Getenv("OPENAI_API_KEY")
-	if voyageKey == "" || openaiKey == "" {
-		return nil, fmt.Errorf("VOYAGE_API_KEY and OPENAI_API_KEY must be set")
-	}
+	localURL := os.Getenv("LOCAL_EMBEDDING_URL")
+	localModel := os.Getenv("LOCAL_EMBEDDING_MODEL")
 
 	tmpDir, err := os.MkdirTemp("", "codex-eval-*")
 	if err != nil {
@@ -39,10 +39,10 @@ func NewEvalHarness(ctx context.Context) (*EvalHarness, error) {
 
 	dbPath := filepath.Join(tmpDir, "eval.db")
 	config := core.Config{
-		VoyageAPIKey:   voyageKey,
-		OpenAIAPIKey:   openaiKey,
-		MetadataDBPath: dbPath,
-		ScoreThreshold: 0,
+		LocalEmbeddingURL:   localURL,
+		LocalEmbeddingModel: localModel,
+		MetadataDBPath:      dbPath,
+		ScoreThreshold:      0,
 	}
 
 	engine, err := core.NewSearchEngine(ctx, config)
@@ -231,7 +231,7 @@ func (h *EvalHarness) mapResultsToTestIDs(results []SearchResultFromMCP) []strin
 			ids = append(ids, testID)
 			continue
 		}
-		// Unknown result - skip (won't match ground truth)
+		// Unknown result — include raw ID (won't match ground truth IDs)
 		ids = append(ids, r.ID)
 	}
 	return ids

@@ -32,11 +32,11 @@ func main() {
 
 	// Initialize search engine
 	engine, err := core.NewSearchEngine(ctx, core.Config{
-		VoyageAPIKey:     os.Getenv("VOYAGE_API_KEY"),
-		OpenAIAPIKey:     os.Getenv("OPENAI_API_KEY"),
-		AnthropicAPIKey:  os.Getenv("ANTHROPIC_API_KEY"),
-		ModelsPath:       getEnv("CODEX_MODELS_PATH", "./models"),
-		MetadataDBPath:   getEnv("CODEX_METADATA_DB", "~/.edi/codex.db"),
+		AnthropicAPIKey:        os.Getenv("ANTHROPIC_API_KEY"),
+		ModelsPath:             getEnv("CODEX_MODELS_PATH", "./models"),
+		MetadataDBPath:         getEnv("CODEX_METADATA_DB", "~/.edi/codex.db"),
+		LocalEmbeddingURL:   os.Getenv("LOCAL_EMBEDDING_URL"),
+		LocalEmbeddingModel: os.Getenv("LOCAL_EMBEDDING_MODEL"),
 	})
 	if err != nil {
 		log.Fatalf("Failed to initialize search engine: %v", err)

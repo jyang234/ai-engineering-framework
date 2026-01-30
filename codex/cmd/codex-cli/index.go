@@ -58,9 +58,7 @@ func runIndex(cmd *cobra.Command, args []string) error {
 
 	// Load config and create engine
 	cfg := LoadConfig()
-	if cfg.VoyageAPIKey == "" && cfg.OpenAIAPIKey == "" {
-		return fmt.Errorf("VOYAGE_API_KEY or OPENAI_API_KEY required for indexing")
-	}
+	// Local Ollama embedders are used — no API keys required for indexing.
 
 	ctx := context.Background()
 	engine, err := core.NewSearchEngine(ctx, cfg.ToEngineConfig())

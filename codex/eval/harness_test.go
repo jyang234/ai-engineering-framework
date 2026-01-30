@@ -4,7 +4,6 @@ package eval_test
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
@@ -13,9 +12,8 @@ import (
 
 func skipIfNoKeys(t *testing.T) {
 	t.Helper()
-	if os.Getenv("VOYAGE_API_KEY") == "" || os.Getenv("OPENAI_API_KEY") == "" {
-		t.Skip("VOYAGE_API_KEY and OPENAI_API_KEY required")
-	}
+	// Both embedders are local Ollama models — no API keys needed.
+	// Just need Ollama running with the models pulled.
 }
 
 // TestE2E indexes once, then runs all retrieval and system tests as subtests.

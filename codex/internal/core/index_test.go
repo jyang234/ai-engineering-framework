@@ -244,11 +244,10 @@ func TestDocChunkDataFields(t *testing.T) {
 func TestNewIndexerWithConfig(t *testing.T) {
 	t.Run("valid config", func(t *testing.T) {
 		cfg := IndexerConfig{
-			CodeEmbedder: NewMockCodeEmbedder(),
-			DocEmbedder:  NewMockDocEmbedder(),
-			VectorStore:  NewMockVectorStorage(),
-			MetaStore:    NewMockMetadataStorage(),
-			CodeChunker:  NewMockCodeChunker(),
+			Embedder:    NewMockEmbedder(),
+			VectorStore: NewMockVectorStorage(),
+			MetaStore:   NewMockMetadataStorage(),
+			CodeChunker: NewMockCodeChunker(),
 		}
 
 		idx, err := NewIndexerWithConfig(cfg)
@@ -260,9 +259,8 @@ func TestNewIndexerWithConfig(t *testing.T) {
 		}
 	})
 
-	t.Run("missing CodeEmbedder", func(t *testing.T) {
+	t.Run("missing Embedder", func(t *testing.T) {
 		cfg := IndexerConfig{
-			DocEmbedder: NewMockDocEmbedder(),
 			VectorStore: NewMockVectorStorage(),
 			MetaStore:   NewMockMetadataStorage(),
 			CodeChunker: NewMockCodeChunker(),
@@ -270,30 +268,15 @@ func TestNewIndexerWithConfig(t *testing.T) {
 
 		_, err := NewIndexerWithConfig(cfg)
 		if err == nil {
-			t.Fatal("expected error for missing CodeEmbedder")
-		}
-	})
-
-	t.Run("missing DocEmbedder", func(t *testing.T) {
-		cfg := IndexerConfig{
-			CodeEmbedder: NewMockCodeEmbedder(),
-			VectorStore:  NewMockVectorStorage(),
-			MetaStore:    NewMockMetadataStorage(),
-			CodeChunker:  NewMockCodeChunker(),
-		}
-
-		_, err := NewIndexerWithConfig(cfg)
-		if err == nil {
-			t.Fatal("expected error for missing DocEmbedder")
+			t.Fatal("expected error for missing Embedder")
 		}
 	})
 
 	t.Run("missing VectorStore", func(t *testing.T) {
 		cfg := IndexerConfig{
-			CodeEmbedder: NewMockCodeEmbedder(),
-			DocEmbedder:  NewMockDocEmbedder(),
-			MetaStore:    NewMockMetadataStorage(),
-			CodeChunker:  NewMockCodeChunker(),
+			Embedder:    NewMockEmbedder(),
+			MetaStore:   NewMockMetadataStorage(),
+			CodeChunker: NewMockCodeChunker(),
 		}
 
 		_, err := NewIndexerWithConfig(cfg)
@@ -308,17 +291,16 @@ func TestIndexer_IndexCode(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("successful indexing", func(t *testing.T) {
-		codeEmbed := NewMockCodeEmbedder()
+		embed := NewMockEmbedder()
 		vectorStore := NewMockVectorStorage()
 		metaStore := NewMockMetadataStorage()
 		codeChunker := NewMockCodeChunker()
 
 		idx, _ := NewIndexerWithConfig(IndexerConfig{
-			CodeEmbedder: codeEmbed,
-			DocEmbedder:  NewMockDocEmbedder(),
-			VectorStore:  vectorStore,
-			MetaStore:    metaStore,
-			CodeChunker:  codeChunker,
+			Embedder:    embed,
+			VectorStore: vectorStore,
+			MetaStore:   metaStore,
+			CodeChunker: codeChunker,
 			IDGenerator:  NewMockIDGenerator("test"),
 		})
 
@@ -339,8 +321,8 @@ func TestIndexer_IndexCode(t *testing.T) {
 		if result.ChunksCount != 1 {
 			t.Errorf("expected 1 chunk, got %d", result.ChunksCount)
 		}
-		if codeEmbed.CallCount != 1 {
-			t.Errorf("expected 1 embed call, got %d", codeEmbed.CallCount)
+		if embed.CallCount != 1 {
+			t.Errorf("expected 1 embed call, got %d", embed.CallCount)
 		}
 		if vectorStore.UpsertCount != 1 {
 			t.Errorf("expected 1 upsert, got %d", vectorStore.UpsertCount)
@@ -351,12 +333,11 @@ func TestIndexer_IndexCode(t *testing.T) {
 	})
 
 	t.Run("embedding failure", func(t *testing.T) {
-		codeEmbed := NewMockCodeEmbedder()
+		codeEmbed := NewMockEmbedder()
 		codeEmbed.FailOnCall = 1 // Fail on first call
 
 		idx, _ := NewIndexerWithConfig(IndexerConfig{
-			CodeEmbedder: codeEmbed,
-			DocEmbedder:  NewMockDocEmbedder(),
+			Embedder: codeEmbed,
 			VectorStore:  NewMockVectorStorage(),
 			MetaStore:    NewMockMetadataStorage(),
 			CodeChunker:  NewMockCodeChunker(),
@@ -381,8 +362,7 @@ func TestIndexer_IndexCode(t *testing.T) {
 		vectorStore.FailOnUpsert = 1
 
 		idx, _ := NewIndexerWithConfig(IndexerConfig{
-			CodeEmbedder: NewMockCodeEmbedder(),
-			DocEmbedder:  NewMockDocEmbedder(),
+			Embedder: NewMockEmbedder(),
 			VectorStore:  vectorStore,
 			MetaStore:    NewMockMetadataStorage(),
 			CodeChunker:  NewMockCodeChunker(),
@@ -407,8 +387,7 @@ func TestIndexer_IndexCode(t *testing.T) {
 		metaStore.FailOnSave = 1
 
 		idx, _ := NewIndexerWithConfig(IndexerConfig{
-			CodeEmbedder: NewMockCodeEmbedder(),
-			DocEmbedder:  NewMockDocEmbedder(),
+			Embedder: NewMockEmbedder(),
 			VectorStore:  NewMockVectorStorage(),
 			MetaStore:    metaStore,
 			CodeChunker:  NewMockCodeChunker(),
@@ -433,8 +412,7 @@ func TestIndexer_IndexCode(t *testing.T) {
 		codeChunker.FailOnCall = 1
 
 		idx, _ := NewIndexerWithConfig(IndexerConfig{
-			CodeEmbedder: NewMockCodeEmbedder(),
-			DocEmbedder:  NewMockDocEmbedder(),
+			Embedder: NewMockEmbedder(),
 			VectorStore:  NewMockVectorStorage(),
 			MetaStore:    NewMockMetadataStorage(),
 			CodeChunker:  codeChunker,
@@ -460,16 +438,15 @@ func TestIndexer_IndexDoc(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("successful indexing without contextual chunker", func(t *testing.T) {
-		docEmbed := NewMockDocEmbedder()
+		embed := NewMockEmbedder()
 		vectorStore := NewMockVectorStorage()
 		metaStore := NewMockMetadataStorage()
 
 		idx, _ := NewIndexerWithConfig(IndexerConfig{
-			CodeEmbedder: NewMockCodeEmbedder(),
-			DocEmbedder:  docEmbed,
-			VectorStore:  vectorStore,
-			MetaStore:    metaStore,
-			CodeChunker:  NewMockCodeChunker(),
+			Embedder:    embed,
+			VectorStore: vectorStore,
+			MetaStore:   metaStore,
+			CodeChunker: NewMockCodeChunker(),
 			// No DocChunker - will use basic markdown chunking
 		})
 
@@ -486,22 +463,20 @@ func TestIndexer_IndexDoc(t *testing.T) {
 		if result == nil {
 			t.Fatal("expected non-nil result")
 		}
-		if docEmbed.CallCount < 1 {
+		if embed.CallCount < 1 {
 			t.Error("expected at least 1 embed call")
 		}
 	})
 
 	t.Run("successful indexing with contextual chunker", func(t *testing.T) {
-		docEmbed := NewMockDocEmbedder()
 		docChunker := NewMockDocChunker()
 
 		idx, _ := NewIndexerWithConfig(IndexerConfig{
-			CodeEmbedder: NewMockCodeEmbedder(),
-			DocEmbedder:  docEmbed,
-			VectorStore:  NewMockVectorStorage(),
-			MetaStore:    NewMockMetadataStorage(),
-			CodeChunker:  NewMockCodeChunker(),
-			DocChunker:   docChunker,
+			Embedder:    NewMockEmbedder(),
+			VectorStore: NewMockVectorStorage(),
+			MetaStore:   NewMockMetadataStorage(),
+			CodeChunker: NewMockCodeChunker(),
+			DocChunker:  docChunker,
 		})
 
 		result, err := idx.IndexFile(ctx, IndexRequest{
@@ -522,15 +497,14 @@ func TestIndexer_IndexDoc(t *testing.T) {
 	})
 
 	t.Run("embedding failure", func(t *testing.T) {
-		docEmbed := NewMockDocEmbedder()
-		docEmbed.FailOnCall = 1
+		embed := NewMockEmbedder()
+		embed.FailOnCall = 1
 
 		idx, _ := NewIndexerWithConfig(IndexerConfig{
-			CodeEmbedder: NewMockCodeEmbedder(),
-			DocEmbedder:  docEmbed,
-			VectorStore:  NewMockVectorStorage(),
-			MetaStore:    NewMockMetadataStorage(),
-			CodeChunker:  NewMockCodeChunker(),
+			Embedder:    embed,
+			VectorStore: NewMockVectorStorage(),
+			MetaStore:   NewMockMetadataStorage(),
+			CodeChunker: NewMockCodeChunker(),
 		})
 
 		_, err := idx.IndexFile(ctx, IndexRequest{
@@ -549,54 +523,33 @@ func TestIndexer_IndexDoc(t *testing.T) {
 func TestIndexer_IndexManual(t *testing.T) {
 	ctx := context.Background()
 
-	tests := []struct {
-		name        string
-		itemType    string
-		expectCode  bool // true = uses CodeEmbedder, false = uses DocEmbedder
-	}{
-		{"pattern uses code embedder", "pattern", true},
-		{"failure uses code embedder", "failure", true},
-		{"decision uses doc embedder", "decision", false},
-		{"context uses doc embedder", "context", false},
-		{"empty type defaults to context", "", false},
-	}
+	types := []string{"pattern", "failure", "decision", "context", ""}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			codeEmbed := NewMockCodeEmbedder()
-			docEmbed := NewMockDocEmbedder()
+	for _, itemType := range types {
+		name := itemType
+		if name == "" {
+			name = "empty_defaults_to_context"
+		}
+		t.Run(name, func(t *testing.T) {
+			embed := NewMockEmbedder()
 
 			idx, _ := NewIndexerWithConfig(IndexerConfig{
-				CodeEmbedder: codeEmbed,
-				DocEmbedder:  docEmbed,
-				VectorStore:  NewMockVectorStorage(),
-				MetaStore:    NewMockMetadataStorage(),
-				CodeChunker:  NewMockCodeChunker(),
+				Embedder:    embed,
+				VectorStore: NewMockVectorStorage(),
+				MetaStore:   NewMockMetadataStorage(),
+				CodeChunker: NewMockCodeChunker(),
 			})
 
 			_, err := idx.IndexFile(ctx, IndexRequest{
 				Content: "Some manual content",
-				Type:    tt.itemType,
+				Type:    itemType,
 			})
 
 			if err != nil {
 				t.Fatalf("IndexFile failed: %v", err)
 			}
-
-			if tt.expectCode {
-				if codeEmbed.CallCount != 1 {
-					t.Errorf("expected CodeEmbedder to be called")
-				}
-				if docEmbed.CallCount != 0 {
-					t.Errorf("expected DocEmbedder NOT to be called")
-				}
-			} else {
-				if docEmbed.CallCount != 1 {
-					t.Errorf("expected DocEmbedder to be called")
-				}
-				if codeEmbed.CallCount != 0 {
-					t.Errorf("expected CodeEmbedder NOT to be called")
-				}
+			if embed.CallCount != 1 {
+				t.Errorf("expected 1 embed call, got %d", embed.CallCount)
 			}
 		})
 	}
@@ -641,15 +594,13 @@ func TestIndexer_TypeRouting(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			codeChunker := NewMockCodeChunker()
-			docEmbed := NewMockDocEmbedder()
-			codeEmbed := NewMockCodeEmbedder()
+			embed := NewMockEmbedder()
 
 			idx, _ := NewIndexerWithConfig(IndexerConfig{
-				CodeEmbedder: codeEmbed,
-				DocEmbedder:  docEmbed,
-				VectorStore:  NewMockVectorStorage(),
-				MetaStore:    NewMockMetadataStorage(),
-				CodeChunker:  codeChunker,
+				Embedder:    embed,
+				VectorStore: NewMockVectorStorage(),
+				MetaStore:   NewMockMetadataStorage(),
+				CodeChunker: codeChunker,
 			})
 
 			_, _ = idx.IndexFile(ctx, tt.req)
@@ -659,14 +610,9 @@ func TestIndexer_TypeRouting(t *testing.T) {
 				if codeChunker.CallCount == 0 {
 					t.Error("expected code chunker to be called for code type")
 				}
-			case "doc":
-				if docEmbed.CallCount == 0 {
-					t.Error("expected doc embedder to be called for doc type")
-				}
-			case "manual":
-				// Manual uses either embedder based on item type
-				if codeEmbed.CallCount == 0 && docEmbed.CallCount == 0 {
-					t.Error("expected an embedder to be called for manual type")
+			case "doc", "manual":
+				if embed.CallCount == 0 {
+					t.Error("expected embedder to be called")
 				}
 			}
 		})
@@ -678,8 +624,7 @@ func TestIndexer_Close(t *testing.T) {
 	codeChunker := NewMockCodeChunker()
 
 	idx, _ := NewIndexerWithConfig(IndexerConfig{
-		CodeEmbedder: NewMockCodeEmbedder(),
-		DocEmbedder:  NewMockDocEmbedder(),
+		Embedder: NewMockEmbedder(),
 		VectorStore:  NewMockVectorStorage(),
 		MetaStore:    NewMockMetadataStorage(),
 		CodeChunker:  codeChunker,
@@ -713,8 +658,7 @@ func TestIndexer_MultipleChunks(t *testing.T) {
 	metaStore := NewMockMetadataStorage()
 
 	idx, _ := NewIndexerWithConfig(IndexerConfig{
-		CodeEmbedder: NewMockCodeEmbedder(),
-		DocEmbedder:  NewMockDocEmbedder(),
+		Embedder: NewMockEmbedder(),
 		VectorStore:  vectorStore,
 		MetaStore:    metaStore,
 		CodeChunker:  codeChunker,
@@ -745,12 +689,11 @@ func TestIndexer_ErrorWrapping(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("embedding error includes chunk number", func(t *testing.T) {
-		codeEmbed := NewMockCodeEmbedder()
+		codeEmbed := NewMockEmbedder()
 		codeEmbed.FailOnCall = 1
 
 		idx, _ := NewIndexerWithConfig(IndexerConfig{
-			CodeEmbedder: codeEmbed,
-			DocEmbedder:  NewMockDocEmbedder(),
+			Embedder: codeEmbed,
 			VectorStore:  NewMockVectorStorage(),
 			MetaStore:    NewMockMetadataStorage(),
 			CodeChunker:  NewMockCodeChunker(),

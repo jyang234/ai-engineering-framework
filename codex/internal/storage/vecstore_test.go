@@ -57,7 +57,7 @@ func TestVecStore_UpsertAndSearch(t *testing.T) {
 		t.Fatalf("Upsert dissimilar: %v", err)
 	}
 
-	results := vs.Search(ctx, query, 10)
+	results, _ := vs.Search(ctx, query, 10)
 	if len(results) != 2 {
 		t.Fatalf("expected 2 results, got %d", len(results))
 	}
@@ -85,7 +85,7 @@ func TestVecStore_CosineSimilarityCorrectness(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	results := vs.Search(ctx, vec, 1)
+	results, _ := vs.Search(ctx, vec, 1)
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))
 	}
@@ -116,7 +116,7 @@ func TestVecStore_Delete(t *testing.T) {
 		t.Errorf("expected count 1 after delete, got %d", vs.Count())
 	}
 
-	results := vs.Search(ctx, vec, 10)
+	results, _ := vs.Search(ctx, vec, 10)
 	if len(results) != 1 {
 		t.Errorf("expected 1 result after delete, got %d", len(results))
 	}
@@ -138,7 +138,7 @@ func TestVecStore_UpsertOverwrite(t *testing.T) {
 		t.Errorf("expected count 1 after upsert, got %d", vs.Count())
 	}
 
-	results := vs.Search(ctx, []float32{0.0, 1.0, 0.0}, 1)
+	results, _ := vs.Search(ctx, []float32{0.0, 1.0, 0.0}, 1)
 	if math.Abs(results[0].Score-1.0) > 0.001 {
 		t.Errorf("expected score ~1.0 for updated vector, got %f", results[0].Score)
 	}
@@ -156,7 +156,7 @@ func TestVecStore_SearchLimit(t *testing.T) {
 		vs.Upsert(ctx, fmt.Sprintf("item-%d", i), vec)
 	}
 
-	results := vs.Search(ctx, []float32{1.0, 0.0, 0.0}, 3)
+	results, _ := vs.Search(ctx, []float32{1.0, 0.0, 0.0}, 3)
 	if len(results) != 3 {
 		t.Errorf("expected 3 results with limit, got %d", len(results))
 	}
@@ -167,7 +167,7 @@ func TestVecStore_EmptySearch(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	results := vs.Search(ctx, []float32{1.0, 0.0, 0.0}, 10)
+	results, _ := vs.Search(ctx, []float32{1.0, 0.0, 0.0}, 10)
 	if len(results) != 0 {
 		t.Errorf("expected 0 results on empty store, got %d", len(results))
 	}
@@ -181,7 +181,7 @@ func TestVecStore_DimensionMismatch(t *testing.T) {
 
 	vs.Upsert(ctx, "item", []float32{1.0, 0.0, 0.0})
 
-	results := vs.Search(ctx, []float32{1.0, 0.0, 0.0, 0.0, 0.0}, 10)
+	results, _ := vs.Search(ctx, []float32{1.0, 0.0, 0.0, 0.0, 0.0}, 10)
 	if len(results) != 0 {
 		t.Errorf("expected 0 results for dimension mismatch, got %d", len(results))
 	}
@@ -232,7 +232,7 @@ func TestVecStore_Persistence(t *testing.T) {
 			t.Errorf("expected 1 item after reopen, got %d", vs.Count())
 		}
 
-		results := vs.Search(ctx, []float32{1.0, 2.0, 3.0}, 1)
+		results, _ := vs.Search(ctx, []float32{1.0, 2.0, 3.0}, 1)
 		if len(results) != 1 || results[0].ID != "item" {
 			t.Errorf("expected to find 'item' after reopen")
 		}
@@ -271,7 +271,10 @@ func TestDotProduct(t *testing.T) {
 func TestFloat32BlobRoundTrip(t *testing.T) {
 	original := []float32{1.5, -2.3, 0.0, 1000.0, math.SmallestNonzeroFloat32}
 	blob := float32ToBlob(original)
-	restored := blobToFloat32(blob, len(original))
+	restored, err := blobToFloat32(blob, len(original))
+	if err != nil {
+		t.Fatalf("blobToFloat32: %v", err)
+	}
 
 	for i := range original {
 		if original[i] != restored[i] {

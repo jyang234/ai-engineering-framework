@@ -371,7 +371,9 @@ func (s *MetadataStore) KeywordSearch(query string, limit int) ([]KeywordResult,
 	}
 
 	// Sanitize query for FTS5: escape double quotes and wrap in quotes
-	// to prevent FTS5 syntax errors from special characters (AND, OR, *, etc.)
+	// to prevent FTS5 syntax errors from special characters.
+	// NOTE: This disables FTS5 advanced syntax (AND, OR, NEAR, *) by design —
+	// the query is treated as a literal phrase match for safety.
 	sanitized := strings.ReplaceAll(query, `"`, `""`)
 	sanitized = `"` + sanitized + `"`
 

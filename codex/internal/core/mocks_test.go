@@ -17,85 +17,46 @@ var (
 	ErrMockChunking  = errors.New("mock chunking error")
 )
 
-// MockCodeEmbedder implements CodeEmbedder for testing
-type MockCodeEmbedder struct {
-	mu           sync.Mutex
-	EmbedFunc    func(ctx context.Context, texts []string) ([]float32, error)
-	QueryFunc    func(ctx context.Context, query string) ([]float32, error)
-	CallCount    int
-	LastTexts    []string
-	FailOnCall   int // Fail on Nth call (0 = never fail)
-	FixedVector  []float32
+// MockEmbedder implements Embedder for testing
+type MockEmbedder struct {
+	mu          sync.Mutex
+	EmbedFunc   func(ctx context.Context, text string) ([]float32, error)
+	QueryFunc   func(ctx context.Context, query string) ([]float32, error)
+	CallCount   int
+	LastText    string
+	FailOnCall  int // Fail on Nth call (0 = never fail)
+	FixedVector []float32
 }
 
-func NewMockCodeEmbedder() *MockCodeEmbedder {
-	return &MockCodeEmbedder{
-		FixedVector: make([]float32, 1024), // Voyage Code-3 dimension
+func NewMockEmbedder() *MockEmbedder {
+	return &MockEmbedder{
+		FixedVector: make([]float32, 768), // nomic-embed-text dimension
 	}
 }
 
-func (m *MockCodeEmbedder) EmbedCode(ctx context.Context, texts []string) ([]float32, error) {
+func (m *MockEmbedder) EmbedDocument(ctx context.Context, text string) ([]float32, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	m.CallCount++
-	m.LastTexts = texts
+	m.LastText = text
 
 	if m.FailOnCall > 0 && m.CallCount >= m.FailOnCall {
 		return nil, ErrMockEmbedding
 	}
 
 	if m.EmbedFunc != nil {
-		return m.EmbedFunc(ctx, texts)
+		return m.EmbedFunc(ctx, text)
 	}
 
 	return m.FixedVector, nil
 }
 
-func (m *MockCodeEmbedder) EmbedCodeQuery(ctx context.Context, query string) ([]float32, error) {
+func (m *MockEmbedder) EmbedQuery(ctx context.Context, query string) ([]float32, error) {
 	if m.QueryFunc != nil {
 		return m.QueryFunc(ctx, query)
 	}
 	return m.FixedVector, nil
-}
-
-// MockDocEmbedder implements DocEmbedder for testing
-type MockDocEmbedder struct {
-	mu          sync.Mutex
-	EmbedFunc   func(ctx context.Context, texts []string) ([][]float32, error)
-	CallCount   int
-	LastTexts   []string
-	FailOnCall  int
-	FixedVector []float32
-}
-
-func NewMockDocEmbedder() *MockDocEmbedder {
-	return &MockDocEmbedder{
-		FixedVector: make([]float32, 3072), // OpenAI text-embedding-3-large dimension
-	}
-}
-
-func (m *MockDocEmbedder) EmbedDocuments(ctx context.Context, texts []string) ([][]float32, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.CallCount++
-	m.LastTexts = texts
-
-	if m.FailOnCall > 0 && m.CallCount >= m.FailOnCall {
-		return nil, ErrMockEmbedding
-	}
-
-	if m.EmbedFunc != nil {
-		return m.EmbedFunc(ctx, texts)
-	}
-
-	// Return one vector per input text
-	result := make([][]float32, len(texts))
-	for i := range texts {
-		result[i] = m.FixedVector
-	}
-	return result, nil
 }
 
 // MockVectorStorage implements VectorStorage for testing
@@ -103,7 +64,7 @@ type MockVectorStorage struct {
 	mu            sync.Mutex
 	Vectors       map[string][]float32
 	UpsertFunc    func(ctx context.Context, itemID string, vector []float32) error
-	SearchFunc    func(ctx context.Context, queryVec []float32, limit int) []storage.ScoredResult
+	SearchFunc    func(ctx context.Context, queryVec []float32, limit int) ([]storage.ScoredResult, error)
 	UpsertCount   int
 	SearchCount   int
 	FailOnUpsert  int
@@ -134,14 +95,14 @@ func (m *MockVectorStorage) Upsert(ctx context.Context, itemID string, vector []
 	return nil
 }
 
-func (m *MockVectorStorage) Search(ctx context.Context, queryVec []float32, limit int) []storage.ScoredResult {
+func (m *MockVectorStorage) Search(ctx context.Context, queryVec []float32, limit int) ([]storage.ScoredResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	m.SearchCount++
 
 	if m.FailOnSearch {
-		return nil
+		return nil, ErrMockStorage
 	}
 
 	if m.SearchFunc != nil {
@@ -159,7 +120,7 @@ func (m *MockVectorStorage) Search(ctx context.Context, queryVec []float32, limi
 			break
 		}
 	}
-	return results
+	return results, nil
 }
 
 func (m *MockVectorStorage) Delete(ctx context.Context, id string) error {

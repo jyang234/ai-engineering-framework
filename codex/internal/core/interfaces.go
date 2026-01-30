@@ -8,23 +8,14 @@ import (
 	"github.com/anthropics/aef/codex/internal/storage"
 )
 
-// CodeEmbedder generates embeddings for code content.
-// Implementations: VoyageClient
-type CodeEmbedder interface {
-	// EmbedCode embeds code snippets for storage/indexing.
-	// Returns a single embedding vector for the first text.
-	EmbedCode(ctx context.Context, texts []string) ([]float32, error)
+// Embedder generates vector embeddings for text content.
+// Implementations: LocalClient (nomic-embed-text via Ollama)
+type Embedder interface {
+	// EmbedDocument embeds a text for storage/indexing.
+	EmbedDocument(ctx context.Context, text string) ([]float32, error)
 
-	// EmbedCodeQuery embeds a search query (may use different model settings).
-	EmbedCodeQuery(ctx context.Context, query string) ([]float32, error)
-}
-
-// DocEmbedder generates embeddings for document content.
-// Implementations: OpenAIClient
-type DocEmbedder interface {
-	// EmbedDocuments embeds document texts for storage/indexing.
-	// Returns one embedding per input text.
-	EmbedDocuments(ctx context.Context, texts []string) ([][]float32, error)
+	// EmbedQuery embeds a search query (may use different prefix/settings).
+	EmbedQuery(ctx context.Context, query string) ([]float32, error)
 }
 
 // VectorStorage stores and searches vector embeddings.
@@ -34,7 +25,7 @@ type VectorStorage interface {
 	Upsert(ctx context.Context, itemID string, vector []float32) error
 
 	// Search returns the top-K items by cosine similarity.
-	Search(ctx context.Context, queryVec []float32, limit int) []storage.ScoredResult
+	Search(ctx context.Context, queryVec []float32, limit int) ([]storage.ScoredResult, error)
 
 	// Delete removes an item by ID.
 	Delete(ctx context.Context, itemID string) error

@@ -17,8 +17,7 @@ type SearchEngine struct {
 	vecStore VectorStorage
 	metadata MetadataStorage
 	keywords KeywordSearcher
-	voyage   CodeEmbedder
-	openai   DocEmbedder
+	embedder Embedder
 	reranker Reranker
 }
 
@@ -28,8 +27,7 @@ type SearchEngineDeps struct {
 	VecStore VectorStorage
 	Metadata MetadataStorage
 	Keywords KeywordSearcher
-	Voyage   CodeEmbedder
-	OpenAI   DocEmbedder
+	Embedder Embedder
 	Reranker Reranker
 }
 
@@ -48,9 +46,15 @@ func NewSearchEngine(ctx context.Context, config Config) (*SearchEngine, error) 
 		return nil, fmt.Errorf("failed to initialize vector store: %w", err)
 	}
 
-	// Initialize embedding clients
-	voyage := embedding.NewVoyageClient(config.VoyageAPIKey)
-	openai := embedding.NewOpenAIClient(config.OpenAIAPIKey)
+	// Initialize embedding client (single local Ollama model)
+	var opts []embedding.LocalClientOption
+	if config.LocalEmbeddingURL != "" {
+		opts = append(opts, embedding.WithLocalBaseURL(config.LocalEmbeddingURL))
+	}
+	if config.LocalEmbeddingModel != "" {
+		opts = append(opts, embedding.WithLocalModel(config.LocalEmbeddingModel))
+	}
+	embed := embedding.NewLocalClient(opts...)
 
 	// Initialize reranker (optional - may fail if models not present)
 	var reranker Reranker
@@ -68,8 +72,7 @@ func NewSearchEngine(ctx context.Context, config Config) (*SearchEngine, error) 
 		vecStore: vecStore,
 		metadata: metadata,
 		keywords: metadata,
-		voyage:   voyage,
-		openai:   openai,
+		embedder: embed,
 		reranker: reranker,
 	}, nil
 }
@@ -81,8 +84,7 @@ func NewSearchEngineWithDeps(deps SearchEngineDeps) *SearchEngine {
 		vecStore: deps.VecStore,
 		metadata: deps.Metadata,
 		keywords: deps.Keywords,
-		voyage:   deps.Voyage,
-		openai:   deps.OpenAI,
+		embedder: deps.Embedder,
 		reranker: deps.Reranker,
 	}
 }
@@ -113,21 +115,17 @@ func (e *SearchEngine) Search(ctx context.Context, req SearchRequest) ([]SearchR
 		}
 	}
 
-	// 1. Embed query with BOTH models for dual-space vector search
-	voyageVec, err := e.voyage.EmbedCodeQuery(ctx, req.Query)
+	// 1. Embed query
+	queryVec, err := e.embedder.EmbedQuery(ctx, req.Query)
 	if err != nil {
-		return nil, fmt.Errorf("failed to embed query with voyage: %w", err)
+		return nil, fmt.Errorf("failed to embed query: %w", err)
 	}
 
-	openaiVecs, err := e.openai.EmbedDocuments(ctx, []string{req.Query})
+	// 2. Vector search
+	vectorResults, err := e.vecStore.Search(ctx, queryVec, candidateLimit)
 	if err != nil {
-		return nil, fmt.Errorf("failed to embed query with openai: %w", err)
+		return nil, fmt.Errorf("vector search failed: %w", err)
 	}
-	openaiVec := openaiVecs[0]
-
-	// 2. Vector search in both embedding spaces
-	voyageResults := e.vecStore.Search(ctx, voyageVec, candidateLimit)
-	openaiResults := e.vecStore.Search(ctx, openaiVec, candidateLimit)
 
 	// 3. Keyword search (FTS5 BM25)
 	var keywordResults []SearchResult
@@ -153,11 +151,8 @@ func (e *SearchEngine) Search(ctx context.Context, req SearchRequest) ([]SearchR
 		}
 	}
 
-	// 4. 3-way RRF fusion (voyage vectors + openai vectors + keywords)
-	results := reciprocalRankFusionMulti(
-		[][]storage.ScoredResult{voyageResults, openaiResults},
-		keywordResults, 60,
-	)
+	// 4. 2-way RRF fusion (vector + keywords)
+	results := reciprocalRankFusion(vectorResults, keywordResults, 60)
 
 	// 5. Hydrate metadata for vector-only results (those missing Title/Content)
 	for i := range results {
@@ -230,21 +225,9 @@ func (e *SearchEngine) Get(ctx context.Context, id string) (*Item, error) {
 
 // Add adds a new item to the knowledge base
 func (e *SearchEngine) Add(ctx context.Context, item *Item) error {
-	// Determine embedding type based on item type
-	var vec []float32
-	var err error
-
-	if item.Type == "pattern" || item.Type == "failure" || item.Type == "code" {
-		vec, err = e.voyage.EmbedCode(ctx, []string{item.Content})
-		if err != nil {
-			return fmt.Errorf("failed to embed code content: %w", err)
-		}
-	} else {
-		vecs, err := e.openai.EmbedDocuments(ctx, []string{item.Content})
-		if err != nil {
-			return fmt.Errorf("failed to embed document content: %w", err)
-		}
-		vec = vecs[0]
+	vec, err := e.embedder.EmbedDocument(ctx, item.Content)
+	if err != nil {
+		return fmt.Errorf("embedding failed: %w", err)
 	}
 
 	// Store metadata first (easier to clean up than orphaned vectors)
@@ -355,18 +338,9 @@ func (e *SearchEngine) Update(ctx context.Context, item *Item) error {
 	item.UpdatedAt = time.Now()
 
 	// Regenerate embedding
-	var vec []float32
-	if item.Type == "pattern" || item.Type == "failure" || item.Type == "code" {
-		vec, err = e.voyage.EmbedCode(ctx, []string{item.Content})
-		if err != nil {
-			return fmt.Errorf("failed to embed code content: %w", err)
-		}
-	} else {
-		vecs, embedErr := e.openai.EmbedDocuments(ctx, []string{item.Content})
-		if embedErr != nil {
-			return fmt.Errorf("failed to embed document content: %w", embedErr)
-		}
-		vec = vecs[0]
+	vec, err := e.embedder.EmbedDocument(ctx, item.Content)
+	if err != nil {
+		return fmt.Errorf("embedding failed: %w", err)
 	}
 
 	// Update metadata first (matching Add() convention)
@@ -384,8 +358,10 @@ func (e *SearchEngine) Update(ctx context.Context, item *Item) error {
 
 // Delete removes an item from both vector store and metadata store
 func (e *SearchEngine) Delete(ctx context.Context, id string) error {
-	// Delete from vector store (best-effort)
-	_ = e.vecStore.Delete(ctx, id)
+	// Delete from vector store (best-effort — metadata is the source of truth)
+	if err := e.vecStore.Delete(ctx, id); err != nil {
+		log.Printf("Warning: failed to delete vector for %s: %v", id, err)
+	}
 
 	// Delete from metadata store
 	if err := e.metadata.DeleteItem(id); err != nil {

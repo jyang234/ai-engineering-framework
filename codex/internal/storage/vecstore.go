@@ -72,7 +72,10 @@ func (vs *VecStore) loadAll() error {
 			return err
 		}
 
-		vec := blobToFloat32(blob, dims)
+		vec, err := blobToFloat32(blob, dims)
+		if err != nil {
+			return fmt.Errorf("corrupted vector for %s: %w", id, err)
+		}
 		vs.vectors[id] = vec
 	}
 	return rows.Err()
@@ -103,7 +106,7 @@ func (vs *VecStore) Upsert(ctx context.Context, itemID string, vector []float32)
 
 // Search returns the top-K items by cosine similarity to the query vector.
 // Uses a min-heap to efficiently track only the top-K results.
-func (vs *VecStore) Search(ctx context.Context, queryVec []float32, limit int) []ScoredResult {
+func (vs *VecStore) Search(ctx context.Context, queryVec []float32, limit int) ([]ScoredResult, error) {
 	if limit <= 0 {
 		limit = 10
 	}
@@ -131,7 +134,7 @@ func (vs *VecStore) Search(ctx context.Context, queryVec []float32, limit int) [
 	for i := len(results) - 1; i >= 0; i-- {
 		results[i] = heap.Pop(h).(ScoredResult)
 	}
-	return results
+	return results, nil
 }
 
 // minHeap implements heap.Interface for top-K selection (min at root).
@@ -208,10 +211,14 @@ func float32ToBlob(v []float32) []byte {
 	return buf
 }
 
-func blobToFloat32(b []byte, dims int) []float32 {
+func blobToFloat32(b []byte, dims int) ([]float32, error) {
+	expected := dims * 4
+	if len(b) < expected {
+		return nil, fmt.Errorf("blob too short: got %d bytes, need %d for %d dims", len(b), expected, dims)
+	}
 	v := make([]float32, dims)
-	for i := 0; i < dims && i*4+4 <= len(b); i++ {
+	for i := 0; i < dims; i++ {
 		v[i] = math.Float32frombits(binary.LittleEndian.Uint32(b[i*4:]))
 	}
-	return v
+	return v, nil
 }

@@ -9,38 +9,37 @@ import (
 
 // Config holds CLI configuration loaded from environment
 type Config struct {
-	VoyageAPIKey    string
-	OpenAIAPIKey    string
-	AnthropicAPIKey string
-	ModelsPath      string
-	MetadataDBPath  string
+	AnthropicAPIKey        string
+	ModelsPath             string
+	MetadataDBPath         string
+	LocalEmbeddingURL   string
+	LocalEmbeddingModel string
 }
 
 // LoadConfig loads configuration from environment variables
 func LoadConfig() *Config {
 	return &Config{
-		VoyageAPIKey:    os.Getenv("VOYAGE_API_KEY"),
-		OpenAIAPIKey:    os.Getenv("OPENAI_API_KEY"),
-		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
-		ModelsPath:      os.Getenv("CODEX_MODELS_PATH"),
-		MetadataDBPath:  getEnv("CODEX_METADATA_DB", defaultMetadataPath()),
+		AnthropicAPIKey:        os.Getenv("ANTHROPIC_API_KEY"),
+		ModelsPath:             os.Getenv("CODEX_MODELS_PATH"),
+		MetadataDBPath:         getEnv("CODEX_METADATA_DB", defaultMetadataPath()),
+		LocalEmbeddingURL:   os.Getenv("LOCAL_EMBEDDING_URL"),
+		LocalEmbeddingModel: os.Getenv("LOCAL_EMBEDDING_MODEL"),
 	}
 }
 
 // ToEngineConfig converts to core.Config
 func (c *Config) ToEngineConfig() core.Config {
 	return core.Config{
-		VoyageAPIKey:    c.VoyageAPIKey,
-		OpenAIAPIKey:    c.OpenAIAPIKey,
-		AnthropicAPIKey: c.AnthropicAPIKey,
-		ModelsPath:      c.ModelsPath,
-		MetadataDBPath:  c.MetadataDBPath,
+		AnthropicAPIKey:        c.AnthropicAPIKey,
+		ModelsPath:             c.ModelsPath,
+		MetadataDBPath:         c.MetadataDBPath,
+		LocalEmbeddingURL:   c.LocalEmbeddingURL,
+		LocalEmbeddingModel: c.LocalEmbeddingModel,
 	}
 }
 
 // Validate checks that required configuration is present
 func (c *Config) Validate() error {
-	// VoyageAPIKey and OpenAIAPIKey are needed for indexing but not for all operations
 	return nil
 }
 

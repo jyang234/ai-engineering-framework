@@ -33,11 +33,11 @@ Commands:
   serve    - Start MCP server and/or web UI
 
 Environment Variables:
-  VOYAGE_API_KEY     Voyage AI API key (required for code indexing)
-  OPENAI_API_KEY     OpenAI API key (required for doc indexing)
-  ANTHROPIC_API_KEY  Anthropic API key (optional, contextual enrichment)
-  CODEX_MODELS_PATH  Path to reranking models (optional)
-  CODEX_METADATA_DB  SQLite metadata DB path (default: ~/.codex/metadata.db)`,
+  ANTHROPIC_API_KEY          Anthropic API key (optional, contextual enrichment)
+  LOCAL_EMBEDDING_URL        Ollama URL (default: http://localhost:11434/api/embed)
+  LOCAL_EMBEDDING_MODEL      Embedding model (default: nomic-embed-text)
+  CODEX_MODELS_PATH          Path to reranking models (optional)
+  CODEX_METADATA_DB          SQLite metadata DB path (default: ~/.codex/metadata.db)`,
 	Version: version,
 }
 

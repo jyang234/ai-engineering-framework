@@ -15,24 +15,22 @@ import (
 // Indexer handles content indexing through the appropriate pipeline
 type Indexer struct {
 	// Dependencies (interfaces for testability)
-	codeEmbedder CodeEmbedder
-	docEmbedder  DocEmbedder
-	vectorStore  VectorStorage
-	metaStore    MetadataStorage
-	codeChunker  CodeChunker
-	docChunker   DocChunker // optional
-	idGen        IDGenerator
+	embedder    Embedder
+	vectorStore VectorStorage
+	metaStore   MetadataStorage
+	codeChunker CodeChunker
+	docChunker  DocChunker // optional
+	idGen       IDGenerator
 }
 
 // IndexerConfig holds configuration for creating an Indexer
 type IndexerConfig struct {
-	CodeEmbedder CodeEmbedder
-	DocEmbedder  DocEmbedder
-	VectorStore  VectorStorage
-	MetaStore    MetadataStorage
-	CodeChunker  CodeChunker
-	DocChunker   DocChunker // optional - for contextual enrichment
-	IDGenerator  IDGenerator
+	Embedder    Embedder
+	VectorStore VectorStorage
+	MetaStore   MetadataStorage
+	CodeChunker CodeChunker
+	DocChunker  DocChunker // optional - for contextual enrichment
+	IDGenerator IDGenerator
 }
 
 // NewIndexer creates a new indexer from a SearchEngine (convenience constructor)
@@ -52,23 +50,19 @@ func NewIndexer(engine *SearchEngine) (*Indexer, error) {
 	}
 
 	return &Indexer{
-		codeEmbedder: engine.voyage,
-		docEmbedder:  engine.openai,
-		vectorStore:  engine.vecStore,
-		metaStore:    engine.metadata,
-		codeChunker:  astChunker,
-		docChunker:   ctxChunker,
-		idGen:        NewIDGenerator(),
+		embedder:    engine.embedder,
+		vectorStore: engine.vecStore,
+		metaStore:   engine.metadata,
+		codeChunker: astChunker,
+		docChunker:  ctxChunker,
+		idGen:       NewIDGenerator(),
 	}, nil
 }
 
 // NewIndexerWithConfig creates an Indexer with explicit dependencies (for testing)
 func NewIndexerWithConfig(cfg IndexerConfig) (*Indexer, error) {
-	if cfg.CodeEmbedder == nil {
-		return nil, fmt.Errorf("CodeEmbedder is required")
-	}
-	if cfg.DocEmbedder == nil {
-		return nil, fmt.Errorf("DocEmbedder is required")
+	if cfg.Embedder == nil {
+		return nil, fmt.Errorf("Embedder is required")
 	}
 	if cfg.VectorStore == nil {
 		return nil, fmt.Errorf("VectorStore is required")
@@ -86,13 +80,12 @@ func NewIndexerWithConfig(cfg IndexerConfig) (*Indexer, error) {
 	}
 
 	return &Indexer{
-		codeEmbedder: cfg.CodeEmbedder,
-		docEmbedder:  cfg.DocEmbedder,
-		vectorStore:  cfg.VectorStore,
-		metaStore:    cfg.MetaStore,
-		codeChunker:  cfg.CodeChunker,
-		docChunker:   cfg.DocChunker,
-		idGen:        idGen,
+		embedder:    cfg.Embedder,
+		vectorStore: cfg.VectorStore,
+		metaStore:   cfg.MetaStore,
+		codeChunker: cfg.CodeChunker,
+		docChunker:  cfg.DocChunker,
+		idGen:       idGen,
 	}, nil
 }
 
@@ -104,9 +97,9 @@ func (idx *Indexer) IndexFile(ctx context.Context, req IndexRequest) (*IndexResu
 	}
 
 	switch req.Type {
-	case "code":
+	case TypeCode:
 		return idx.indexCode(ctx, req)
-	case "doc":
+	case TypeDoc:
 		return idx.indexDoc(ctx, req)
 	default:
 		return idx.indexManual(ctx, req)
@@ -185,8 +178,8 @@ func (idx *Indexer) indexCode(ctx context.Context, req IndexRequest) (*IndexResu
 
 	// Process each chunk
 	for i, chunk := range chunks {
-		// Generate embedding using code embedder
-		vec, err := idx.codeEmbedder.EmbedCode(ctx, []string{chunk.Content})
+		// Generate embedding
+		vec, err := idx.embedder.EmbedDocument(ctx, chunk.Content)
 		if err != nil {
 			return nil, fmt.Errorf("failed to embed chunk %d: %w", i, err)
 		}
@@ -194,7 +187,7 @@ func (idx *Indexer) indexCode(ctx context.Context, req IndexRequest) (*IndexResu
 		// Create item for this chunk
 		item := &Item{
 			ID:      fmt.Sprintf("%s-chunk-%d", parentID, i),
-			Type:    "code",
+			Type:    TypeCode,
 			Title:   buildCodeTitle(chunk),
 			Content: chunk.Content,
 			Tags:    req.Tags,
@@ -261,8 +254,8 @@ func (idx *Indexer) indexDoc(ctx context.Context, req IndexRequest) (*IndexResul
 
 	// Process each chunk
 	for i, chunk := range chunks {
-		// Generate embedding using doc embedder
-		vecs, err := idx.docEmbedder.EmbedDocuments(ctx, []string{chunk.content})
+		// Generate embedding
+		vec, err := idx.embedder.EmbedDocument(ctx, chunk.content)
 		if err != nil {
 			return nil, fmt.Errorf("failed to embed doc chunk %d: %w", i, err)
 		}
@@ -270,7 +263,7 @@ func (idx *Indexer) indexDoc(ctx context.Context, req IndexRequest) (*IndexResul
 		// Create item for this chunk
 		item := &Item{
 			ID:      fmt.Sprintf("%s-chunk-%d", parentID, i),
-			Type:    "doc",
+			Type:    TypeDoc,
 			Title:   chunk.section,
 			Content: chunk.content,
 			Tags:    req.Tags,
@@ -292,7 +285,7 @@ func (idx *Indexer) indexDoc(ctx context.Context, req IndexRequest) (*IndexResul
 		}
 
 		// Store in vector storage
-		if err := idx.vectorStore.Upsert(ctx, item.ID, vecs[0]); err != nil {
+		if err := idx.vectorStore.Upsert(ctx, item.ID, vec); err != nil {
 			return nil, fmt.Errorf("failed to store doc chunk %d: %w", i, err)
 		}
 	}
@@ -308,27 +301,14 @@ func (idx *Indexer) indexManual(ctx context.Context, req IndexRequest) (*IndexRe
 	now := time.Now()
 	itemID := idx.idGen.GenerateID()
 
-	// Determine embedding model based on item type
-	var vec []float32
-	var err error
-
 	itemType := req.Type
 	if itemType == "" {
-		itemType = "context" // default type
+		itemType = TypeContext
 	}
 
-	// Code-related items use code embedder, others use doc embedder
-	if itemType == "pattern" || itemType == "failure" {
-		vec, err = idx.codeEmbedder.EmbedCode(ctx, []string{req.Content})
-		if err != nil {
-			return nil, fmt.Errorf("failed to embed: %w", err)
-		}
-	} else {
-		vecs, embedErr := idx.docEmbedder.EmbedDocuments(ctx, []string{req.Content})
-		if embedErr != nil {
-			return nil, fmt.Errorf("failed to embed: %w", embedErr)
-		}
-		vec = vecs[0]
+	vec, err := idx.embedder.EmbedDocument(ctx, req.Content)
+	if err != nil {
+		return nil, fmt.Errorf("embed failed for type %q: %w", itemType, err)
 	}
 
 	// Extract title from content if not provided
@@ -347,12 +327,12 @@ func (idx *Indexer) indexManual(ctx context.Context, req IndexRequest) (*IndexRe
 	}
 
 	// Store metadata first
-	if err = idx.metaStore.SaveItem(itemToRecord(item)); err != nil {
+	if err := idx.metaStore.SaveItem(itemToRecord(item)); err != nil {
 		return nil, fmt.Errorf("failed to save metadata: %w", err)
 	}
 
 	// Store in vector storage
-	if err = idx.vectorStore.Upsert(ctx, item.ID, vec); err != nil {
+	if err := idx.vectorStore.Upsert(ctx, item.ID, vec); err != nil {
 		return nil, fmt.Errorf("failed to store item: %w", err)
 	}
 
@@ -390,7 +370,7 @@ func detectContentType(filePath, content string) string {
 		".kt": true, ".scala": true, ".cs": true,
 	}
 	if codeExts[ext] {
-		return "code"
+		return TypeCode
 	}
 
 	// Documentation files
@@ -399,11 +379,11 @@ func detectContentType(filePath, content string) string {
 		".adoc": true, ".org": true,
 	}
 	if docExts[ext] {
-		return "doc"
+		return TypeDoc
 	}
 
 	// Default to manual/generic
-	return "manual"
+	return TypeManual
 }
 
 func isIndexable(path string) bool {

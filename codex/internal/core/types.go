@@ -4,13 +4,37 @@ import (
 	"time"
 )
 
+// Item type constants
+const (
+	TypePattern  = "pattern"
+	TypeFailure  = "failure"
+	TypeDecision = "decision"
+	TypeContext  = "context"
+	TypeCode     = "code"
+	TypeDoc      = "doc"
+	TypeRunbook  = "runbook"
+	TypeManual   = "manual"
+)
+
+// Flight recorder entry type constants
+const (
+	FlightTypeDecision          = "decision"
+	FlightTypeError             = "error"
+	FlightTypeMilestone         = "milestone"
+	FlightTypeObservation       = "observation"
+	FlightTypeRetrievalQuery    = "retrieval_query"
+	FlightTypeRetrievalJudgment = "retrieval_judgment"
+)
+
 // Config holds configuration for the search engine
 type Config struct {
-	VoyageAPIKey    string
-	OpenAIAPIKey    string
 	AnthropicAPIKey string
 	ModelsPath      string
 	MetadataDBPath  string
+
+	// Embedder (nomic-embed-text via Ollama)
+	LocalEmbeddingURL   string // e.g. "http://localhost:11434/api/embed"
+	LocalEmbeddingModel string // e.g. "nomic-embed-text"
 
 	// ScoreThreshold sets the minimum score as a ratio of the top result's score.
 	// Results scoring below topScore * ScoreThreshold are dropped.

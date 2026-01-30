@@ -13,9 +13,7 @@ import (
 
 func skipIfNoJudgeKeys(t *testing.T) {
 	t.Helper()
-	if os.Getenv("VOYAGE_API_KEY") == "" || os.Getenv("OPENAI_API_KEY") == "" {
-		t.Skip("VOYAGE_API_KEY and OPENAI_API_KEY required")
-	}
+	// Embedders are local Ollama — only need Anthropic key for judge.
 	if os.Getenv("ANTHROPIC_API_KEY") == "" {
 		t.Skip("ANTHROPIC_API_KEY required for judge eval")
 	}

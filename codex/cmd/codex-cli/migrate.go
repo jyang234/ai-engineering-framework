@@ -58,9 +58,7 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 
 	// Load config
 	cfg := LoadConfig()
-	if cfg.VoyageAPIKey == "" || cfg.OpenAIAPIKey == "" {
-		return fmt.Errorf("VOYAGE_API_KEY and OPENAI_API_KEY required for migration")
-	}
+	// Local Ollama embedders are used — no API keys required for migration.
 
 	ctx := context.Background()
 	engine, err := core.NewSearchEngine(ctx, cfg.ToEngineConfig())
