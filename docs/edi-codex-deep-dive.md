@@ -83,8 +83,24 @@ When the user runs `edi`, the following happens in order:
 
 1. Generate a session summary
 2. Identify capture candidates (patterns, decisions worth saving)
-3. Prompt user to save significant items to RECALL via `recall_add`
-4. Save session history to `.edi/history/`
+3. Present candidates with structured content templates:
+   - **Decisions**: Context, Decision, Alternatives Considered, Consequences, Files
+   - **Patterns**: Pattern description, When to Use, Implementation, Files
+   - **Failures**: Symptom, Root Cause, Fix, Prevention, Files
+4. Prompt user to save approved items to RECALL via `recall_add`
+5. Update `.edi/status.md` and save session history to `.edi/history/`
+
+### Stale Session Recovery
+
+**Key file:** `edi/internal/launch/recovery.go`
+
+On startup, EDI detects stale sessions — previous sessions that exited without running `/end` (e.g., terminal closed, Ctrl+C). Detection works by checking if `active.yaml` has a `last_session_id` with no corresponding history file in `.edi/history/`.
+
+When a stale session is detected:
+1. EDI warns the user and offers to launch the `/end-recovery` command
+2. `/end-recovery` gathers context from `git log`, `git diff`, and `.edi/status.md`
+3. The user provides what they remember working on
+4. A recovery summary is generated and saved to `.edi/history/`
 
 ---
 
@@ -143,6 +159,7 @@ Each agent's system prompt includes instructions for these commands:
 | `/incident` | `/debug`, `/fix` | Switch to incident mode |
 | `/task` | — | Manage tasks with RECALL enrichment |
 | `/end` | — | End session, save history |
+| `/end-recovery` | — | Recover from unclean session exit |
 
 ### RECALL Usage in Agents
 
@@ -204,12 +221,19 @@ Both backends expose the identical 5-tool MCP interface. Claude Code and agents 
       "command": "~/.edi/bin/recall-mcp",
       "env": {
         "EDI_SESSION_ID": "{id}",
+        "EDI_AGENT_MODE": "{agent}",
+        "EDI_GIT_BRANCH": "{branch}",
+        "EDI_GIT_SHA": "{sha}",
+        "EDI_PROJECT_PATH": "{cwd}",
+        "EDI_PROJECT_NAME": "{project}",
         "CODEX_METADATA_DB": "~/.edi/codex.db"
       }
     }
   }
 }
 ```
+
+The additional environment variables are populated by `gitInfo()` in `mcp.go`, which calls `git rev-parse` for branch and SHA, and uses `os.Getwd()` / `filepath.Base()` for project path and name. These are passed to the Codex MCP server so that `recall_add` can auto-inject them as metadata on every knowledge item.
 
 ---
 
@@ -777,7 +801,7 @@ JSON-RPC 2.0 over stdio (newline-delimited JSON). Implements the Model Context P
 |------|----------------|-----------------|---------|
 | `recall_search` | `query` (string) | `types` (string[]), `scope` (string), `limit` (int, default 10) | Hybrid search. Auto-logs a `retrieval_query` flight recorder entry. |
 | `recall_get` | `id` (string) | -- | Fetch item by ID |
-| `recall_add` | `type`, `title`, `content` (strings) | `tags` (string[]), `scope` (string, default "project") | Add knowledge item. ID format: `{prefix}-{uuid8}` |
+| `recall_add` | `type`, `title`, `content` (strings) | `tags` (string[]), `scope` (string, default "project") | Add knowledge item. ID format: `{prefix}-{uuid8}`. Auto-injects session/git metadata. |
 | `recall_feedback` | `item_id` (string), `useful` (bool) | `context` (string) | Record feedback on an item |
 | `flight_recorder_log` | `type`, `content` (strings) | `rationale` (string), `metadata` (object) | Log decision/error/milestone/observation |
 
@@ -788,6 +812,19 @@ JSON-RPC 2.0 over stdio (newline-delimited JSON). Implements the Model Context P
 - Content: 1MB max
 
 **Audit trail:** Every `recall_search` call automatically logs a `retrieval_query` entry to the flight recorder with the query, filters, and scored result list.
+
+**Auto-injected metadata on `recall_add`:** The Codex MCP server automatically injects 6 environment variables as metadata fields on every item added via `recall_add`:
+
+| Env Var | Metadata Key | Source |
+|---------|-------------|--------|
+| `EDI_SESSION_ID` | `edi_session_id` | Session UUID from EDI launch |
+| `EDI_AGENT_MODE` | `edi_agent_mode` | Current agent (coder, architect, etc.) |
+| `EDI_GIT_BRANCH` | `edi_git_branch` | `git rev-parse --abbrev-ref HEAD` |
+| `EDI_GIT_SHA` | `edi_git_sha` | `git rev-parse --short HEAD` |
+| `EDI_PROJECT_PATH` | `edi_project_path` | Working directory path |
+| `EDI_PROJECT_NAME` | `edi_project_name` | Base name of working directory |
+
+This enriches every RECALL item with provenance, enabling queries like "what decisions were made on branch X" or "patterns captured in project Y".
 
 ---
 
@@ -935,6 +972,48 @@ For each query:
 3. Send to Claude with a retrieval-judge skill prompt
 4. Parse JSON response: `{"relevant_results": [1, 3], "reasoning": "..."}`
 5. Compute judge precision, recall, F1, filtering rate
+
+### Retrieval-Judge Skill (In-Session Quality Layer)
+
+**Key file:** `edi/internal/assets/skills/retrieval-judge/SKILL.md`
+
+The retrieval-judge skill is loaded into every agent's context as a mandatory post-search behavior. It forms the **production layer** of a two-layer quality pipeline:
+
+**Layer 1 — Production (in-session):**
+
+After every `recall_search`, the agent must:
+
+1. **Evaluate each result** — check title match, content relevance, and applicability to the current task
+2. **Log a judgment** — call `flight_recorder_log` with type `retrieval_judgment`, including:
+   - `kept`: list of result IDs that passed evaluation
+   - `dropped`: list of result IDs that were filtered out
+   - Per-result reasoning
+3. **Show a summary line** — `RECALL: X/Y results kept for '{query}'`
+
+The skill also specifies query construction best practices (be specific with context, avoid single-word queries) and anti-patterns (don't trust rank order blindly, don't use results just because they appeared).
+
+**Layer 2 — Evaluation (offline):**
+
+The `JudgeHarness` in `codex/eval/judge.go` uses Claude Sonnet via the Anthropic Messages API to judge retrieval quality offline:
+
+- For each test query, it builds a **numbered result list** with: title, type, score, and a 300-character content snippet
+- The judge prompt asks which results are relevant, returning JSON: `{"relevant_results": [1, 3], "reasoning": "..."}`
+- Metrics computed: **judge precision** (fraction of results judge keeps that are truly relevant), **recall** (fraction of relevant items the judge kept), **F1**, **filtering rate** (fraction of results dropped), **improvement** over raw precision@5
+
+### `_judge_reminder` Field
+
+The Codex MCP search handler (`codex/internal/mcp/tools.go`) injects a `_judge_reminder` field into every `recall_search` response. This reminder tells the agent to apply the retrieval-judge skill before using results. It acts as a nudge ensuring agents don't skip the evaluation step.
+
+### Audit Trail
+
+The retrieval quality pipeline produces two flight recorder entry types:
+
+| Entry Type | Logged By | Contents |
+|-----------|-----------|----------|
+| `retrieval_query` | MCP server (automatic) | Query, filters, scored result list |
+| `retrieval_judgment` | Agent (skill responsibility) | Kept/dropped lists, per-result reasoning, summary |
+
+Together these entries form a complete audit trail from query to judgment, enabling offline analysis of retrieval quality in production sessions.
 
 ### Test Data (`testdata_payflow.go`)
 

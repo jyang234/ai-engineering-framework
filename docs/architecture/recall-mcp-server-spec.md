@@ -1623,6 +1623,50 @@ codex/
 | Binary size | < 50MB | Single binary without models |
 | Memory usage | < 500MB | Idle with loaded models |
 
+## 12. Retrieval Quality: LLM Judge Integration
+
+### Overview
+
+RECALL integrates an LLM judge pipeline to evaluate retrieval quality both in production sessions and offline evaluation. This ensures agents don't blindly trust search results and provides metrics for continuous improvement.
+
+### `_judge_reminder` in Search Responses
+
+The Codex MCP server injects a `_judge_reminder` field into every `recall_search` response:
+
+```json
+{
+  "results": [...],
+  "_judge_reminder": "Apply the retrieval-judge skill: evaluate each result for relevance before using. Log a retrieval_judgment entry via flight_recorder_log."
+}
+```
+
+This field is not part of the result data — it's a behavioral nudge for the consuming agent.
+
+### Expected Agent Behavior (Retrieval-Judge Skill)
+
+Every EDI agent's context includes the retrieval-judge skill (`edi/internal/assets/skills/retrieval-judge/SKILL.md`), which mandates:
+
+1. **Evaluate results** — For each `recall_search` result, assess title relevance, content applicability, and fit for the current task
+2. **Log judgment** — Call `flight_recorder_log` with:
+   - `type`: `"retrieval_judgment"`
+   - `metadata`: `{"kept": ["id1", "id3"], "dropped": ["id2"], "reasoning": {...}}`
+3. **Show summary** — Output `RECALL: X/Y results kept for '{query}'`
+
+### Flight Recorder Audit Trail
+
+Two entry types form the retrieval audit trail:
+
+| Entry Type | Source | Auto/Manual | Contents |
+|-----------|--------|-------------|----------|
+| `retrieval_query` | MCP search handler | Automatic | Query text, filters applied, scored result list |
+| `retrieval_judgment` | Agent via skill | Manual (agent responsibility) | Kept/dropped result IDs, per-result reasoning |
+
+The `retrieval_query` entry is logged automatically by the MCP server on every `recall_search` call. The `retrieval_judgment` entry is the agent's responsibility, guided by the skill.
+
+### Offline Evaluation
+
+The `JudgeHarness` (`codex/eval/judge.go`) uses Claude Sonnet (`claude-sonnet-4-20250514`) to evaluate retrieval quality offline against the PayFlow test collection. It computes precision, recall, F1, and filtering rate metrics. See the deep-dive document Section 16 for full details.
+
 ---
 
 ## Appendix A: Decision Log
