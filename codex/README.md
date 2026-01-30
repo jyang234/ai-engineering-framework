@@ -1,92 +1,115 @@
-# Codex v1
+# Codex
 
-Production-grade knowledge retrieval system for EDI. Upgrades RECALL from SQLite FTS to hybrid vector + BM25 search with multi-stage reranking.
+Hybrid search engine for a local knowledge base. Combines semantic vector search with FTS5 keyword search, fused via Reciprocal Rank Fusion, all in a single SQLite file.
 
-## Features
+## How It Works
 
-- **Hybrid Search**: Qdrant vector search + BM25 sparse search with RRF fusion
-- **Code Embeddings**: Voyage Code-3 for optimized code retrieval
-- **Doc Embeddings**: OpenAI text-embedding-3-large for documentation
-- **Multi-stage Reranking**: BGE rerankers (base → v2-m3) via ONNX/Hugot
-- **AST Chunking**: Tree-sitter for semantic code extraction
-- **Contextual Retrieval**: Claude Haiku for document chunk enrichment
-- **Web UI**: Browse and search the knowledge base
-- **MCP Server**: Drop-in replacement for RECALL v0
+Every search runs two retrieval paths in parallel and fuses the results:
 
-## Quick Start
-
-```bash
-# Start Qdrant
-make qdrant-up
-
-# Build binaries
-make build
-
-# Run MCP server (for EDI)
-./bin/recall-mcp
-
-# Run web UI
-./bin/codex-web
+```
+Query → "how did we handle auth?"
+  │
+  ├─► Vector search (semantic similarity via nomic-embed-text embeddings)
+  ├─► FTS5 keyword search (BM25 ranking)
+  │
+  └─► Reciprocal Rank Fusion → merged, ranked results
 ```
 
-## Environment Variables
+This handles both vague semantic queries ("something about retry logic") and precise keyword lookups ("idempotency key") well.
+
+## Why It Matters
+
+- **Nothing leaves your machine.** Embeddings are generated locally via Ollama. Your code patterns, architecture decisions, and failure logs stay on your disk.
+- **Zero external dependencies.** No API keys needed for core search. Install Ollama, pull the model, and it works.
+- **Everything in one file.** Metadata, vector embeddings, FTS5 index, feedback, and flight recorder — all in `~/.edi/codex.db`.
+- **Drop-in upgrade from RECALL v0.** Same 5-tool MCP interface. One config change (`backend: codex`) switches from keyword-only to hybrid search.
+
+## Getting Started
+
+### Prerequisites
+
+- **Go 1.22+** with CGO enabled
+- **Ollama** with `nomic-embed-text`
 
 ```bash
-# Required
-VOYAGE_API_KEY=voy-xxx
-OPENAI_API_KEY=sk-xxx
-ANTHROPIC_API_KEY=sk-ant-xxx
-
-# Optional
-QDRANT_ADDR=localhost:6334
-CODEX_COLLECTION=recall
-CODEX_WEB_ADDR=:8080
-CODEX_MODELS_PATH=./models
-CODEX_METADATA_DB=~/.edi/codex.db
-EDI_SESSION_ID=xxx  # Set by EDI launcher
+# Install Ollama: https://ollama.com
+ollama pull nomic-embed-text
 ```
+
+### Build and Run
+
+```bash
+make build   # Builds all binaries with -tags "fts5"
+cp bin/recall-mcp ~/.edi/bin/
+```
+
+Enable in your EDI config:
+
+```yaml
+# ~/.edi/config.yaml or .edi/config.yaml
+recall:
+  enabled: true
+  backend: codex
+```
+
+### Standalone Usage
+
+Codex also works outside EDI for indexing and admin tasks:
+
+```bash
+./bin/codex-cli index ./path/to/project
+./bin/codex-cli search "error handling pattern" --type pattern
+./bin/codex-cli status
+CODEX_API_KEY=my-secret ./bin/codex-web  # → http://localhost:8080
+```
+
+## Configuration
+
+All configuration is via environment variables.
+
+| Variable | Default | Description |
+|---|---|---|
+| `CODEX_METADATA_DB` | `~/.edi/codex.db` | SQLite database path |
+| `LOCAL_EMBEDDING_URL` | `http://localhost:11434` | Ollama API base URL |
+| `LOCAL_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model name |
+| `CODEX_API_KEY` | _(none)_ | Bearer token auth for web UI and MCP |
+| `CODEX_WEB_ADDR` | `:8080` | Web server listen address |
+| `CODEX_MODELS_PATH` | `./models` | Directory for local model files |
 
 ## Project Structure
 
 ```
 codex/
 ├── cmd/
-│   ├── recall-mcp/     # MCP server binary
-│   ├── codex-web/      # Web UI binary
-│   └── codex-cli/      # Admin CLI
+│   ├── recall-mcp/        # MCP server (what EDI launches)
+│   ├── codex-cli/         # Admin CLI (index, search, migrate, status)
+│   ├── codex-web/         # Web UI
+│   └── codex-testgen/     # Evaluation test data server
 ├── internal/
-│   ├── core/           # Search/index orchestration
-│   ├── storage/        # Qdrant + SQLite metadata
-│   ├── chunking/       # AST + contextual chunking
-│   ├── embedding/      # Voyage + OpenAI clients
-│   ├── reranking/      # Hugot BGE models
-│   ├── mcp/            # MCP protocol handlers
-│   └── web/            # Gin web handlers
-├── web/
-│   ├── templates/      # HTML templates
-│   └── static/         # CSS/JS assets
-└── models/             # ONNX models (gitignored)
-```
-
-## Migration from RECALL v0
-
-```bash
-# Migrate existing SQLite FTS data to Qdrant
-./bin/codex-cli migrate
+│   ├── core/              # SearchEngine, Indexer, RRF fusion
+│   ├── storage/           # SQLite metadata + vector BLOBs + FTS5
+│   ├── embedding/         # Ollama client (nomic-embed-text, 768-dim)
+│   ├── chunking/          # AST (Tree-sitter) + markdown chunking
+│   ├── reranking/         # Reranker interfaces (planned)
+│   ├── mcp/               # JSON-RPC stdio MCP server
+│   └── web/               # Gin HTTP server + REST API
+├── eval/                  # Evaluation harness, metrics, LLM judge
+└── web/                   # HTML templates + static assets
 ```
 
 ## Development
 
 ```bash
-# Run tests
-make test
-
-# Lint
-make lint
-
-# Format
-make fmt
+make build    # Build all binaries
+make test     # Run tests
+make lint     # Run linter
+make fmt      # Format code
 ```
+
+## Further Reading
+
+- [AEF Overview](../README.md) — the big picture, quick start, and component map
+- [EDI + Codex Technical Deep-Dive](../docs/edi-codex-deep-dive.md) — full system architecture and data flows
 
 ## License
 

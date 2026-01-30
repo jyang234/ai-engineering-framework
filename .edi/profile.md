@@ -63,22 +63,6 @@ The primary component is **EDI (Enhanced Development Intelligence)** - a Go CLI 
 4. **Prompted capture** - Human curation keeps knowledge clean
 5. **Agents as markdown** - Easy to customize and version control
 
-## Current Status
-
-### Implemented (v0)
-- EDI CLI with init, launch, config, recall, history, agent commands
-- RECALL MCP server with FTS5 search
-- 4 core agents + 7 subagents
-- 6 slash commands
-- Briefing generation from profile/history
-- Task annotations system
-
-### Next Steps
-- Test end-to-end with real Claude Code sessions
-- Add more comprehensive tests
-- Implement v1 features (vector search, web UI)
-- Build additional AEF components
-
 ## Getting Started
 
 ```bash

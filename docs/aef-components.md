@@ -1,7 +1,7 @@
 # AEF Component Registry
 
 **Purpose**: Quick reference for what exists, what is planned, and where to find details.
-**Updated**: January 26, 2026
+**Updated**: January 29, 2026
 
 ---
 
@@ -54,7 +54,7 @@
 
 **Configuration:**
 - `recall.backend: v0` - SQLite FTS5 (default, zero dependencies)
-- `recall.backend: codex` - Hybrid vector search (requires Qdrant, API keys)
+- `recall.backend: codex` - Hybrid vector search (requires Ollama)
 
 **Known Gaps:**
 - Persona spec not fully integrated into agent/skill files
@@ -71,20 +71,26 @@
 | **Purpose** | Production-grade hybrid retrieval for RECALL |
 | **Implementation Plan** | `docs/implementation/codex-v1-implementation-plan.md` |
 
-**Capabilities:**
-- Qdrant for vector + BM25 search with RRF fusion
-- Voyage Code-3 embeddings for code
-- OpenAI text-embedding-3-large for docs
-- Multi-stage reranking (BGE models via ONNX)
+**Capabilities (Implemented):**
+- SQLite BLOB + brute-force KNN vector search with 2-way RRF fusion (vector + FTS5 keywords)
+- nomic-embed-text embeddings via local Ollama (768-dim, all content types)
 - AST-aware chunking (Tree-sitter)
-- Contextual retrieval (Claude Haiku)
-- Web UI for browsing knowledge
+- Web UI for browsing knowledge (with optional API key auth)
 - MCP server (drop-in replacement for RECALL v0)
+- Input size limits and schema versioning
+
+**Planned (stubs present, not yet functional):**
+- Multi-stage reranking (BGE models via ONNX/Hugot) — stub falls back to original ordering
+- Contextual retrieval (Claude Haiku enrichment) — stub returns error, not implemented
 
 **Requirements:**
-- Qdrant server running (`docker run -p 6333:6333 -p 6334:6334 qdrant/qdrant`)
-- `VOYAGE_API_KEY` for code embeddings
-- `OPENAI_API_KEY` for document embeddings
+- Ollama running locally with `nomic-embed-text` model (`ollama pull nomic-embed-text`)
+- No API keys required for core functionality
+- Optional: `ANTHROPIC_API_KEY` for contextual document enrichment
+
+**Architecture Decisions:**
+- `docs/architecture/codex-storage-architecture-decision.md` — SQLite BLOBs over Qdrant
+- `docs/architecture/codex-embedding-model-decision.md` — Single local model over dual API models
 
 **EDI Integration:**
 - Set `recall.backend: codex` in `~/.edi/config.yaml`
@@ -178,16 +184,12 @@ edi
 ### EDI with Codex v1 (hybrid vector search)
 
 ```bash
-# Start Qdrant
-docker run -p 6333:6333 -p 6334:6334 qdrant/qdrant
+# Pull embedding model
+ollama pull nomic-embed-text
 
 # Build Codex
 cd codex && make build
 cp bin/recall-mcp ~/.edi/bin/
-
-# Set API keys
-export VOYAGE_API_KEY=voy-xxx
-export OPENAI_API_KEY=sk-xxx
 
 # Initialize with Codex backend
 edi init --global --backend codex

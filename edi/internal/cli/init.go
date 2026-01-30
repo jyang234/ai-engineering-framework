@@ -124,10 +124,9 @@ func initGlobal(force bool, backend string) error {
 		fmt.Println("Initialized global EDI at ~/.edi/ with Codex backend")
 		fmt.Println("")
 		fmt.Println("IMPORTANT: Codex backend requires additional setup:")
-		fmt.Println("  1. Start Qdrant: docker run -p 6333:6333 -p 6334:6334 qdrant/qdrant")
+		fmt.Println("  1. Install Ollama and pull nomic-embed-text: ollama pull nomic-embed-text")
 		fmt.Println("  2. Build Codex: cd codex && make build")
 		fmt.Println("  3. Install binary: cp codex/bin/recall-mcp ~/.edi/bin/")
-		fmt.Println("  4. Set API keys: export VOYAGE_API_KEY=... OPENAI_API_KEY=...")
 		fmt.Println("")
 	} else {
 		fmt.Println("Initialized global EDI at ~/.edi/")

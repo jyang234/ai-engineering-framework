@@ -60,10 +60,7 @@ func TestGetRecallMCPConfig_Codex(t *testing.T) {
 			Enabled: true,
 			Backend: "codex",
 		},
-		Codex: config.CodexConfig{
-			QdrantAddr: "localhost:6334",
-			Collection: "test-collection",
-		},
+		Codex: config.CodexConfig{},
 	}
 
 	mcpCfg := GetRecallMCPConfig(cfg, "test-session-456")
@@ -86,12 +83,13 @@ func TestGetRecallMCPConfig_Codex(t *testing.T) {
 		t.Errorf("Expected EDI_SESSION_ID 'test-session-456', got '%s'", mcpCfg.Env["EDI_SESSION_ID"])
 	}
 
-	if mcpCfg.Env["QDRANT_ADDR"] != "localhost:6334" {
-		t.Errorf("Expected QDRANT_ADDR 'localhost:6334', got '%s'", mcpCfg.Env["QDRANT_ADDR"])
+	// Verify stale env vars are NOT present
+	if _, ok := mcpCfg.Env["QDRANT_ADDR"]; ok {
+		t.Error("QDRANT_ADDR should not be set (removed)")
 	}
 
-	if mcpCfg.Env["CODEX_COLLECTION"] != "test-collection" {
-		t.Errorf("Expected CODEX_COLLECTION 'test-collection', got '%s'", mcpCfg.Env["CODEX_COLLECTION"])
+	if _, ok := mcpCfg.Env["CODEX_COLLECTION"]; ok {
+		t.Error("CODEX_COLLECTION should not be set (removed)")
 	}
 }
 

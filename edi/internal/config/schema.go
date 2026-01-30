@@ -34,8 +34,6 @@ type RecallConfig struct {
 
 // CodexConfig configures the Codex v1 backend (hybrid vector search)
 type CodexConfig struct {
-	QdrantAddr   string `yaml:"qdrant_addr" mapstructure:"qdrant_addr"`     // Qdrant server address (default: localhost:6334)
-	Collection   string `yaml:"collection" mapstructure:"collection"`       // Qdrant collection name (default: recall)
 	ModelsPath   string `yaml:"models_path" mapstructure:"models_path"`     // Path to ONNX reranker models
 	MetadataDB   string `yaml:"metadata_db" mapstructure:"metadata_db"`     // Path to SQLite metadata DB
 	BinaryPath   string `yaml:"binary_path" mapstructure:"binary_path"`     // Path to recall-mcp binary (optional)
@@ -47,6 +45,7 @@ type BriefingConfig struct {
 	HistoryEntries int  `yaml:"history_entries" mapstructure:"history_entries"`
 	IncludeTasks   bool `yaml:"include_tasks" mapstructure:"include_tasks"`
 	IncludeProfile bool `yaml:"include_profile" mapstructure:"include_profile"`
+	IncludeStatus  bool `yaml:"include_status" mapstructure:"include_status"`
 }
 
 // CaptureConfig configures the capture workflow

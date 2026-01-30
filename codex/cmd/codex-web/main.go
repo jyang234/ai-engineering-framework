@@ -45,7 +45,12 @@ func main() {
 
 	// Create and run web server
 	addr := getEnv("CODEX_WEB_ADDR", ":8080")
-	server := web.NewServer(engine)
+	var serverOpts []web.ServerOption
+	if apiKey := os.Getenv("CODEX_API_KEY"); apiKey != "" {
+		serverOpts = append(serverOpts, web.WithAPIKey(apiKey))
+		log.Println("API key authentication enabled")
+	}
+	server := web.NewServer(engine, serverOpts...)
 
 	log.Printf("Starting web server on %s", addr)
 	if err := server.Run(addr); err != nil {

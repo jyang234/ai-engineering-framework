@@ -1,18 +1,41 @@
 # EDI - Enhanced Development Intelligence
 
-EDI is a harness for Claude Code that provides continuity, knowledge, and specialized behaviors.
+EDI wraps Claude Code with agents, knowledge, briefings, and session continuity. One command to start a session that knows your project.
 
-## Overview
+## What EDI Does
 
-EDI configures Claude Code with:
-- **Agents** - Specialized modes for coding, architecture, review, and incident response
-- **RECALL** - Knowledge retrieval via MCP for patterns, failures, and decisions
-- **Briefings** - Context from previous sessions and project profile
-- **History** - Session summaries for continuity between sessions
+### Agents
 
-## Installation
+Switch modes mid-session. `/plan` for architecture, `/build` for code, `/review` for quality, `/incident` for debugging. Each agent has its own system prompt, priorities, and tools.
 
-### Build from Source
+### RECALL
+
+Knowledge tools available in every session. Search patterns, log decisions, capture failures. Two backends: v0 (keyword-only via FTS5) or [Codex](../codex/README.md) (hybrid semantic + keyword).
+
+| Tool | What it does |
+|------|-------------|
+| `recall_search` | Find knowledge by query |
+| `recall_get` | Retrieve a specific item |
+| `recall_add` | Capture a pattern, decision, or failure |
+| `recall_feedback` | Mark results as useful or not |
+| `flight_recorder_log` | Log session events |
+
+### Briefings
+
+Every session starts with context: project profile, recent history, open tasks. No cold starts. The briefing is generated from `.edi/profile.md`, session history, and task state.
+
+### History
+
+Sessions save summaries on `/end`. Next session picks up context from previous sessions. History lives in `.edi/history/`.
+
+## Getting Started
+
+### Requirements
+
+- Go 1.22+
+- Claude Code CLI installed and in PATH
+
+### Install
 
 ```bash
 cd edi
@@ -20,40 +43,23 @@ make build
 make install  # Installs to ~/.local/bin/
 ```
 
-### Requirements
-
-- Go 1.22+
-- Claude Code CLI installed and in PATH
-
-## Quick Start
+### Initialize and Run
 
 ```bash
-# Initialize global EDI (once per machine)
+# Global init (once per machine)
 edi init --global
 
-# Initialize EDI in a project
-cd your-project
-edi init
+# Project init
+cd your-project && edi init
 
 # Edit project profile
 $EDITOR .edi/profile.md
 
-# Start an EDI session
+# Start session
 edi
 ```
 
-## Commands
-
-### Shell Commands
-
-| Command | Description |
-|---------|-------------|
-| `edi` | Start EDI session (launches Claude Code) |
-| `edi init` | Initialize EDI in current project |
-| `edi init --global` | Initialize global EDI at ~/.edi/ |
-| `edi version` | Show version information |
-
-### Slash Commands (in Claude Code)
+## Slash Commands
 
 | Command | Description |
 |---------|-------------|
@@ -64,53 +70,9 @@ edi
 | `/task` | Manage tasks with RECALL context |
 | `/end` | End session and save history |
 
-## Agents
-
-EDI includes four core agents:
-
-- **Coder** - Implementation focused, clean tested code
-- **Architect** - System design, trade-offs, ADRs
-- **Reviewer** - Code review, security, quality
-- **Incident** - Debugging, rapid resolution
-
-## RECALL
-
-RECALL is the knowledge retrieval system, available via MCP tools:
-
-- `recall_search` - Search patterns, failures, decisions
-- `recall_get` - Retrieve item by ID
-- `recall_add` - Add new knowledge
-- `recall_feedback` - Provide usefulness feedback
-- `flight_recorder_log` - Log session events
-
-## Directory Structure
-
-### Global (~/.edi/)
-
-```
-~/.edi/
-├── agents/      # Agent definitions
-├── commands/    # Slash commands
-├── skills/      # Skills
-├── recall/      # Knowledge database
-├── cache/       # Temporary files
-└── config.yaml  # Global configuration
-```
-
-### Project (.edi/)
-
-```
-.edi/
-├── config.yaml  # Project configuration
-├── profile.md   # Project description
-├── history/     # Session history
-├── tasks/       # Task annotations
-└── recall/      # Project knowledge
-```
-
 ## Configuration
 
-### Global Config (~/.edi/config.yaml)
+Global config at `~/.edi/config.yaml`, project config at `.edi/config.yaml`. Project overrides global (arrays replace, not merge).
 
 ```yaml
 version: "1"
@@ -118,32 +80,32 @@ agent: coder
 
 recall:
   enabled: true
+  backend: codex  # or "v0" for keyword-only
 
 briefing:
   include_history: true
   history_entries: 3
   include_tasks: true
   include_profile: true
-
-capture:
-  friction_budget: 3
-
-tasks:
-  lazy_loading: true
-  capture_on_completion: true
-  propagate_decisions: true
 ```
 
-### Project Config (.edi/config.yaml)
+## Directory Structure
 
-```yaml
-version: "1"
-
-project:
-  name: my-project
-
-# Override global settings as needed
 ```
+~/.edi/                    .edi/ (project)
+├── agents/                ├── config.yaml
+├── commands/              ├── profile.md
+├── skills/                ├── history/
+├── recall/                ├── tasks/
+├── cache/                 └── recall/
+└── config.yaml
+```
+
+## Links
+
+- [AEF Overview](../README.md) — the big picture
+- [Codex](../codex/README.md) — the knowledge engine
+- [EDI + Codex Deep-Dive](../docs/edi-codex-deep-dive.md) — full system architecture
 
 ## License
 

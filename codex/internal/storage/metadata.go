@@ -84,8 +84,50 @@ func NewMetadataStore(dbPath string) (*MetadataStore, error) {
 		db.Close()
 		return nil, err
 	}
+	if err := store.ensureSchemaVersion(); err != nil {
+		db.Close()
+		return nil, err
+	}
 
 	return store, nil
+}
+
+// currentSchemaVersion is the schema version this binary expects.
+const currentSchemaVersion = 1
+
+// ensureSchemaVersion creates the schema_version table if needed, inserts
+// version 1 on first run, and errors if the DB has a newer version than
+// this binary supports.
+func (s *MetadataStore) ensureSchemaVersion() error {
+	_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)`)
+	if err != nil {
+		return fmt.Errorf("create schema_version table: %w", err)
+	}
+
+	var count int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM schema_version").Scan(&count); err != nil {
+		return fmt.Errorf("count schema_version: %w", err)
+	}
+	if count == 0 {
+		_, err := s.db.Exec("INSERT INTO schema_version (version) VALUES (?)", currentSchemaVersion)
+		return err
+	}
+
+	var version int
+	if err := s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version); err != nil {
+		return fmt.Errorf("read schema_version: %w", err)
+	}
+	if version > currentSchemaVersion {
+		return fmt.Errorf("database schema version %d is newer than this binary supports (%d) — upgrade Codex", version, currentSchemaVersion)
+	}
+	return nil
+}
+
+// SchemaVersion returns the current schema version of the database.
+func (s *MetadataStore) SchemaVersion() (int, error) {
+	var version int
+	err := s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
+	return version, err
 }
 
 // migrate creates the necessary tables

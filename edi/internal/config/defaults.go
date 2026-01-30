@@ -13,15 +13,13 @@ func DefaultConfig() *Config {
 			Enabled: true,
 			Backend: "v0", // Default to v0 for backward compatibility
 		},
-		Codex: CodexConfig{
-			QdrantAddr: "localhost:6334",
-			Collection: "recall",
-		},
+		Codex: CodexConfig{},
 		Briefing: BriefingConfig{
 			IncludeHistory: true,
 			HistoryEntries: 3,
 			IncludeTasks:   true,
 			IncludeProfile: true,
+			IncludeStatus:  true,
 		},
 		Capture: CaptureConfig{
 			FrictionBudget: 3,
@@ -48,12 +46,11 @@ recall:
   backend: v0  # "v0" (SQLite FTS) or "codex" (hybrid vector search)
 
 # Codex v1 backend configuration (used when recall.backend = "codex")
-# Requires: Qdrant server, VOYAGE_API_KEY, OPENAI_API_KEY env vars
+# Requires: Ollama running locally with nomic-embed-text model
 # codex:
-#   qdrant_addr: localhost:6334
-#   collection: recall
 #   models_path: ~/.edi/models
 #   metadata_db: ~/.edi/codex.db
+#   binary_path: ~/.edi/bin/recall-mcp
 
 # Session briefing
 briefing:
@@ -61,6 +58,7 @@ briefing:
   history_entries: 3
   include_tasks: true
   include_profile: true
+  include_status: true
 
 # Capture workflow
 capture:
@@ -79,20 +77,18 @@ tasks:
 // WriteDefaultWithBackend writes the default global configuration with a specific backend
 func WriteDefaultWithBackend(path string, backend string) error {
 	codexSection := `# Codex v1 backend configuration (used when recall.backend = "codex")
-# Requires: Qdrant server, VOYAGE_API_KEY, OPENAI_API_KEY env vars
+# Requires: Ollama running locally with nomic-embed-text model
 # codex:
-#   qdrant_addr: localhost:6334
-#   collection: recall
 #   models_path: ~/.edi/models
-#   metadata_db: ~/.edi/codex.db`
+#   metadata_db: ~/.edi/codex.db
+#   binary_path: ~/.edi/bin/recall-mcp`
 
 	if backend == "codex" {
 		codexSection = `# Codex v1 backend configuration
 codex:
-  qdrant_addr: localhost:6334
-  collection: recall
   models_path: ~/.edi/models
-  metadata_db: ~/.edi/codex.db`
+  metadata_db: ~/.edi/codex.db
+  binary_path: ~/.edi/bin/recall-mcp`
 	}
 
 	content := `# EDI Global Configuration
@@ -114,6 +110,7 @@ briefing:
   history_entries: 3
   include_tasks: true
   include_profile: true
+  include_status: true
 
 # Capture workflow
 capture:

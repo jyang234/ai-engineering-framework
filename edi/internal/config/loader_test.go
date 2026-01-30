@@ -41,12 +41,12 @@ func TestDefaultConfigCodexDefaults(t *testing.T) {
 
 	cfg := DefaultConfig()
 
-	if cfg.Codex.QdrantAddr != "localhost:6334" {
-		t.Errorf("Expected Qdrant addr 'localhost:6334', got '%s'", cfg.Codex.QdrantAddr)
+	if cfg.Codex.ModelsPath != "" {
+		t.Errorf("Expected empty ModelsPath, got '%s'", cfg.Codex.ModelsPath)
 	}
 
-	if cfg.Codex.Collection != "recall" {
-		t.Errorf("Expected collection 'recall', got '%s'", cfg.Codex.Collection)
+	if cfg.Codex.MetadataDB != "" {
+		t.Errorf("Expected empty MetadataDB, got '%s'", cfg.Codex.MetadataDB)
 	}
 }
 
@@ -111,7 +111,7 @@ func TestWriteDefaultWithBackend_V0(t *testing.T) {
 	}
 
 	// Codex should be commented out for v0
-	if contains(contentStr, "codex:\n  qdrant_addr:") {
+	if contains(contentStr, "codex:\n  models_path:") {
 		t.Error("Expected codex config to be commented out for v0 backend")
 	}
 }
@@ -136,7 +136,7 @@ func TestWriteDefaultWithBackend_Codex(t *testing.T) {
 	}
 
 	// Codex should be uncommented for codex backend
-	if !contains(contentStr, "codex:\n  qdrant_addr:") {
+	if !contains(contentStr, "codex:\n  models_path:") {
 		t.Error("Expected codex config to be uncommented for codex backend")
 	}
 }

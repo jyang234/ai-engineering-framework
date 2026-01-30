@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "recall": {
+      "type": "stdio",
+      "command": "edi",
+      "args": [
+        "recall-server",
+        "--session-id",
+        "af9b4c7b-7d12-4a1b-bf73-70766a025dc5",
+        "--global-db",
+        "/Users/johnyang/.edi/recall/global.db"
+      ]
+    }
+  }
+}

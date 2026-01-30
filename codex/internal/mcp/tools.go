@@ -41,10 +41,18 @@ func (h *ToolHandler) Handle(ctx context.Context, name string, args map[string]i
 	}
 }
 
+const (
+	maxContentSize = 1 << 20  // 1MB
+	maxQuerySize   = 10 << 10 // 10KB
+)
+
 func (h *ToolHandler) handleSearch(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	query, _ := args["query"].(string)
 	if query == "" {
 		return nil, fmt.Errorf("query is required")
+	}
+	if len(query) > maxQuerySize {
+		return nil, fmt.Errorf("query exceeds maximum size of 10KB")
 	}
 
 	var types []string
@@ -114,6 +122,9 @@ func (h *ToolHandler) handleAdd(ctx context.Context, args map[string]interface{}
 
 	if itemType == "" || title == "" || content == "" {
 		return nil, fmt.Errorf("type, title, and content are required")
+	}
+	if len(content) > maxContentSize {
+		return nil, fmt.Errorf("content exceeds maximum size of 1MB")
 	}
 
 	if scope == "" {

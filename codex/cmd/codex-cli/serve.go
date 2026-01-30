@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 
@@ -59,7 +60,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	if serveWeb {
 		fmt.Printf("Starting web server at http://localhost%s\n", serveAddr)
-		server := web.NewServer(engine)
+		var serverOpts []web.ServerOption
+		if apiKey := os.Getenv("CODEX_API_KEY"); apiKey != "" {
+			serverOpts = append(serverOpts, web.WithAPIKey(apiKey))
+			fmt.Println("API key authentication enabled")
+		}
+		server := web.NewServer(engine, serverOpts...)
 		return server.Run(serveAddr)
 	}
 

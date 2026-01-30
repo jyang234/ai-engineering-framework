@@ -61,13 +61,7 @@ func getCodexMCPConfig(cfg *config.Config, sessionID string) MCPServerConfig {
 		"EDI_SESSION_ID": sessionID,
 	}
 
-	// Add Qdrant configuration
-	if cfg.Codex.QdrantAddr != "" {
-		env["QDRANT_ADDR"] = cfg.Codex.QdrantAddr
-	}
-	if cfg.Codex.Collection != "" {
-		env["CODEX_COLLECTION"] = cfg.Codex.Collection
-	}
+	// Add Codex configuration
 	if cfg.Codex.ModelsPath != "" {
 		env["CODEX_MODELS_PATH"] = expandPath(cfg.Codex.ModelsPath)
 	}
@@ -75,15 +69,18 @@ func getCodexMCPConfig(cfg *config.Config, sessionID string) MCPServerConfig {
 		env["CODEX_METADATA_DB"] = expandPath(cfg.Codex.MetadataDB)
 	}
 
-	// Pass through API keys from environment
-	if key := os.Getenv("VOYAGE_API_KEY"); key != "" {
-		env["VOYAGE_API_KEY"] = "${VOYAGE_API_KEY}"
-	}
-	if key := os.Getenv("OPENAI_API_KEY"); key != "" {
-		env["OPENAI_API_KEY"] = "${OPENAI_API_KEY}"
-	}
+	// Pass through API keys and embedding config from environment
 	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
 		env["ANTHROPIC_API_KEY"] = "${ANTHROPIC_API_KEY}"
+	}
+	if url := os.Getenv("LOCAL_EMBEDDING_URL"); url != "" {
+		env["LOCAL_EMBEDDING_URL"] = "${LOCAL_EMBEDDING_URL}"
+	}
+	if model := os.Getenv("LOCAL_EMBEDDING_MODEL"); model != "" {
+		env["LOCAL_EMBEDDING_MODEL"] = "${LOCAL_EMBEDDING_MODEL}"
+	}
+	if key := os.Getenv("CODEX_API_KEY"); key != "" {
+		env["CODEX_API_KEY"] = "${CODEX_API_KEY}"
 	}
 
 	return MCPServerConfig{
@@ -208,22 +205,6 @@ func ValidateCodexRequirements(cfg *config.Config) error {
 
 	if _, err := os.Stat(expandPath(binaryPath)); os.IsNotExist(err) {
 		return fmt.Errorf("codex binary not found at %s. Run 'make build' in codex/ directory and copy to ~/.edi/bin/", binaryPath)
-	}
-
-	// Warn about API keys (not required but recommended)
-	var warnings []string
-	if os.Getenv("VOYAGE_API_KEY") == "" {
-		warnings = append(warnings, "VOYAGE_API_KEY not set (required for code embeddings)")
-	}
-	if os.Getenv("OPENAI_API_KEY") == "" {
-		warnings = append(warnings, "OPENAI_API_KEY not set (required for document embeddings)")
-	}
-
-	if len(warnings) > 0 {
-		fmt.Println("Codex backend warnings:")
-		for _, w := range warnings {
-			fmt.Printf("  - %s\n", w)
-		}
 	}
 
 	return nil

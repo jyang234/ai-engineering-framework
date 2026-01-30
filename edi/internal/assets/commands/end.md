@@ -42,7 +42,25 @@ Generate a session summary and save it to history.
    })
    ```
 
-6. **Write** session history to `.edi/history/{date}-{session-id}.md`:
+6. **Update** `.edi/status.md` with current project status:
+   - Read the existing `.edi/status.md` (if any)
+   - Update it based on what was accomplished this session and what's next
+   - Include a `Last updated: {current date}` line at the top
+   - Keep it concise: current milestone, what's done, what's next
+   ```markdown
+   Last updated: 2026-01-29
+
+   ## Current Milestone
+   [What you're working toward]
+
+   ## Completed
+   - [Recent completions]
+
+   ## Next Steps
+   - [What comes next]
+   ```
+
+7. **Write** session history to `.edi/history/{date}-{session-id}.md`:
    ```markdown
    ---
    session_id: [full session ID from context]
@@ -65,7 +83,7 @@ Generate a session summary and save it to history.
    - [work remaining, blockers]
    ```
 
-7. **Confirm** session ended:
+8. **Confirm** session ended:
    ```
    Session saved to .edi/history/2026-01-25-abc12345.md
    Captured 2 items to RECALL.

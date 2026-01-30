@@ -34,6 +34,12 @@ func runLaunch(cmd *cobra.Command, args []string) error {
 		sessionID = uuid.New().String()
 	}
 
+	// Check for stale (unclean) previous session
+	if stale, err := launch.DetectStaleSession(cwd); err == nil && stale != nil {
+		fmt.Fprintf(os.Stderr, "⚠ Previous session (%s) was not cleanly ended.\n", stale.SessionID[:8])
+		fmt.Fprintf(os.Stderr, "  Run /end-recovery to generate a summary from that session.\n\n")
+	}
+
 	// Install slash commands to .claude/commands/
 	if err := launch.InstallCommands(); err != nil {
 		if verbose {

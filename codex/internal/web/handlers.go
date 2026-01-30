@@ -11,6 +11,11 @@ import (
 	"github.com/anthropics/aef/codex/internal/storage"
 )
 
+const (
+	maxContentSize = 1 << 20 // 1MB
+	maxQuerySize   = 10 << 10 // 10KB
+)
+
 // Web handlers
 
 func (s *Server) handleIndex(c *gin.Context) {
@@ -97,6 +102,14 @@ func (s *Server) handleAPISearch(c *gin.Context) {
 	query := c.Query("q")
 	types := c.QueryArray("type")
 
+	if len(query) > maxQuerySize {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "query exceeds maximum size of 10KB",
+		})
+		return
+	}
+
 	if query == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
@@ -154,6 +167,14 @@ func (s *Server) handleAPICreate(c *gin.Context) {
 		return
 	}
 
+	if len(item.Content) > maxContentSize {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "content exceeds maximum size of 1MB",
+		})
+		return
+	}
+
 	// Set timestamps and ID if not provided
 	now := time.Now()
 	if item.ID == "" {
@@ -198,6 +219,14 @@ func (s *Server) handleAPIUpdate(c *gin.Context) {
 
 	// Ensure ID matches
 	item.ID = id
+
+	if len(item.Content) > maxContentSize {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "content exceeds maximum size of 1MB",
+		})
+		return
+	}
 
 	if err := s.engine.Update(c.Request.Context(), &item); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{

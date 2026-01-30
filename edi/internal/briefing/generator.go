@@ -33,6 +33,8 @@ type Briefing struct {
 	HasProfile      bool
 	HasHistory      bool
 	HasTasks        bool
+	ProjectStatus   string
+	HasStatus       bool
 }
 
 // Generate creates a session briefing from available sources
@@ -66,6 +68,15 @@ func Generate(cfg *config.Config) (*Briefing, error) {
 		}
 	}
 
+	// Load project status
+	if cfg.Briefing.IncludeStatus {
+		status, err := loadStatus(cwd)
+		if err == nil && status != "" {
+			b.ProjectStatus = status
+			b.HasStatus = true
+		}
+	}
+
 	// Load task status
 	if cfg.Briefing.IncludeTasks {
 		tasks, err := loadTaskStatus(cwd)
@@ -89,6 +100,13 @@ func (b *Briefing) Render(projectName string) string {
 	if b.ProjectContext != "" {
 		sb.WriteString("## Project Context\n\n")
 		sb.WriteString(b.ProjectContext)
+		sb.WriteString("\n\n")
+	}
+
+	// Project status
+	if b.ProjectStatus != "" {
+		sb.WriteString("## Project Status\n\n")
+		sb.WriteString(b.ProjectStatus)
 		sb.WriteString("\n\n")
 	}
 
@@ -140,6 +158,15 @@ func (b *Briefing) Render(projectName string) string {
 	return sb.String()
 }
 
+
+func loadStatus(projectPath string) (string, error) {
+	statusPath := filepath.Join(projectPath, ".edi", "status.md")
+	content, err := os.ReadFile(statusPath)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(content)), nil
+}
 
 func loadProfile(projectPath string) (string, error) {
 	profilePath := filepath.Join(projectPath, ".edi", "profile.md")
