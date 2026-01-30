@@ -38,6 +38,7 @@ func Execute(version string) error {
 	rootCmd.AddCommand(historyCmd)
 	rootCmd.AddCommand(recallCmd)
 	rootCmd.AddCommand(agentCmd)
+	rootCmd.AddCommand(doctorCmd)
 
 	rootCmd.Version = version
 	if err := rootCmd.Execute(); err != nil {

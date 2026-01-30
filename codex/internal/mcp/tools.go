@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"os"
+
 	"github.com/anthropics/aef/codex/internal/core"
 	"github.com/google/uuid"
 )
@@ -143,6 +145,17 @@ func (h *ToolHandler) handleAdd(ctx context.Context, args map[string]interface{}
 	id := generateID(itemType)
 	now := time.Now()
 
+	// Auto-inject project attribution from environment
+	var metadata map[string]interface{}
+	if projectName := os.Getenv("EDI_PROJECT_NAME"); projectName != "" {
+		metadata = map[string]interface{}{
+			"project_name": projectName,
+		}
+		if projectPath := os.Getenv("EDI_PROJECT_PATH"); projectPath != "" {
+			metadata["project_path"] = projectPath
+		}
+	}
+
 	item := &core.Item{
 		ID:        id,
 		Type:      itemType,
@@ -150,6 +163,7 @@ func (h *ToolHandler) handleAdd(ctx context.Context, args map[string]interface{}
 		Content:   content,
 		Tags:      tags,
 		Scope:     scope,
+		Metadata:  metadata,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}

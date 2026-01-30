@@ -43,19 +43,34 @@ $EDITOR .edi/profile.md
 edi
 ```
 
-For hybrid search (semantic + keyword), install [Codex](codex/README.md):
+For hybrid search (semantic + keyword), use the Codex backend:
 
 ```bash
 # Install Ollama and pull the embedding model
 ollama pull nomic-embed-text
 
-# Build Codex
-cd codex && make build
-cp bin/recall-mcp ~/.edi/bin/
+# Initialize with Codex backend (auto-builds if source is available)
+edi init --global --backend=codex
 
-# Enable in config
-# recall.backend: codex  (in ~/.edi/config.yaml)
+# Or install manually
+cd codex && make build && cp bin/recall-mcp ~/.edi/bin/
+
+# Check everything works
+edi doctor
 ```
+
+## What's Global vs. Project-Level
+
+| Level | Location | Contains |
+|-------|----------|----------|
+| **Global** (per machine) | `~/.edi/` | Binaries, agents, commands, knowledge DB, config |
+| **Project** (per repo) | `.edi/` | Profile, history, tasks, config overrides |
+
+Codex (the knowledge engine) is a **workspace-level** component — one binary and one database shared across all projects. Items are tagged with project metadata automatically.
+
+Run `edi doctor` to verify your installation.
+
+See [AEF Install Model](docs/architecture/aef-install-model.md) for details.
 
 ## Components
 

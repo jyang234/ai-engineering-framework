@@ -83,6 +83,13 @@ func getCodexMCPConfig(cfg *config.Config, sessionID string) MCPServerConfig {
 		env["CODEX_API_KEY"] = "${CODEX_API_KEY}"
 	}
 
+	// Pass project context for attribution
+	cwd, _ := os.Getwd()
+	if cwd != "" {
+		env["EDI_PROJECT_PATH"] = cwd
+		env["EDI_PROJECT_NAME"] = filepath.Base(cwd)
+	}
+
 	return MCPServerConfig{
 		Type:    "stdio",
 		Command: binaryPath,

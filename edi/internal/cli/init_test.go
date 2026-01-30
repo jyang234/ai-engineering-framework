@@ -29,7 +29,7 @@ func TestInitProject(t *testing.T) {
 	}
 
 	// Run init
-	if err := initProject(false); err != nil {
+	if err := initProject(false, "v0"); err != nil {
 		t.Fatalf("initProject failed: %v", err)
 	}
 
@@ -97,12 +97,12 @@ func TestInitProjectAlreadyExists(t *testing.T) {
 	}
 
 	// Should fail without --force
-	if err := initProject(false); err == nil {
+	if err := initProject(false, "v0"); err == nil {
 		t.Error("Expected initProject to fail when .edi exists")
 	}
 
 	// Should succeed with --force
-	if err := initProject(true); err != nil {
+	if err := initProject(true, "v0"); err != nil {
 		t.Errorf("Expected initProject with force to succeed: %v", err)
 	}
 }
@@ -113,7 +113,7 @@ func TestInitGlobal(t *testing.T) {
 	t.Setenv("HOME", tmpHome)
 
 	// Run global init
-	if err := initGlobal(false); err != nil {
+	if err := initGlobal(false, "v0"); err != nil {
 		t.Fatalf("initGlobal failed: %v", err)
 	}
 
@@ -189,12 +189,12 @@ func TestInitGlobalAlreadyExists(t *testing.T) {
 	}
 
 	// Should fail without --force
-	if err := initGlobal(false); err == nil {
+	if err := initGlobal(false, "v0"); err == nil {
 		t.Error("Expected initGlobal to fail when ~/.edi exists")
 	}
 
 	// Should succeed with --force
-	if err := initGlobal(true); err != nil {
+	if err := initGlobal(true, "v0"); err != nil {
 		t.Errorf("Expected initGlobal with force to succeed: %v", err)
 	}
 }

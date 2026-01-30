@@ -1,6 +1,6 @@
 # Codex
 
-Hybrid search engine for a local knowledge base. Combines semantic vector search with FTS5 keyword search, fused via Reciprocal Rank Fusion, all in a single SQLite file.
+Workspace-level hybrid search engine for a local knowledge base. Installed globally via `edi init --global --backend=codex` and shared across all projects. Combines semantic vector search with FTS5 keyword search, fused via Reciprocal Rank Fusion, all in a single SQLite file.
 
 ## How It Works
 
@@ -36,7 +36,15 @@ This handles both vague semantic queries ("something about retry logic") and pre
 ollama pull nomic-embed-text
 ```
 
-### Build and Run
+### Recommended: Install via EDI
+
+```bash
+edi init --global --backend=codex
+```
+
+This auto-detects the codex source directory, builds the binary, and installs it to `~/.edi/bin/`.
+
+### Manual Build and Install
 
 ```bash
 make build   # Builds all binaries with -tags "fts5"

@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/anthropics/aef/edi/internal/assets"
+	"github.com/anthropics/aef/edi/internal/codex"
 	"github.com/anthropics/aef/edi/internal/config"
 )
 
@@ -119,14 +120,46 @@ func initGlobal(force bool, backend string) error {
 		return fmt.Errorf("failed to write config: %w", err)
 	}
 
-	// Show Codex-specific guidance if selected
+	// Handle Codex backend setup
 	if backend == "codex" {
 		fmt.Println("Initialized global EDI at ~/.edi/ with Codex backend")
 		fmt.Println("")
-		fmt.Println("IMPORTANT: Codex backend requires additional setup:")
-		fmt.Println("  1. Install Ollama and pull nomic-embed-text: ollama pull nomic-embed-text")
-		fmt.Println("  2. Build Codex: cd codex && make build")
-		fmt.Println("  3. Install binary: cp codex/bin/recall-mcp ~/.edi/bin/")
+
+		binExists, binPath := codex.CheckBinaryExists()
+		if binExists {
+			fmt.Printf("  Codex binary found at %s\n", binPath)
+		} else {
+			fmt.Printf("  Codex binary not found at %s\n", binPath)
+			codexDir := codex.DetectSource()
+			if codexDir != "" {
+				fmt.Printf("  Codex source detected at %s\n", codexDir)
+				fmt.Println("  Building and installing Codex...")
+				if err := codex.Build(codexDir); err != nil {
+					fmt.Printf("  Build failed: %v\n", err)
+					fmt.Println("  You can build manually: cd codex && make build && cp bin/recall-mcp ~/.edi/bin/")
+				} else if err := codex.InstallBinary(codexDir); err != nil {
+					fmt.Printf("  Install failed: %v\n", err)
+					fmt.Println("  You can install manually: cp codex/bin/recall-mcp ~/.edi/bin/")
+				} else {
+					fmt.Println("  Codex binary installed successfully")
+				}
+			} else {
+				fmt.Println("  Could not detect codex source directory")
+				fmt.Println("  To install manually:")
+				fmt.Println("    cd codex && make build && cp bin/recall-mcp ~/.edi/bin/")
+			}
+		}
+
+		ollamaAvail, modelAvail := codex.CheckOllama()
+		if !ollamaAvail {
+			fmt.Println("")
+			fmt.Println("  Ollama not found. Install from https://ollama.com")
+			fmt.Println("  Then run: ollama pull nomic-embed-text")
+		} else if !modelAvail {
+			fmt.Println("")
+			fmt.Println("  Ollama found but nomic-embed-text model not pulled")
+			fmt.Println("  Run: ollama pull nomic-embed-text")
+		}
 		fmt.Println("")
 	} else {
 		fmt.Println("Initialized global EDI at ~/.edi/")
