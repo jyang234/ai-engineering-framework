@@ -145,15 +145,23 @@ func (h *ToolHandler) handleAdd(ctx context.Context, args map[string]interface{}
 	id := generateID(itemType)
 	now := time.Now()
 
-	// Auto-inject project attribution from environment
-	var metadata map[string]interface{}
-	if projectName := os.Getenv("EDI_PROJECT_NAME"); projectName != "" {
-		metadata = map[string]interface{}{
-			"project_name": projectName,
+	// Auto-inject context from environment
+	metadata := make(map[string]interface{})
+	envKeys := map[string]string{
+		"EDI_PROJECT_NAME": "project_name",
+		"EDI_PROJECT_PATH": "project_path",
+		"EDI_SESSION_ID":   "session_id",
+		"EDI_AGENT_MODE":   "agent_mode",
+		"EDI_GIT_BRANCH":   "git_branch",
+		"EDI_GIT_SHA":      "git_sha",
+	}
+	for envKey, metaKey := range envKeys {
+		if val := os.Getenv(envKey); val != "" {
+			metadata[metaKey] = val
 		}
-		if projectPath := os.Getenv("EDI_PROJECT_PATH"); projectPath != "" {
-			metadata["project_path"] = projectPath
-		}
+	}
+	if len(metadata) == 0 {
+		metadata = nil
 	}
 
 	item := &core.Item{
@@ -297,7 +305,7 @@ func getToolDefinitions() []Tool {
 		},
 		{
 			Name:        "recall_add",
-			Description: "Add new knowledge to Codex",
+			Description: "Add new knowledge to Codex. Session context (session_id, agent_mode, git_branch, git_sha, project) is auto-injected into metadata.",
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{

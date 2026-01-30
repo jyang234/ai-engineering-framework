@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/anthropics/aef/edi/internal/config"
 )
@@ -88,6 +90,17 @@ func getCodexMCPConfig(cfg *config.Config, sessionID string) MCPServerConfig {
 	if cwd != "" {
 		env["EDI_PROJECT_PATH"] = cwd
 		env["EDI_PROJECT_NAME"] = filepath.Base(cwd)
+	}
+
+	// Pass agent mode
+	if cfg.Agent != "" {
+		env["EDI_AGENT_MODE"] = cfg.Agent
+	}
+
+	// Pass git context
+	if branch, sha := gitInfo(); branch != "" {
+		env["EDI_GIT_BRANCH"] = branch
+		env["EDI_GIT_SHA"] = sha
 	}
 
 	return MCPServerConfig{
@@ -195,6 +208,22 @@ func expandPath(path string) string {
 		return filepath.Join(home, path[1:])
 	}
 	return path
+}
+
+// gitInfo returns the current git branch and short SHA, or empty strings if not in a git repo
+func gitInfo() (branch string, sha string) {
+	branchOut, err := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD").Output()
+	if err != nil {
+		return "", ""
+	}
+	branch = strings.TrimSpace(string(branchOut))
+
+	shaOut, err := exec.Command("git", "rev-parse", "--short", "HEAD").Output()
+	if err != nil {
+		return branch, ""
+	}
+	sha = strings.TrimSpace(string(shaOut))
+	return branch, sha
 }
 
 // ValidateCodexRequirements checks if Codex backend requirements are met
