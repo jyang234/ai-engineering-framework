@@ -134,8 +134,8 @@ build_prompt() {
             echo ""
         fi
         
-        # Add instructions
-        cat PROMPT.md
+        # Add instructions (CWD takes precedence over .ralph/)
+        cat PROMPT.md 2>/dev/null || cat .ralph/PROMPT.md
         
     } > .ralph/prompt.md
 
@@ -270,8 +270,8 @@ preflight_check() {
         errors=$((errors + 1))
     fi
     
-    if [ ! -f PROMPT.md ]; then
-        echo "Error: PROMPT.md not found"
+    if [ ! -f PROMPT.md ] && [ ! -f .ralph/PROMPT.md ]; then
+        echo "Error: PROMPT.md not found (checked CWD and .ralph/)"
         errors=$((errors + 1))
     fi
     

@@ -109,6 +109,20 @@ Ralph is an autonomous execution mode for batch coding tasks. Each iteration sta
 
 **Expected throughput**: Depends on task complexity and spec quality. Simple scaffolding tasks (generate CRUD endpoints, add logging) complete in 1-2 minutes. Complex tasks (refactor with cross-file dependencies, implement state machine) may take 5-10 minutes or escalate to human. If your spec is ambiguous or underspecified, expect escalations.
 
+```bash
+# Scaffold a PRD template
+edi ralph init
+$EDITOR PRD.json
+
+# Run the loop
+edi ralph
+
+# Or with options
+edi ralph --prd path/to/PRD.json --max-iterations 30
+```
+
+Use `/ralph` in an EDI session to author a PRD through a guided interview before execution.
+
 | | Ralph Loop | Continuous Session |
 |---|---|---|
 | **Best for** | Batch of independent, well-specified tasks | Exploratory, interconnected, design work |

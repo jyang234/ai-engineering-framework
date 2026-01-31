@@ -309,18 +309,18 @@ Don't use Ralph for exploratory work, architecture decisions, debugging, or mult
 ### How to Invoke
 
 ```bash
-# Copy files to your project
-cp ~/.edi/ralph/ralph.sh .
-cp ~/.edi/ralph/PROMPT.md .
-cp ~/.edi/ralph/example-PRD.json PRD.json  # edit this
+# Scaffold a PRD template
+edi ralph init
+$EDITOR PRD.json
 
-# Or symlink
-ln -s ~/.edi/ralph/ralph.sh .
-ln -s ~/.edi/ralph/PROMPT.md .
+# Run the loop
+edi ralph
 
-# Run
-./ralph.sh
+# With options
+edi ralph --prd path/to/PRD.json --prompt custom-PROMPT.md --max-iterations 30 --stuck-threshold 5
 ```
+
+No file copying needed — `edi ralph` writes the loop script to `.ralph/` and provisions `PROMPT.md` automatically.
 
 ### PRD.json Format
 
@@ -419,6 +419,7 @@ Common issues and their causes:
 | `/review` | Switch to reviewer mode |
 | `/incident` | Switch to incident mode |
 | `/task` | Manage tasks with RECALL context |
+| `/ralph` | Guided PRD authoring for Ralph execution |
 | `/end` | End session and save history |
 
 ## Configuration

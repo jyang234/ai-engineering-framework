@@ -426,21 +426,40 @@ RECALL is deliberately excluded from the Ralph execution loop:
 
 The correct flow is: **Plan** (interactive session, use RECALL to inform the PRD) → **Execute** (Ralph, no RECALL) → **Capture** (post-execution, save new patterns/failures to RECALL).
 
+### Invocation
+
+```bash
+# Scaffold a PRD template
+edi ralph init
+$EDITOR PRD.json
+
+# Run the loop (provisions PROMPT.md and .ralph/ automatically)
+edi ralph
+
+# With options
+edi ralph --prd path/to/PRD.json --prompt custom-PROMPT.md --max-iterations 30
+```
+
+`edi ralph` handles all file setup: writes the loop script to `.ralph/ralph.sh`, provisions `PROMPT.md` from the embedded default if not present, and cleans up provisioned files after completion.
+
+Use `/ralph` in an EDI session to author a PRD through a guided interview before execution.
+
 ### File Structure
 
-After `edi init --global`, Ralph files are installed to `~/.edi/ralph/`:
+Embedded assets in `edi/internal/assets/ralph/`:
 
 ```
-~/.edi/ralph/
-├── ralph.sh           Loop script (copy or symlink to project)
-├── PROMPT.md          Default execution instructions
-└── example-PRD.json   Template PRD with sample user stories
+edi/internal/assets/ralph/
+├── ralph.sh           Loop script (written to .ralph/ at runtime)
+├── PROMPT.md          Default execution instructions (provisioned if missing)
+└── example-PRD.json   Template PRD (used by edi ralph init)
 ```
 
 Per-project working directory (gitignored):
 
 ```
 .ralph/
+├── ralph.sh           Loop script (written by edi ralph)
 ├── prompt.md          Built prompt for current iteration
 ├── human-input.txt    Temporary human guidance (consumed)
 └── output_N.txt       Claude output per iteration
@@ -457,7 +476,7 @@ Per-project working directory (gitignored):
 
 Ralph is independent of EDI. It does not use EDI's agents, briefings, RECALL, or session management. The only connection is that Ralph files are distributed via `edi init --global`.
 
-Future: `edi ralph PRD.json` is a planned invocation shortcut, not yet implemented.
+The `edi ralph` CLI command handles all file provisioning and cleanup. The `/ralph` slash command provides guided PRD authoring within an EDI session.
 
 ### Preflight Checks
 

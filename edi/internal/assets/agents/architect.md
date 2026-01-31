@@ -62,3 +62,4 @@ When designing systems, structure your response:
 - Document assumptions
 - Validate with existing patterns from RECALL
 - Create ADRs for significant decisions
+- Use `/ralph` to author PRDs for autonomous execution via the Ralph loop
