@@ -17,6 +17,7 @@ A comprehensive guide for engineers who will operate and maintain the EDI sessio
 3. [RECALL Backend Selection](#3-recall-backend-selection)
 4. [Configuration](#4-configuration)
 5. [Briefing Generation](#5-briefing-generation)
+5A. [Ralph Loop Execution Mode](#5a-ralph-loop-execution-mode)
 
 ### Codex Internals
 6. [Codex: System Overview](#6-codex-system-overview)
@@ -314,6 +315,180 @@ The full context file that Claude Code receives contains:
 4. Briefing display instructions
 5. RECALL knowledge base instructions (if enabled)
 6. Slash command definitions
+
+---
+
+## 5A. Ralph Loop Execution Mode
+
+**Key files:** `edi/internal/assets/ralph/ralph.sh`, `edi/internal/assets/ralph/PROMPT.md`, `edi/internal/assets/ralph/example-PRD.json`
+
+Ralph is an autonomous execution mode that runs well-defined coding tasks in a loop. Each iteration starts with a fresh context window — no accumulated state in the LLM, all progress tracked in files and git.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        ralph.sh (bash)                          │
+│                                                                  │
+│   ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐ │
+│   │ Select   │───▶│ Build    │───▶│ Run      │───▶│ Analyze  │ │
+│   │ Task     │    │ Prompt   │    │ claude -p│    │ Output   │ │
+│   │ (jq)     │    │          │    │          │    │ (grep)   │ │
+│   └──────────┘    └──────────┘    └──────────┘    └──────────┘ │
+│        ▲                                               │        │
+│        │              ┌────────────────┐               │        │
+│        │              ▼                │               ▼        │
+│        │       ┌────────────┐   ┌───────────┐   ┌──────────┐  │
+│        │       │ Escalate   │   │ Update    │   │ Next     │  │
+│        │       │ to Human   │   │ PRD.json  │   │ Task     │  │
+│        │       └────────────┘   │ + git     │   └──────────┘  │
+│        │              │         └───────────┘        │         │
+│        └──────────────┴──────────────────────────────┘         │
+│                                                                  │
+│ External State:                                                  │
+│   PRD.json        Task backlog with status                      │
+│   PROMPT.md       Execution instructions for Claude             │
+│   .ralph/         Working directory (outputs, prompts, input)   │
+│   Git             Code changes committed per task               │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### State Management
+
+Ralph persists all state externally:
+
+| State | Storage | Purpose |
+|-------|---------|---------|
+| Task backlog | `PRD.json` | User stories with `passes`, `skipped`, `depends_on` fields |
+| Execution instructions | `PROMPT.md` | Injected into every iteration prompt |
+| Human guidance | `.ralph/human-input.txt` | Temporary — consumed on next iteration |
+| Claude output | `.ralph/output_N.txt` | One file per iteration, kept for debugging |
+| Built prompt | `.ralph/prompt.md` | Combined task details + guidance + PROMPT.md |
+| Code changes | Git | Committed after each completed task |
+
+No state lives in the LLM. If the loop is killed mid-iteration, restart it and it picks up from the last committed task.
+
+### Loop Mechanics
+
+**Task selection** uses `jq` to filter `PRD.json`:
+1. Filter tasks where `passes == false` and `skipped != true`
+2. Filter tasks where all `depends_on` entries have `passes == true`
+3. Select first remaining task
+
+**Prompt building** concatenates:
+1. Task details (title, description, acceptance criteria) from `PRD.json`
+2. Human guidance from previous escalation (if any, from `.ralph/human-input.txt`)
+3. `PROMPT.md` instructions (escalation protocol, completion format)
+
+**Claude invocation:** `cat .ralph/prompt.md | claude -p 2>&1 | tee .ralph/output_N.txt`
+
+**Output analysis** checks (in order):
+1. `<promise>DONE</promise>` — all tasks complete, exit loop
+2. `<escalate ...>` — escalation detected, prompt human
+3. Task completion patterns (regex: `task US-001 complete`, `US-001 done`, `all acceptance criteria met`) — mark task done, commit, continue
+4. Error extraction — track consecutive identical errors for auto-escalation
+
+### Escalation Protocol
+
+Two escalation types:
+
+**STUCK** — Cannot make progress (same error 3+ times, blocked by external factors, doesn't know how to proceed)
+
+**DEVIATION** — Can proceed but shouldn't without approval (spec wrong, scope larger than expected, out-of-scope changes needed, security concern)
+
+Claude outputs an `<escalate>` XML block and stops. The loop script detects this, displays the escalation to the human, and offers options:
+
+| Option | Effect |
+|--------|--------|
+| `[1-9]` | Guidance injected: "Proceed with option N" |
+| `[c]` | Custom free-form text injected into next prompt |
+| `[s]` | Task marked skipped, loop continues |
+| `[r]` | Re-run iteration without additional guidance |
+| `[a]` | Exit loop entirely |
+
+**Auto-escalation:** When `extract_error` detects the same error string on `STUCK_THRESHOLD` (default 3) consecutive iterations, the script generates a synthetic `<escalate type="stuck">` block and prompts the human.
+
+### Claude Invocation Mode
+
+Ralph uses `claude -p` (pipe mode), not Claude Code (interactive mode). This is deliberate:
+
+- **Pipe mode** reads stdin, produces output, exits. No MCP tools, no file system access, no interactive capabilities. This matches Ralph's design: focused execution of one task with all context in the prompt.
+- **Claude Code** would provide file editing, terminal access, and MCP tools. This is unnecessary overhead for Ralph — the spec should contain everything Claude needs. If it doesn't, the spec isn't ready.
+- **Interactive mode** would require human presence. Ralph is designed for unattended execution with escalation as the exception.
+
+### Why No RECALL in Ralph
+
+RECALL is deliberately excluded from the Ralph execution loop:
+
+1. **Technical:** `claude -p` doesn't support MCP tools. Claude would see RECALL instructions but couldn't execute them.
+2. **Conceptual:** If the spec needs RECALL queries, the spec isn't complete. Fix it in planning.
+3. **Practical:** Pre-baked context in the spec is more reliable than runtime retrieval.
+
+The correct flow is: **Plan** (interactive session, use RECALL to inform the PRD) → **Execute** (Ralph, no RECALL) → **Capture** (post-execution, save new patterns/failures to RECALL).
+
+### File Structure
+
+After `edi init --global`, Ralph files are installed to `~/.edi/ralph/`:
+
+```
+~/.edi/ralph/
+├── ralph.sh           Loop script (copy or symlink to project)
+├── PROMPT.md          Default execution instructions
+└── example-PRD.json   Template PRD with sample user stories
+```
+
+Per-project working directory (gitignored):
+
+```
+.ralph/
+├── prompt.md          Built prompt for current iteration
+├── human-input.txt    Temporary human guidance (consumed)
+└── output_N.txt       Claude output per iteration
+```
+
+### Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MAX_ITERATIONS` | 50 | Maximum loop iterations before forced exit |
+| `STUCK_THRESHOLD` | 3 | Consecutive identical errors before auto-escalation |
+
+### Integration with EDI
+
+Ralph is independent of EDI. It does not use EDI's agents, briefings, RECALL, or session management. The only connection is that Ralph files are distributed via `edi init --global`.
+
+Future: `edi ralph PRD.json` is a planned invocation shortcut, not yet implemented.
+
+### Preflight Checks
+
+Before starting, `ralph.sh` verifies:
+- `PRD.json` exists in the current directory
+- `PROMPT.md` exists in the current directory
+- `claude` CLI is in PATH
+- `jq` is in PATH
+
+If any check fails, the script exits immediately with an error message.
+
+### Completion Detection
+
+Task completion is detected via regex matching on Claude's output:
+- `task {ID} complete` (case-insensitive)
+- `{ID} done|complete|finished`
+- `completed task {ID}`
+- `all acceptance criteria met`
+
+All-tasks-done detection: `<promise>DONE</promise>` anywhere in output.
+
+If Claude's output doesn't match any pattern, the task is **not** marked complete and the same task is retried on the next iteration.
+
+### Git Commits
+
+Ralph commits after each state change:
+- Task complete: `git add -A && git commit -m "Ralph: complete {task_id}"`
+- Progress (no completion): `git add -A && git commit -m "Ralph: progress on {task_id}"`
+- All done: `git add -A && git commit -m "Ralph: all tasks complete"`
+
+Commits are non-fatal — if `git commit` fails (no changes, not a repo), the loop continues.
 
 ---
 

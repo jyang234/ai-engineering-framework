@@ -1,8 +1,10 @@
 # RECALL MCP Server Specification
 
-**Status**: Draft  
-**Created**: January 24, 2026  
-**Version**: 0.3  
+> **Implementation Status (January 31, 2026):** Significantly outdated. Hand-rolled JSON-RPC used (not official MCP SDK). 5 of 8 tools implemented (missing recall_list, recall_context, recall_index). Storage is SQLite FTS5 (not Qdrant). No Voyage/OpenAI embeddings. Codex backend partially catches up with vector search via SQLite BLOBs + local embeddings. See edi-codex-deep-dive.md for current architecture.
+
+**Status**: Draft
+**Created**: January 24, 2026
+**Version**: 0.3
 **Implementation Language**: Go
 
 ---

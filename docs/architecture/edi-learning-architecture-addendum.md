@@ -1,8 +1,10 @@
 # EDI Learning Architecture - Noise Control Addendum
 
-**Status**: Draft  
-**Created**: January 25, 2026  
-**Version**: 0.2  
+> **Implementation Status (January 31, 2026):** Not implemented. Staging tiers, LLM judge prompt, and archival workflow do not exist.
+
+**Status**: Draft
+**Created**: January 25, 2026
+**Version**: 0.2
 **Extends**: edi-learning-architecture-spec.md v0.1
 
 ---

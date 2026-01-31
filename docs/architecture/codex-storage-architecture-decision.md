@@ -1,5 +1,7 @@
 # ADR: Replace Qdrant with SQLite BLOBs + Brute-Force KNN
 
+> **Implementation Status (January 31, 2026):** Implemented as described. SQLite BLOB + brute-force KNN is the current storage architecture.
+
 | Field   | Value                                                        |
 |---------|--------------------------------------------------------------|
 | Status  | Accepted                                                     |

@@ -1,8 +1,10 @@
 # EDI Advanced Features Specification
 
-**Status**: Draft  
-**Created**: January 25, 2026  
-**Version**: 0.1  
+> **Implementation Status (January 31, 2026):** Not implemented. Multi-project management, external integrations (Jira, Calendar, Slack), and VERIFY integration are future roadmap items.
+
+**Status**: Draft
+**Created**: January 25, 2026
+**Version**: 0.1
 **Depends On**: All Phase 1-4 specs
 
 ---

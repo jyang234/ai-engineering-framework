@@ -1,6 +1,8 @@
 # AEF Architecture v0.5 Changelog
 
-**Date**: January 23, 2026  
+> **Implementation Status (January 31, 2026):** Historical document. Accurately describes the design pivot from AEF-builds-everything to AEF-as-value-layer.
+
+**Date**: January 23, 2026
 **Trigger**: Claude Code Tasks announcement (Jan 22, 2026)
 
 ---

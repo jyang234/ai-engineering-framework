@@ -1,7 +1,9 @@
-# Agentic Engineering Framework (AEF) â€” Architecture Specification
+# Agentic Engineering Framework (AEF) â€" Architecture Specification
 
-**Status**: Active Development  
-**Last Updated**: January 2025  
+> **Implementation Status (January 31, 2026):** Grand vision document. ~80% of described components (CAL, Evaluation/Self-Correct, Contribution Manager, Governance, HITL, Observability, Prompt Management) do not exist. Implemented: EDI harness + Codex (with different tech: SQLite not Qdrant, nomic-embed-text not Voyage, reranking stubbed). See edi-codex-deep-dive.md for current architecture.
+
+**Status**: Active Development
+**Last Updated**: January 2025
 **Version**: 0.5
 
 > **v0.5 Update**: Architecture revised to build on Claude Code's native Tasks, Skills, and Subagents primitives (announced Jan 22, 2026). AEF now focuses on the knowledge retrieval, quality assurance, and contribution management layers that Claude Code doesn't provide.

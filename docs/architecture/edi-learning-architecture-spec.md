@@ -1,8 +1,10 @@
 # EDI Learning Architecture Specification
 
-**Status**: Design Complete  
-**Created**: January 24, 2026  
-**Last Updated**: January 24, 2026  
+> **Implementation Status (January 31, 2026):** Not implemented. Influenced the recall_add/recall_feedback tool design but the type hierarchy, confidence levels, LLM judge, sandbox verification, and freshness management are not built.
+
+**Status**: Design Complete
+**Created**: January 24, 2026
+**Last Updated**: January 24, 2026
 **Version**: 0.1
 
 ---

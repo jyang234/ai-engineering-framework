@@ -1,8 +1,10 @@
 # EDI CLI & Commands Specification
 
-**Status**: Draft  
-**Created**: January 25, 2026  
-**Version**: 0.1  
+> **Implementation Status (January 31, 2026):** Core launch mechanism (syscall.Exec, --append-system-prompt-file) matches. Command tree evolved: added doctor, sync; actual Claude flags differ from spec (no --mcp-server, --skills-path, --allowedTools flags). Ralph noted as future.
+
+**Status**: Draft
+**Created**: January 25, 2026
+**Version**: 0.1
 **Depends On**: All previous specs (Workspace, Session Lifecycle, Agent System)
 
 ---
@@ -143,6 +145,7 @@ edi                           # Start session (default command)
 ├── init                      # Initialize EDI
 │   ├── --global              # Initialize global ~/.edi/
 │   └── --force               # Overwrite existing
+├── sync                      # Sync assets to install locations
 ├── config                    # Configuration management
 │   ├── show                  # Show merged config
 │   ├── edit                  # Open config in editor
@@ -165,6 +168,8 @@ edi                           # Start session (default command)
 │   ├── list                  # List available agents
 │   ├── show <name>           # Show agent details
 │   └── validate <file>       # Validate agent file
+├── ralph                     # (future) Run Ralph loop from EDI
+│   └── Currently standalone via ~/.edi/ralph/ralph.sh
 └── version                   # Show version info
 ```
 
@@ -277,7 +282,49 @@ func runStart(opts StartOptions) error {
 }
 ```
 
-### 3.2 `edi init`
+### 3.2 `edi sync`
+
+Sync embedded assets to their install locations without touching configuration or data.
+
+**Usage**:
+```bash
+edi sync
+```
+
+**What it syncs**:
+
+| Asset | Source (embedded in binary) | Destination |
+|-------|---------------------------|-------------|
+| Agents | `internal/assets/agents/*.md` | `~/.edi/agents/` |
+| Commands | `internal/assets/commands/*.md` | `~/.edi/commands/` |
+| Skills (6) | `internal/assets/skills/*/SKILL.md` | `~/.claude/skills/` |
+| Subagents | `internal/assets/subagents/*.md` | `~/.claude/agents/` |
+
+**What it does NOT touch**:
+- `~/.edi/config.yaml`
+- `~/.edi/recall/` (knowledge database)
+- `~/.edi/cache/`, `~/.edi/logs/`
+- `.edi/` (project-level directories)
+
+**When to use**:
+- After updating agent definitions, skills, or commands in EDI source
+- As part of `make sync` (build + install + sync)
+- When you want to update assets without a full `edi init --global --force`
+
+**Example**:
+```bash
+$ edi sync
+  Synced agents
+  Synced commands
+  Synced skills (6)
+  Synced subagents
+
+Assets synced successfully.
+```
+
+**Prerequisite**: `~/.edi/` must exist. Run `edi init --global` first if it doesn't.
+
+### 3.3 `edi init`
 
 Initialize EDI workspace.
 
@@ -1011,12 +1058,14 @@ edi/
 | `edi` | Start EDI session |
 | `edi init` | Initialize project |
 | `edi init --global` | Initialize global EDI |
+| `edi sync` | Sync assets to ~/.edi and ~/.claude |
 | `edi config show` | Show configuration |
 | `edi config edit` | Edit configuration |
 | `edi recall search` | Search RECALL |
 | `edi recall index` | Index files |
 | `edi history list` | List sessions |
 | `edi agent list` | List agents |
+| `edi ralph` | (future) Run Ralph loop — currently standalone via `~/.edi/ralph/ralph.sh` |
 
 ### Slash Commands (in Claude Code)
 

@@ -1,6 +1,8 @@
 # EDI Quick Reference
 
-**Purpose**: Quick context loading for EDI specification sessions.  
+> **Implementation Status (January 31, 2026):** Outdated. Shows all phases as 'Not started' — this is wrong. EDI v0 and Codex v1 are complete. Content is stale.
+
+**Purpose**: Quick context loading for EDI specification sessions.
 **Full Details**: See `edi-specification-plan.md`
 
 ---

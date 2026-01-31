@@ -1,5 +1,7 @@
 # AEF Install Model
 
+> **Implementation Status (January 31, 2026):** Broadly accurate. Installation paths and scoping model match implementation.
+
 ## Workspace-Level (Global) — `~/.edi/`
 
 Installed once per machine via `edi init --global`. Shared across all projects.

@@ -1,5 +1,7 @@
 # EDI Implementation Gaps Analysis
 
+> **Implementation Status (January 31, 2026):** Gap resolutions mostly followed. Exception: MCP SDK decision was later reversed (hand-rolled JSON-RPC used instead of official SDK).
+
 **Purpose**: Identify and resolve all gaps before generating detailed implementation plan for Claude Code.
 
 **Status**: In Progress

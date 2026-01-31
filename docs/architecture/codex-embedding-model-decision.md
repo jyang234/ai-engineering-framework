@@ -1,5 +1,7 @@
 # ADR: Single Local Embedding Model (nomic-embed-text)
 
+> **Implementation Status (January 31, 2026):** Implemented as described. nomic-embed-text via Ollama is the current embedding model.
+
 | Field   | Value                                                        |
 |---------|--------------------------------------------------------------|
 | Status  | Accepted                                                     |

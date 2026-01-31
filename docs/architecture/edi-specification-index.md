@@ -1,7 +1,9 @@
 # EDI Specification Index
 
-**Status**: Complete  
-**Created**: January 25, 2026  
+> **Implementation Status (January 31, 2026):** Index structure useful but content stale. References Qdrant, Voyage Code-3, VERIFY — none implemented. VOYAGE_API_KEY and OPENAI_API_KEY no longer required.
+
+**Status**: Complete
+**Created**: January 25, 2026
 **Version**: 1.1
 
 ---

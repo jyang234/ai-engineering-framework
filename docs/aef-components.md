@@ -1,5 +1,7 @@
 # AEF Component Registry
 
+> **Implementation Status (January 31, 2026):** Reflects current state accurately.
+
 **Purpose**: Quick reference for what exists, what is planned, and where to find details.
 **Updated**: January 29, 2026
 

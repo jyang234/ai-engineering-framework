@@ -12,6 +12,7 @@ allowed_tools:
 skills:
   - edi-core
   - testing
+  - scaffolding-tests
 ---
 
 # EDI Test Writer Subagent

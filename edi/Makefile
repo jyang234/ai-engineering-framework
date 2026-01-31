@@ -1,4 +1,4 @@
-.PHONY: build test test-integration test-all install clean build-all lint fmt
+.PHONY: build test test-integration test-all install clean build-all lint fmt sync reinstall
 
 VERSION := 0.1.0
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
@@ -77,6 +77,18 @@ generate:
 dev:
 	go build $(CGO_TAGS) -o bin/$(BINARY) ./cmd/edi
 
+# Build, install binary, and sync assets (quick iteration cycle)
+sync: install
+	./bin/$(BINARY) sync
+
+# Full clean reinstall: rebuild binary, wipe old state, reinitialize
+reinstall: clean build
+	rm -f $(HOME)/.local/bin/$(BINARY) $(HOME)/.edi/bin/task-sync-hook
+	mkdir -p $(HOME)/.local/bin $(HOME)/.edi/bin
+	cp bin/$(BINARY) $(HOME)/.local/bin/
+	cp bin/task-sync-hook $(HOME)/.edi/bin/
+	./bin/$(BINARY) init --global --force
+
 # Help
 help:
 	@echo "Available targets:"
@@ -86,6 +98,8 @@ help:
 	@echo "  test-integration - Run integration tests only"
 	@echo "  test-all         - Run all tests (unit + integration)"
 	@echo "  install          - Install to ~/.local/bin"
+	@echo "  sync             - Build, install, and sync assets to ~/.edi and ~/.claude"
+	@echo "  reinstall        - Full clean rebuild and edi init --global --force"
 	@echo "  clean            - Remove build artifacts"
 	@echo "  lint             - Run linter"
 	@echo "  fmt              - Format code"

@@ -12,6 +12,7 @@ tools:
 skills:
   - edi-core
   - retrieval-judge
+  - refactoring-planning
 ---
 
 # Architect Agent

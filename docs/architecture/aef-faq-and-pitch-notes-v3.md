@@ -1,8 +1,10 @@
 # AEF + EDI: FAQ and Pitch Notes
 
+> **Implementation Status (January 31, 2026):** EDI/Codex pitch is accurate. References to VERIFY, Sandbox, enterprise governance are aspirational — these components do not exist.
+
 **Purpose**: Common questions, honest answers, and positioning for the Agentic Engineering Framework (AEF) and EDI (Enhanced Development Intelligence).
 
-**Last Updated**: January 25, 2026  
+**Last Updated**: January 25, 2026
 **Version**: 3.0
 
 ---

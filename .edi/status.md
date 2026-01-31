@@ -1,4 +1,4 @@
-Last updated: 2026-01-29
+Last updated: 2026-01-31
 
 ## Current Milestone
 EDI v0 complete, iterating on developer experience and knowledge capture quality.
@@ -13,9 +13,12 @@ EDI v0 complete, iterating on developer experience and knowledge capture quality
 - Codex v1: project structure and core components
 - Stale session detection + /end-recovery command
 - Enriched RECALL items: auto-injected session/git metadata + structured content templates
+- 6 skills: edi-core, retrieval-judge, coding, testing, scaffolding-tests, refactoring-planning (all embedded + installed)
+- `edi sync` command for non-destructive asset updates
+- `make sync` and `make reinstall` Makefile targets
+- Generic `installSkill` helper replacing per-skill functions
 
 ## Next Steps
-- Run `edi init --global` to install new end-recovery command
 - Test end-to-end stale session detection (start session, Ctrl+C, restart)
 - Test enriched RECALL items: verify metadata injection and structured templates via /end
 - Add more comprehensive tests

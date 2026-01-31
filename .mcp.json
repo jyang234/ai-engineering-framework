@@ -6,7 +6,7 @@
       "args": [
         "recall-server",
         "--session-id",
-        "091fb6f0-c65b-4af6-acbb-fdd469c21536",
+        "c33af929-b306-4c94-8d49-841f9e000191",
         "--global-db",
         "/Users/johnyang/.edi/recall/global.db"
       ]

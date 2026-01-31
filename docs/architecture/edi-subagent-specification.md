@@ -1,8 +1,10 @@
 # EDI Subagent Specification
 
-**Status**: Draft  
-**Created**: January 25, 2026  
-**Version**: 0.1  
+> **Implementation Status (January 31, 2026):** Implemented. 7 subagents exist as described. Minor: resolution is built-in only (no project/global override).
+
+**Status**: Draft
+**Created**: January 25, 2026
+**Version**: 0.1
 **Depends On**: Agent System Spec v0.1, RECALL MCP Server Spec v0.3, Session Lifecycle Spec v0.3
 
 ---

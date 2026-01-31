@@ -1,8 +1,10 @@
 # EDI (Enhanced Development Intelligence) — Specification Plan
 
-**Status**: Planning  
-**Created**: January 24, 2026  
-**Last Updated**: January 24, 2026  
+> **Implementation Status (January 31, 2026):** Historical planning document. Phases were loosely followed.
+
+**Status**: Planning
+**Created**: January 24, 2026
+**Last Updated**: January 24, 2026
 **Version**: 0.1
 
 ---

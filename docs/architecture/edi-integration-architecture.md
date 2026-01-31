@@ -1,6 +1,8 @@
 # EDI Integration Architecture
 
-**Status**: Approved  
+> **Implementation Status (January 31, 2026):** Core integration pattern (configure + syscall.Exec) is accurate. Significant details diverged: no Qdrant/Voyage/OpenAI (uses SQLite + nomic-embed-text), no .edi/sessions/ flight recorder directory (handled in RECALL DB), no projects.yaml, commands installed as skills not .claude/commands/, context file written to ~/.edi/cache/ not /tmp. MCP config references VOYAGE_API_KEY and OPENAI_API_KEY which are no longer used. See edi-codex-deep-dive.md for current architecture.
+
+**Status**: Approved
 **Created**: January 25, 2026  
 **Version**: 1.1  
 **Purpose**: Definitive reference for how EDI integrates with Claude Code

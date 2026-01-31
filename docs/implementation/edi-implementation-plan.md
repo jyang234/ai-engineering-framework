@@ -1,8 +1,10 @@
 # EDI Implementation Plan
 
-**Version**: 1.0  
-**Created**: January 25, 2026  
-**Target**: Claude Code execution  
+> **Implementation Status (January 31, 2026):** Broadly followed. Package layout differs from spec. Missing packages: recorder, capture.
+
+**Version**: 1.0
+**Created**: January 25, 2026
+**Target**: Claude Code execution
 **Estimated Duration**: 6 weeks
 
 ---

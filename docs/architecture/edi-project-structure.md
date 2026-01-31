@@ -1,8 +1,10 @@
 # EDI Project Structure & Implementation Plan
 
-**Status**: Planning  
-**Created**: January 25, 2026  
-**Version**: 1.0  
+> **Implementation Status (January 31, 2026):** Phased approach was followed. Package structure diverged: no recorder/, capture/ packages. Codex is separate top-level, not codex/pkg/codex.
+
+**Status**: Planning
+**Created**: January 25, 2026
+**Version**: 1.0
 **Purpose**: Define project structure, bootstrap strategy, and implementation order
 
 ---

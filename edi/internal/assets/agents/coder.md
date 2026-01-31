@@ -17,6 +17,7 @@ skills:
   - retrieval-judge
   - coding
   - testing
+  - scaffolding-tests
 ---
 
 # Coder Agent

@@ -1,8 +1,10 @@
 # EDI Agent System Specification
 
-**Status**: Draft  
-**Created**: January 25, 2026  
-**Version**: 0.1  
+> **Implementation Status (January 31, 2026):** 4 agents and slash command switching implemented. Missing: YAML frontmatter parsing, project/global override resolution, per-agent RecallConfig/ModelConfig/ContextConfig.
+
+**Status**: Draft
+**Created**: January 25, 2026
+**Version**: 0.1
 **Depends On**: Workspace & Configuration Spec v0.1, Session Lifecycle Spec v0.1
 
 ---
@@ -1176,7 +1178,44 @@ func (s *Session) RecordSwitch(from, to, trigger string) {
 
 ## 6. Skills Integration
 
-### 6.1 Skill Loading
+### 6.1 Installed Skills
+
+EDI ships with 6 skills, all embedded in the binary and installed to `~/.claude/skills/` by `edi init --global` or `edi sync`:
+
+| Skill | Directory | Used by Agents | Purpose |
+|-------|-----------|---------------|---------|
+| `edi-core` | `~/.claude/skills/edi-core/` | All | Core EDI behaviors, RECALL usage, session management |
+| `retrieval-judge` | `~/.claude/skills/retrieval-judge/` | All | Evaluate and filter RECALL search results for relevance |
+| `coding` | `~/.claude/skills/coding/` | Coder | Coding standards, error handling, function structure |
+| `testing` | `~/.claude/skills/testing/` | Coder, Test Writer | Testing best practices, table-driven tests, coverage |
+| `scaffolding-tests` | `~/.claude/skills/scaffolding-tests/` | Coder, Test Writer | Golden master / characterization tests for safe refactoring |
+| `refactoring-planning` | `~/.claude/skills/refactoring-planning/` | Architect | Structured methodology for planning and executing refactoring |
+
+#### Refactoring Skills
+
+The `refactoring-planning` and `scaffolding-tests` skills are designed to work together:
+
+1. **Planning phase** (architect agent): `refactoring-planning` guides you through defining scope, mapping affected code, identifying components that need scaffolding, assessing risk, and designing a phased migration path. Output is a structured refactoring spec.
+
+2. **Execution phase** (coder agent): `scaffolding-tests` guides you through generating representative inputs, capturing current behavior as golden files, and running scaffolding tests after each refactoring step to verify behavior preservation.
+
+3. **Cleanup phase** (coder agent): Replace scaffolding tests with proper unit tests, delete golden files, and verify coverage.
+
+**Example flow:**
+```
+/plan                          → Architect mode + refactoring-planning skill
+  Define goal, map code, assess risk, produce spec
+
+/build                         → Coder mode + scaffolding-tests skill
+  Generate scaffolding tests from spec
+  UPDATE_GOLDEN=1 go test -run TestScaffold_ ./...
+  Refactor code
+  go test -run TestScaffold_ ./...   ← verify behavior preserved
+  Write proper unit tests
+  rm *_scaffold_test.go              ← cleanup
+```
+
+### 6.2 Skill Loading
 
 Skills use Claude Code's standard format (`SKILL.md`):
 

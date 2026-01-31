@@ -1,8 +1,10 @@
 # EDI Persona Specification
 
-**Status**: Approved  
-**Created**: January 25, 2026  
-**Version**: 1.0  
+> **Implementation Status (January 31, 2026):** Approved design reference. Partially reflected in agent prompts; not systematically enforced.
+
+**Status**: Approved
+**Created**: January 25, 2026
+**Version**: 1.0
 **Purpose**: Define EDI's identity, personality, and communication style
 
 ---

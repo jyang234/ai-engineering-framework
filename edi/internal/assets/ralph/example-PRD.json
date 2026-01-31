@@ -1,0 +1,105 @@
+{
+  "project": "example-api",
+  "description": "REST API for task management application",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Project setup",
+      "description": "Initialize the project with proper structure, dependencies, and configuration",
+      "criteria": [
+        "Go module initialized",
+        "Directory structure created (cmd/, internal/, pkg/)",
+        "Basic Makefile with build, test, run targets",
+        "Configuration loading from environment variables"
+      ],
+      "passes": false
+    },
+    {
+      "id": "US-002",
+      "title": "Health endpoint",
+      "description": "Create a /health endpoint for monitoring",
+      "criteria": [
+        "GET /health returns 200 OK",
+        "Response includes service name and version",
+        "Response includes uptime"
+      ],
+      "passes": false,
+      "depends_on": ["US-001"]
+    },
+    {
+      "id": "US-003",
+      "title": "Task CRUD - Create",
+      "description": "Implement task creation endpoint",
+      "criteria": [
+        "POST /tasks accepts JSON body with title and description",
+        "Returns 201 with created task including generated ID",
+        "Returns 400 if title is missing",
+        "Tasks stored in memory (no persistence required yet)"
+      ],
+      "passes": false,
+      "depends_on": ["US-002"]
+    },
+    {
+      "id": "US-004",
+      "title": "Task CRUD - Read",
+      "description": "Implement task retrieval endpoints",
+      "criteria": [
+        "GET /tasks returns list of all tasks",
+        "GET /tasks/:id returns single task",
+        "Returns 404 if task not found"
+      ],
+      "passes": false,
+      "depends_on": ["US-003"]
+    },
+    {
+      "id": "US-005",
+      "title": "Task CRUD - Update",
+      "description": "Implement task update endpoint",
+      "criteria": [
+        "PUT /tasks/:id updates task fields",
+        "Returns updated task",
+        "Returns 404 if task not found",
+        "Returns 400 if request body invalid"
+      ],
+      "passes": false,
+      "depends_on": ["US-004"]
+    },
+    {
+      "id": "US-006",
+      "title": "Task CRUD - Delete",
+      "description": "Implement task deletion endpoint",
+      "criteria": [
+        "DELETE /tasks/:id removes task",
+        "Returns 204 No Content on success",
+        "Returns 404 if task not found"
+      ],
+      "passes": false,
+      "depends_on": ["US-004"]
+    },
+    {
+      "id": "US-007",
+      "title": "Input validation",
+      "description": "Add proper input validation across all endpoints",
+      "criteria": [
+        "Title max length 200 characters",
+        "Description max length 2000 characters",
+        "Request body size limited to 64KB",
+        "All validation errors return 400 with descriptive message"
+      ],
+      "passes": false,
+      "depends_on": ["US-005", "US-006"]
+    },
+    {
+      "id": "US-008",
+      "title": "API documentation",
+      "description": "Add OpenAPI documentation",
+      "criteria": [
+        "OpenAPI 3.0 spec generated or written",
+        "All endpoints documented with request/response schemas",
+        "Spec served at /docs endpoint"
+      ],
+      "passes": false,
+      "depends_on": ["US-007"]
+    }
+  ]
+}

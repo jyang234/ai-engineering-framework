@@ -1,8 +1,10 @@
 # EDI Workspace & Configuration Specification
 
-**Status**: Draft  
-**Created**: January 25, 2026  
-**Version**: 0.1  
+> **Implementation Status (January 31, 2026):** Config schema implemented but significantly simplified. Missing: user config, defaults.skills, history retention, claude_code section, Viper env var prefix, config validation, migration logic.
+
+**Status**: Draft
+**Created**: January 25, 2026
+**Version**: 0.1
 **Depends On**: RECALL MCP Server Specification v0.2
 
 ---

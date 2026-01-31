@@ -1,8 +1,10 @@
 # EDI Session Lifecycle Specification
 
-**Status**: Draft  
-**Created**: January 25, 2026  
-**Version**: 0.3  
+> **Implementation Status (January 31, 2026):** Core concepts implemented (briefing, history, tasks, /end). Missing: dedicated recorder package (handled in recall server), JSONL flight recorder files, retention/cleanup, friction budgets, RECALL auto-query at launch.
+
+**Status**: Draft
+**Created**: January 25, 2026
+**Version**: 0.3
 **Depends On**: Workspace & Configuration Spec v0.1, RECALL MCP Server Spec v0.3
 
 ---

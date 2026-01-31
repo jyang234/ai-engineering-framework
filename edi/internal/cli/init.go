@@ -87,22 +87,35 @@ func initGlobal(force bool, backend string) error {
 		return fmt.Errorf("failed to install commands: %w", err)
 	}
 
-	// Install edi-core skill to Claude's skills directory
-	claudeSkillsDir := filepath.Join(home, ".claude", "skills", "edi-core")
-	if err := os.MkdirAll(claudeSkillsDir, 0755); err != nil {
-		return fmt.Errorf("failed to create Claude skills directory: %w", err)
+	// Install all skills to Claude's skills directory
+	skills := []struct {
+		name string
+		fs   embed.FS
+	}{
+		{"edi-core", assets.EdiCoreSkill},
+		{"retrieval-judge", assets.RetrievalJudgeSkill},
+		{"coding", assets.CodingSkill},
+		{"testing", assets.TestingSkill},
+		{"scaffolding-tests", assets.ScaffoldingTestsSkill},
+		{"refactoring-planning", assets.RefactoringPlanningSkill},
 	}
-	if err := installEdiCoreSkill(claudeSkillsDir); err != nil {
-		return fmt.Errorf("failed to install edi-core skill: %w", err)
+	for _, skill := range skills {
+		if err := installSkill(home, skill.name, skill.fs); err != nil {
+			return fmt.Errorf("failed to install %s skill: %w", skill.name, err)
+		}
 	}
 
-	// Install retrieval-judge skill to Claude's skills directory
-	retrievalJudgeDir := filepath.Join(home, ".claude", "skills", "retrieval-judge")
-	if err := os.MkdirAll(retrievalJudgeDir, 0755); err != nil {
-		return fmt.Errorf("failed to create retrieval-judge skills directory: %w", err)
+	// Install Ralph loop files
+	ralphDir := filepath.Join(ediHome, "ralph")
+	if err := os.MkdirAll(ralphDir, 0755); err != nil {
+		return fmt.Errorf("failed to create ralph directory: %w", err)
 	}
-	if err := installRetrievalJudgeSkill(retrievalJudgeDir); err != nil {
-		return fmt.Errorf("failed to install retrieval-judge skill: %w", err)
+	if err := installEmbeddedDir(assets.Ralph, "ralph", ralphDir); err != nil {
+		return fmt.Errorf("failed to install ralph files: %w", err)
+	}
+	// Make ralph.sh executable
+	if err := os.Chmod(filepath.Join(ralphDir, "ralph.sh"), 0755); err != nil {
+		return fmt.Errorf("failed to make ralph.sh executable: %w", err)
 	}
 
 	// Install subagents to Claude's agents directory
@@ -169,11 +182,12 @@ func initGlobal(force bool, backend string) error {
 	fmt.Println("  ~/.edi/agents/         - Agent definitions")
 	fmt.Println("  ~/.edi/commands/       - Slash commands")
 	fmt.Println("  ~/.edi/skills/         - Skills")
+	fmt.Println("  ~/.edi/ralph/          - Ralph loop files")
 	fmt.Println("  ~/.edi/recall/         - Knowledge database")
 	fmt.Println("  ~/.edi/config.yaml     - Configuration")
 	fmt.Println("")
 	fmt.Println("Installed to Claude Code:")
-	fmt.Println("  ~/.claude/skills/edi-core/  - EDI core skill")
+	fmt.Println("  ~/.claude/skills/           - EDI skills (6)")
 	fmt.Println("  ~/.claude/agents/           - EDI subagents (7)")
 	fmt.Println("")
 	fmt.Println("Next steps:")
@@ -280,27 +294,18 @@ func installEmbeddedDir(fsys embed.FS, srcDir, dstDir string) error {
 	})
 }
 
-func installEdiCoreSkill(dstDir string) error {
-	content, err := assets.EdiCoreSkill.ReadFile("skills/edi-core/SKILL.md")
+func installSkill(home, name string, fsys embed.FS) error {
+	dir := filepath.Join(home, ".claude", "skills", name)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create %s skills directory: %w", name, err)
+	}
+
+	content, err := fsys.ReadFile(filepath.Join("skills", name, "SKILL.md"))
 	if err != nil {
-		return fmt.Errorf("failed to read edi-core skill: %w", err)
+		return fmt.Errorf("failed to read %s skill: %w", name, err)
 	}
 
-	dstPath := filepath.Join(dstDir, "SKILL.md")
-	if err := os.WriteFile(dstPath, content, 0644); err != nil {
-		return fmt.Errorf("failed to write skill: %w", err)
-	}
-
-	return nil
-}
-
-func installRetrievalJudgeSkill(dstDir string) error {
-	content, err := assets.RetrievalJudgeSkill.ReadFile("skills/retrieval-judge/SKILL.md")
-	if err != nil {
-		return fmt.Errorf("failed to read retrieval-judge skill: %w", err)
-	}
-
-	dstPath := filepath.Join(dstDir, "SKILL.md")
+	dstPath := filepath.Join(dir, "SKILL.md")
 	if err := os.WriteFile(dstPath, content, 0644); err != nil {
 		return fmt.Errorf("failed to write skill: %w", err)
 	}

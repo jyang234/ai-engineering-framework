@@ -1,9 +1,11 @@
 # Codex v1 Implementation Plan (RECALL Upgrade)
 
-**Version**: 1.0  
-**Created**: January 25, 2026  
-**Target**: Claude Code execution  
-**Prerequisites**: EDI Phase 2 complete (RECALL v0 working)  
+> **Implementation Status (January 31, 2026):** Technology choices superseded by ADRs: codex-storage-architecture-decision.md (SQLite over Qdrant) and codex-embedding-model-decision.md (nomic-embed-text over Voyage/OpenAI). Reranking not implemented. Contextual chunking stubbed.
+
+**Version**: 1.0
+**Created**: January 25, 2026
+**Target**: Claude Code execution
+**Prerequisites**: EDI Phase 2 complete (RECALL v0 working)
 **Estimated Duration**: 4 weeks
 
 ---
