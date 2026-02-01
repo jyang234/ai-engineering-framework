@@ -3,6 +3,7 @@ package codex
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -64,8 +65,8 @@ func TestContains(t *testing.T) {
 		{"nomic-embed-text", "", true},
 	}
 	for _, tt := range tests {
-		if got := contains(tt.s, tt.substr); got != tt.want {
-			t.Errorf("contains(%q, %q) = %v, want %v", tt.s, tt.substr, got, tt.want)
+		if got := strings.Contains(tt.s, tt.substr); got != tt.want {
+			t.Errorf("strings.Contains(%q, %q) = %v, want %v", tt.s, tt.substr, got, tt.want)
 		}
 	}
 }

@@ -2,9 +2,11 @@ package codex
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // CheckBinaryExists checks if the recall-mcp binary exists at ~/.edi/bin/recall-mcp
@@ -89,13 +91,21 @@ func InstallBinary(codexPath string) error {
 		return fmt.Errorf("failed to create bin directory: %w", err)
 	}
 
-	// Copy file
-	data, err := os.ReadFile(src)
+	// Copy file using streaming
+	srcFile, err := os.Open(src)
 	if err != nil {
-		return fmt.Errorf("failed to read binary: %w", err)
+		return fmt.Errorf("failed to open binary: %w", err)
 	}
-	if err := os.WriteFile(dst, data, 0755); err != nil {
-		return fmt.Errorf("failed to write binary: %w", err)
+	defer srcFile.Close()
+
+	dstFile, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+	if err != nil {
+		return fmt.Errorf("failed to create binary: %w", err)
+	}
+	defer dstFile.Close()
+
+	if _, err := io.Copy(dstFile, srcFile); err != nil {
+		return fmt.Errorf("failed to copy binary: %w", err)
 	}
 
 	return nil
@@ -117,18 +127,5 @@ func CheckOllama() (bool, bool) {
 	}
 
 	// Simple substring check for the model name
-	return true, contains(string(output), "nomic-embed-text")
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && searchString(s, substr)
-}
-
-func searchString(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
+	return true, strings.Contains(string(output), "nomic-embed-text")
 }

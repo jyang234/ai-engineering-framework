@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/anthropics/aef/edi/internal/config"
@@ -72,7 +73,8 @@ func runConfigEdit(cmd *cobra.Command, args []string) error {
 		editor = "vim"
 	}
 
-	c := exec.Command(editor, path)
+	parts := strings.Fields(editor)
+	c := exec.Command(parts[0], append(parts[1:], path)...)
 	c.Stdin = os.Stdin
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr

@@ -2,6 +2,7 @@ package briefing
 
 import (
 	"os"
+	"path/filepath"
 
 	"github.com/anthropics/aef/edi/internal/tasks"
 )
@@ -29,7 +30,7 @@ func loadTaskStatus(projectPath string) (*TaskStatus, error) {
 	status := &TaskStatus{}
 
 	// Check if this is an EDI project
-	ediDir := projectPath + "/.edi"
+	ediDir := filepath.Join(projectPath, ".edi")
 	if _, err := os.Stat(ediDir); os.IsNotExist(err) {
 		return status, nil // Not an EDI project
 	}

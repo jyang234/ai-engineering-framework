@@ -4,10 +4,19 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
 )
+
+// ShortID safely returns up to the first 8 characters of an ID string.
+func ShortID(id string) string {
+	if len(id) <= 8 {
+		return id
+	}
+	return id[:8]
+}
 
 // SaveHistory saves a session history entry
 func SaveHistory(projectPath string, entry *HistoryEntry) error {
@@ -19,7 +28,7 @@ func SaveHistory(projectPath string, entry *HistoryEntry) error {
 	// Generate filename: {date}-{session-id}.md
 	filename := fmt.Sprintf("%s-%s.md",
 		entry.Date.Format("2006-01-02"),
-		entry.SessionID[:8])
+		ShortID(entry.SessionID))
 
 	path := filepath.Join(historyDir, filename)
 
@@ -63,6 +72,7 @@ func formatHistoryEntry(entry *HistoryEntry) (string, error) {
 
 // FlightRecorderFile manages flight recorder JSONL output
 type FlightRecorderFile struct {
+	mu   sync.Mutex
 	path string
 	file *os.File
 }
@@ -74,7 +84,7 @@ func NewFlightRecorderFile(projectPath, sessionID string) (*FlightRecorderFile, 
 		return nil, fmt.Errorf("failed to create history directory: %w", err)
 	}
 
-	filename := fmt.Sprintf("%s-flight.jsonl", sessionID[:8])
+	filename := fmt.Sprintf("%s-flight.jsonl", ShortID(sessionID))
 	path := filepath.Join(historyDir, filename)
 
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
@@ -90,7 +100,13 @@ func NewFlightRecorderFile(projectPath, sessionID string) (*FlightRecorderFile, 
 
 // Write writes an entry to the flight recorder file
 func (f *FlightRecorderFile) Write(entry []byte) error {
-	_, err := f.file.Write(append(entry, '\n'))
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	// Copy to avoid aliasing the caller's slice via append
+	buf := make([]byte, len(entry)+1)
+	copy(buf, entry)
+	buf[len(entry)] = '\n'
+	_, err := f.file.Write(buf)
 	return err
 }
 

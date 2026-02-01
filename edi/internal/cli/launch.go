@@ -21,7 +21,10 @@ func runLaunch(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get project path
-	cwd, _ := os.Getwd()
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get working directory: %w", err)
+	}
 
 	// Sync tasks and get session ID
 	sessionID, err := tasks.SyncOnLaunch(cwd)
@@ -36,7 +39,7 @@ func runLaunch(cmd *cobra.Command, args []string) error {
 
 	// Check for stale (unclean) previous session
 	if stale, err := launch.DetectStaleSession(cwd); err == nil && stale != nil {
-		fmt.Fprintf(os.Stderr, "⚠ Previous session (%s) was not cleanly ended.\n", stale.SessionID[:8])
+		fmt.Fprintf(os.Stderr, "⚠ Previous session (%s) was not cleanly ended.\n", briefing.ShortID(stale.SessionID))
 		fmt.Fprintf(os.Stderr, "  Run /end-recovery to generate a summary from that session.\n\n")
 	}
 

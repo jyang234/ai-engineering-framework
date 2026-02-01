@@ -19,7 +19,7 @@ type HookInput struct {
 
 func main() {
 	// Read hook input from stdin
-	input, err := io.ReadAll(os.Stdin)
+	input, err := io.ReadAll(io.LimitReader(os.Stdin, 1<<20))
 	if err != nil {
 		// Silent failure - don't break Claude Code
 		os.Exit(0)

@@ -94,7 +94,10 @@ func runRecallStatus(cmd *cobra.Command, args []string) error {
 	home, _ := os.UserHomeDir()
 	cwd, _ := os.Getwd()
 
-	cfg, _ := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
 
 	fmt.Println("RECALL Status:")
 	fmt.Printf("  Backend: %s\n", cfg.Recall.Backend)
@@ -186,7 +189,10 @@ func runRecallAdd(cmd *cobra.Command, args []string) error {
 
 // openRecallBackend returns the appropriate Backend based on config.
 func openRecallBackend() (recall.Backend, error) {
-	cfg, _ := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		return nil, fmt.Errorf("loading config: %w", err)
+	}
 
 	if cfg.Recall.Backend == "codex" {
 		home, _ := os.UserHomeDir()

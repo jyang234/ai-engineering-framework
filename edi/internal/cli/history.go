@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/spf13/cobra"
 	"github.com/anthropics/aef/edi/internal/briefing"
+	"github.com/spf13/cobra"
 )
 
 var historyCmd = &cobra.Command{
@@ -62,7 +62,7 @@ func runHistoryList(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  %s  %-12s  %s\n",
 			e.Date.Format("2006-01-02 15:04"),
 			e.Agent,
-			e.SessionID[:8])
+			briefing.ShortID(e.SessionID))
 		if e.Summary != "" {
 			lines := strings.Split(e.Summary, "\n")
 			for i, line := range lines {

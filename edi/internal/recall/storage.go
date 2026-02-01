@@ -269,33 +269,41 @@ func (s *Storage) Get(id string) (*Item, error) {
 
 // RecordFeedback records usefulness feedback for an item
 func (s *Storage) RecordFeedback(itemID, sessionID string, useful bool, context string) error {
-	_, err := s.db.Exec(`
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`
 		INSERT INTO feedback (item_id, session_id, useful, context, created_at)
 		VALUES (?, ?, ?, ?, ?)
 	`, itemID, sessionID, useful, context, time.Now().Format(time.RFC3339))
-
 	if err != nil {
 		return err
 	}
 
 	// Update usefulness score
 	if useful {
-		_, err = s.db.Exec(`
+		_, err = tx.Exec(`
 			UPDATE items
 			SET usefulness_score = usefulness_score + 1.0,
 			    use_count = use_count + 1
 			WHERE id = ?
 		`, itemID)
 	} else {
-		_, err = s.db.Exec(`
+		_, err = tx.Exec(`
 			UPDATE items
 			SET usefulness_score = MAX(usefulness_score - 0.5, 0),
 			    use_count = use_count + 1
 			WHERE id = ?
 		`, itemID)
 	}
+	if err != nil {
+		return err
+	}
 
-	return err
+	return tx.Commit()
 }
 
 // LogFlightRecorder logs an entry to the flight recorder

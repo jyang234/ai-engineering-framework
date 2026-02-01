@@ -39,7 +39,10 @@ type Briefing struct {
 
 // Generate creates a session briefing from available sources
 func Generate(cfg *config.Config) (*Briefing, error) {
-	cwd, _ := os.Getwd()
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get working directory: %w", err)
+	}
 	b := &Briefing{}
 
 	// Load profile

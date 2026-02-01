@@ -96,7 +96,7 @@ type ToolContent struct {
 
 // Run starts the MCP server on stdio
 func (s *Server) Run(ctx context.Context) error {
-	reader := bufio.NewReader(os.Stdin)
+	reader := bufio.NewReaderSize(os.Stdin, 10<<20)
 	writer := os.Stdout
 
 	for {
@@ -380,6 +380,9 @@ func (s *Server) handleSearch(args map[string]interface{}) (interface{}, error) 
 	if l, ok := args["limit"].(float64); ok {
 		limit = int(l)
 	}
+	if limit > 100 {
+		limit = 100
+	}
 
 	items, err := s.storage.Search(query, types, scope, limit)
 	if err != nil {
@@ -409,6 +412,11 @@ func (s *Server) handleAdd(args map[string]interface{}) (interface{}, error) {
 
 	if itemType == "" || title == "" || content == "" {
 		return nil, fmt.Errorf("type, title, and content are required")
+	}
+
+	validTypes := map[string]bool{"pattern": true, "failure": true, "decision": true, "context": true, "code": true, "doc": true}
+	if !validTypes[itemType] {
+		return nil, fmt.Errorf("invalid type %q: must be one of pattern, failure, decision, context, code, doc", itemType)
 	}
 
 	if scope == "" {
@@ -450,12 +458,16 @@ func (s *Server) handleAdd(args map[string]interface{}) (interface{}, error) {
 
 func (s *Server) handleFeedback(args map[string]interface{}) (interface{}, error) {
 	itemID, _ := args["item_id"].(string)
-	useful, _ := args["useful"].(bool)
+	usefulVal, usefulOK := args["useful"].(bool)
 	ctx, _ := args["context"].(string)
 
 	if itemID == "" {
 		return nil, fmt.Errorf("item_id is required")
 	}
+	if !usefulOK {
+		return nil, fmt.Errorf("useful is required and must be a boolean")
+	}
+	useful := usefulVal
 
 	if err := s.storage.RecordFeedback(itemID, s.sessionID, useful, ctx); err != nil {
 		return nil, err

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,8 +23,14 @@ type Agent struct {
 
 // Load loads an agent by name, checking project then global locations
 func Load(name string) (*Agent, error) {
-	home, _ := os.UserHomeDir()
-	cwd, _ := os.Getwd()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get home directory: %w", err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get working directory: %w", err)
+	}
 
 	// Check project override first
 	projectPath := filepath.Join(cwd, ".edi", "agents", name+".md")
@@ -101,10 +108,9 @@ func parseAgentFile(content []byte) (*Agent, string, error) {
 		body.WriteString(line)
 	}
 	// Get any remaining content
-	remaining := make([]byte, 1024)
-	n, _ := reader.Read(remaining)
-	if n > 0 {
-		body.Write(remaining[:n])
+	remaining, err := io.ReadAll(reader)
+	if err == nil && len(remaining) > 0 {
+		body.Write(remaining)
 	}
 
 	return &agent, strings.TrimSpace(body.String()), nil
@@ -112,8 +118,14 @@ func parseAgentFile(content []byte) (*Agent, string, error) {
 
 // ListAgents returns all available agent names
 func ListAgents() ([]string, error) {
-	home, _ := os.UserHomeDir()
-	cwd, _ := os.Getwd()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get home directory: %w", err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get working directory: %w", err)
+	}
 
 	agents := make(map[string]bool)
 
