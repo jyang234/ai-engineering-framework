@@ -1,0 +1,10 @@
+{
+  "step": "01-init",
+  "description": "Project initialization via setup.sh",
+  "checks": [
+    {"type": "file_exists", "path": ".edi/config.yaml"},
+    {"type": "file_exists", "path": ".edi/profile.md"},
+    {"type": "dir_not_empty", "path": ".edi"},
+    {"type": "file_exists", "path": ".git/HEAD"}
+  ]
+}

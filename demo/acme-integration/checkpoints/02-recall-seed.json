@@ -1,0 +1,9 @@
+{
+  "step": "02-recall-seed",
+  "description": "RECALL seeded with ADRs and meeting notes",
+  "checks": [
+    {"type": "recall_contains", "query": "auth", "expect_title": "adr-001*", "min_results": 1},
+    {"type": "recall_contains", "query": "data format", "expect_title": "adr-002*", "min_results": 1},
+    {"type": "recall_contains", "query": "kickoff", "min_results": 1}
+  ]
+}

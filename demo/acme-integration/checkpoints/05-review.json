@@ -1,0 +1,7 @@
+{
+  "step": "05-review",
+  "description": "Code review completed",
+  "checks": [
+    {"type": "llm_judge", "prompt": "Did the review mention security concerns, error handling, or reference knowledge from RECALL?", "expected": "Review addresses security or error handling"}
+  ]
+}

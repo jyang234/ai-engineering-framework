@@ -1,0 +1,8 @@
+{
+  "step": "03-architect",
+  "description": "Architect mode produced a design plan",
+  "checks": [
+    {"type": "llm_judge", "prompt": "Does the plan reference the OAuth ADR or OAuth authentication approach?", "expected": "Plan mentions OAuth or ADR-001"},
+    {"type": "llm_judge", "prompt": "Does the plan address the data contract or field mapping from Acme's schema?", "expected": "Plan mentions data contract, field mapping, or schema transformation"}
+  ]
+}

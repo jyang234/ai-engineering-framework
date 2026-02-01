@@ -1,0 +1,7 @@
+{
+  "step": "07-end",
+  "description": "Session ended with knowledge captured to RECALL",
+  "checks": [
+    {"type": "recall_contains", "query": "decision", "scope": "project", "min_results": 1}
+  ]
+}

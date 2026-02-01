@@ -1,0 +1,8 @@
+{
+  "step": "06-ralph",
+  "description": "Ralph autonomous loop completed PRD tasks",
+  "checks": [
+    {"type": "prd_tasks_complete", "prd_path": "docs/PRD.json", "min_complete": 2},
+    {"type": "git_commits_since", "min": 2}
+  ]
+}

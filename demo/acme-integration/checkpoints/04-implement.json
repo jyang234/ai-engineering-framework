@@ -1,0 +1,8 @@
+{
+  "step": "04-implement",
+  "description": "Implementation completed with code changes and commits",
+  "checks": [
+    {"type": "file_modified", "path": "src/main.go"},
+    {"type": "git_commits_since", "min": 1}
+  ]
+}
