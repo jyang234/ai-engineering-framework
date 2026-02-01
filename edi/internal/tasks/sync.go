@@ -13,7 +13,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var manifestLock sync.Mutex
+var manifestLock sync.RWMutex
 
 // ManifestPath returns the path to the active tasks file for a project
 // Note: Renamed from manifest.yaml to active.yaml to clarify that only active tasks are stored
@@ -30,6 +30,7 @@ func legacyManifestPath(projectPath string) string {
 // Returns an empty manifest if the file doesn't exist
 // Handles migration from legacy manifest.yaml to active.yaml
 func LoadManifest(projectPath string) (*Manifest, error) {
+	manifestLock.RLock()
 	path := ManifestPath(projectPath)
 
 	data, err := os.ReadFile(path)
@@ -41,20 +42,25 @@ func LoadManifest(projectPath string) (*Manifest, error) {
 			if legacyErr == nil {
 				var manifest Manifest
 				if err := yaml.Unmarshal(legacyData, &manifest); err != nil {
+					manifestLock.RUnlock()
 					return nil, fmt.Errorf("failed to parse legacy manifest: %w", err)
 				}
 				// Remove completed tasks during migration
 				manifest.RemoveCompletedTasks()
-				// Save to new location and remove legacy file
+				// Upgrade to write lock for save
+				manifestLock.RUnlock()
 				if saveErr := SaveManifest(projectPath, &manifest); saveErr == nil {
 					os.Remove(legacyPath)
 				}
 				return &manifest, nil
 			}
+			manifestLock.RUnlock()
 			return NewManifest(), nil
 		}
+		manifestLock.RUnlock()
 		return nil, fmt.Errorf("failed to read manifest: %w", err)
 	}
+	manifestLock.RUnlock()
 
 	var manifest Manifest
 	if err := yaml.Unmarshal(data, &manifest); err != nil {
@@ -443,6 +449,11 @@ func CleanupOldSessions(maxAge time.Duration) (int, error) {
 		// Only remove directories older than cutoff
 		if info.ModTime().Before(cutoff) {
 			sessionPath := filepath.Join(tasksDir, entry.Name())
+			// Sentinel check: only remove if it contains .json files (task dirs)
+			jsonFiles, _ := filepath.Glob(filepath.Join(sessionPath, "*.json"))
+			if len(jsonFiles) == 0 {
+				continue
+			}
 			if err := os.RemoveAll(sessionPath); err == nil {
 				cleaned++
 			}

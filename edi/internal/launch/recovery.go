@@ -42,6 +42,10 @@ func DetectStaleSession(projectDir string) (*StaleSession, error) {
 		return nil, err
 	}
 
+	if len(manifest.LastSessionID) < 8 {
+		return nil, nil
+	}
+
 	// Look for a history file containing the session ID prefix
 	prefix := manifest.LastSessionID[:8]
 	for _, entry := range entries {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -40,7 +41,7 @@ func runRecallServer(cmd *cobra.Command, args []string) error {
 	}
 	if dbPath == "" {
 		home, _ := os.UserHomeDir()
-		dbPath = home + "/.edi/recall/global.db"
+		dbPath = filepath.Join(home, ".edi", "recall", "global.db")
 	}
 
 	// Initialize storage

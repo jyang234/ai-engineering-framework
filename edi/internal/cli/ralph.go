@@ -179,7 +179,7 @@ func ensureGitignore(entry string) {
 	f.WriteString(entry + "\n")
 }
 
-func copyFile(src, dst string) error {
+func copyFile(src, dst string) (err error) {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
@@ -190,8 +190,11 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer out.Close()
 
 	_, err = io.Copy(out, in)
-	return err
+	closeErr := out.Close()
+	if err != nil {
+		return err
+	}
+	return closeErr
 }

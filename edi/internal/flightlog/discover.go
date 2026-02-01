@@ -179,7 +179,17 @@ func containsEDISession(path, prefix string) bool {
 		if linesRead > 200 {
 			break // EDI session ID should appear early
 		}
-		if strings.Contains(scanner.Text(), prefix) {
+		line := scanner.Text()
+		idx := strings.Index(line, prefix)
+		if idx < 0 {
+			continue
+		}
+		// Verify prefix appears at a word boundary (after ", -, space, or start of line)
+		if idx == 0 {
+			return true
+		}
+		prev := line[idx-1]
+		if prev == '"' || prev == '-' || prev == ' ' || prev == '\t' {
 			return true
 		}
 	}

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -24,13 +25,13 @@ func Load() (*Config, error) {
 	// Load global config first
 	globalPath := filepath.Join(home, ".edi", "config.yaml")
 	if err := loadFile(globalPath, cfg); err != nil && !os.IsNotExist(err) {
-		// Log warning but continue with defaults
+		fmt.Fprintf(os.Stderr, "warning: failed to load global config %s: %v\n", globalPath, err)
 	}
 
 	// Load project config (overrides global)
 	projectPath := filepath.Join(cwd, ".edi", "config.yaml")
 	if err := loadFile(projectPath, cfg); err != nil && !os.IsNotExist(err) {
-		// Log warning but continue
+		fmt.Fprintf(os.Stderr, "warning: failed to load project config %s: %v\n", projectPath, err)
 	}
 
 	// Auto-detect project name if not set

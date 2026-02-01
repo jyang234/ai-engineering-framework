@@ -80,6 +80,13 @@ func (s *Storage) Search(query string, types []string, scope string, limit int) 
 		limit = 10
 	}
 
+	// Sanitize query for FTS5: split into words, quote each term,
+	// join with OR so any matching term surfaces results.
+	sanitized := sanitizeFTSQuery(query)
+	if sanitized == "" {
+		return nil, nil
+	}
+
 	// Build FTS query
 	ftsQuery := `
 		SELECT i.id, i.type, i.title, i.content, i.tags, i.scope,
@@ -90,7 +97,7 @@ func (s *Storage) Search(query string, types []string, scope string, limit int) 
 		WHERE items_fts MATCH ?
 	`
 
-	args := []interface{}{query}
+	args := []interface{}{sanitized}
 
 	if len(types) > 0 {
 		placeholders := make([]string, len(types))
@@ -155,7 +162,7 @@ func (s *Storage) Search(query string, types []string, scope string, limit int) 
 		items = append(items, item)
 	}
 
-	return items, nil
+	return items, rows.Err()
 }
 
 // FindByTitle returns the first item with an exact title match, or nil if not found
@@ -279,6 +286,13 @@ func (s *Storage) RecordFeedback(itemID, sessionID string, useful bool, context 
 			    use_count = use_count + 1
 			WHERE id = ?
 		`, itemID)
+	} else {
+		_, err = s.db.Exec(`
+			UPDATE items
+			SET usefulness_score = MAX(usefulness_score - 0.5, 0),
+			    use_count = use_count + 1
+			WHERE id = ?
+		`, itemID)
 	}
 
 	return err
@@ -351,5 +365,26 @@ func (s *Storage) GetFlightRecorderEntries(sessionID string) ([]FlightRecorderEn
 		entries = append(entries, entry)
 	}
 
-	return entries, nil
+	return entries, rows.Err()
+}
+
+// sanitizeFTSQuery prepares a user query for FTS5 MATCH.
+// Splits on whitespace and hyphens, quotes each term, joins with OR.
+func sanitizeFTSQuery(query string) string {
+	raw := strings.Fields(query)
+	var terms []string
+	for _, w := range raw {
+		for _, part := range strings.Split(w, "-") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			escaped := strings.ReplaceAll(part, `"`, `""`)
+			terms = append(terms, `"`+escaped+`"`)
+		}
+	}
+	if len(terms) == 0 {
+		return ""
+	}
+	return strings.Join(terms, " OR ")
 }
