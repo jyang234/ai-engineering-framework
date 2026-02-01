@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "recall": {
+      "type": "stdio",
+      "command": "/Users/johnyang/.edi/bin/recall-mcp",
+      "env": {
+        "CODEX_METADATA_DB": "/Users/johnyang/.edi/codex.db",
+        "CODEX_MODELS_PATH": "/Users/johnyang/.edi/models",
+        "EDI_AGENT_MODE": "coder",
+        "EDI_GIT_BRANCH": "main",
+        "EDI_GIT_SHA": "021970f",
+        "EDI_PROJECT_NAME": "ai-engineering-framework",
+        "EDI_PROJECT_PATH": "/Users/johnyang/code/ai-engineering-framework",
+        "EDI_SESSION_ID": "c5f5ba91-b3a3-46d2-a4cd-6e84109ec773"
+      }
+    }
+  }
+}
