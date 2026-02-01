@@ -53,7 +53,7 @@ func getCodexMCPConfig(cfg *config.Config, sessionID string) MCPServerConfig {
 	home, _ := os.UserHomeDir()
 
 	// Determine binary path
-	binaryPath := cfg.Codex.BinaryPath
+	binaryPath := expandPath(cfg.Codex.BinaryPath)
 	if binaryPath == "" {
 		binaryPath = filepath.Join(home, ".edi", "bin", "recall-mcp")
 	}
@@ -201,11 +201,19 @@ func findEdiBinary() string {
 	return "edi"
 }
 
-// expandPath expands ~ to home directory
+// expandPath expands ~ to home directory and resolves relative paths to absolute.
 func expandPath(path string) string {
-	if len(path) > 0 && path[0] == '~' {
+	if path == "" {
+		return path
+	}
+	if path[0] == '~' {
 		home, _ := os.UserHomeDir()
-		return filepath.Join(home, path[1:])
+		path = filepath.Join(home, path[1:])
+	}
+	if !filepath.IsAbs(path) {
+		if abs, err := filepath.Abs(path); err == nil {
+			path = abs
+		}
 	}
 	return path
 }

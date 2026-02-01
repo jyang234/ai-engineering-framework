@@ -41,6 +41,7 @@ func Execute(version string) error {
 	rootCmd.AddCommand(doctorCmd)
 	rootCmd.AddCommand(syncCmd)
 	rootCmd.AddCommand(ralphCmd)
+	rootCmd.AddCommand(flightLogCmd)
 
 	rootCmd.Version = version
 	if err := rootCmd.Execute(); err != nil {

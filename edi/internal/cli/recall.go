@@ -1,13 +1,14 @@
 package cli
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
+	"github.com/anthropics/aef/edi/internal/config"
 	"github.com/anthropics/aef/edi/internal/recall"
 )
 
@@ -49,6 +50,7 @@ func init() {
 	recallAddCmd.Flags().String("content", "", "Content (required)")
 	recallAddCmd.Flags().String("scope", "project", "Scope: project, global")
 	recallAddCmd.Flags().StringSlice("tags", nil, "Tags")
+	recallAddCmd.Flags().Bool("if-not-exists", false, "Skip if an item with the same title already exists")
 }
 
 func runRecallSearch(cmd *cobra.Command, args []string) error {
@@ -57,13 +59,13 @@ func runRecallSearch(cmd *cobra.Command, args []string) error {
 	scope, _ := cmd.Flags().GetString("scope")
 	limit, _ := cmd.Flags().GetInt("limit")
 
-	storage, err := openRecallStorage()
+	backend, err := openRecallBackend()
 	if err != nil {
 		return err
 	}
-	defer storage.Close()
+	defer backend.Close()
 
-	results, err := storage.Search(query, types, scope, limit)
+	results, err := backend.Search(query, types, scope, limit)
 	if err != nil {
 		return fmt.Errorf("search failed: %w", err)
 	}
@@ -92,25 +94,41 @@ func runRecallStatus(cmd *cobra.Command, args []string) error {
 	home, _ := os.UserHomeDir()
 	cwd, _ := os.Getwd()
 
-	globalDB := filepath.Join(home, ".edi", "recall", "global.db")
-	projectDB := filepath.Join(cwd, ".edi", "recall", "project.db")
+	cfg, _ := config.Load()
 
 	fmt.Println("RECALL Status:")
+	fmt.Printf("  Backend: %s\n", cfg.Recall.Backend)
 	fmt.Println()
 
-	fmt.Printf("Global DB: %s\n", globalDB)
-	if _, err := os.Stat(globalDB); err == nil {
-		fmt.Println("  Status: OK")
+	if cfg.Recall.Backend == "codex" {
+		dbPath := expandTilde(cfg.Codex.MetadataDB, home)
+		if dbPath == "" {
+			dbPath = filepath.Join(home, ".edi", "codex.db")
+		}
+		fmt.Printf("Codex DB: %s\n", dbPath)
+		if _, err := os.Stat(dbPath); err == nil {
+			fmt.Println("  Status: OK")
+		} else {
+			fmt.Println("  Status: Not initialized")
+		}
 	} else {
-		fmt.Println("  Status: Not initialized")
-	}
-	fmt.Println()
+		globalDB := filepath.Join(home, ".edi", "recall", "global.db")
+		projectDB := filepath.Join(cwd, ".edi", "recall", "project.db")
 
-	fmt.Printf("Project DB: %s\n", projectDB)
-	if _, err := os.Stat(projectDB); err == nil {
-		fmt.Println("  Status: OK")
-	} else {
-		fmt.Println("  Status: Not initialized")
+		fmt.Printf("Global DB: %s\n", globalDB)
+		if _, err := os.Stat(globalDB); err == nil {
+			fmt.Println("  Status: OK")
+		} else {
+			fmt.Println("  Status: Not initialized")
+		}
+		fmt.Println()
+
+		fmt.Printf("Project DB: %s\n", projectDB)
+		if _, err := os.Stat(projectDB); err == nil {
+			fmt.Println("  Status: OK")
+		} else {
+			fmt.Println("  Status: Not initialized")
+		}
 	}
 
 	return nil
@@ -127,48 +145,94 @@ func runRecallAdd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--title and --content are required")
 	}
 
-	storage, err := openRecallStorage()
+	ifNotExists, _ := cmd.Flags().GetBool("if-not-exists")
+
+	backend, err := openRecallBackend()
 	if err != nil {
 		return err
 	}
-	defer storage.Close()
+	defer backend.Close()
 
-	// Create server to use its add logic
-	server := recall.NewServer(storage, "cli")
-
-	result, err := json.Marshal(map[string]interface{}{
-		"type":    itemType,
-		"title":   title,
-		"content": content,
-		"scope":   scope,
-		"tags":    tags,
-	})
-	if err != nil {
-		return err
+	if ifNotExists {
+		existing, err := backend.FindByTitle(title)
+		if err == nil && existing != nil {
+			fmt.Printf("Skipped (already exists): %s (id: %s)\n", title, existing.ID)
+			return nil
+		}
 	}
 
-	// Use the server's add handler
-	var addArgs map[string]interface{}
-	json.Unmarshal(result, &addArgs)
+	now := time.Now()
+	cwd, _ := os.Getwd()
 
-	_ = server
-	_ = context.Background()
+	item := &recall.Item{
+		ID:          uuid.New().String(),
+		Type:        itemType,
+		Title:       title,
+		Content:     content,
+		Tags:        tags,
+		Scope:       scope,
+		ProjectPath: cwd,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
 
-	fmt.Printf("Added %s: %s\n", itemType, title)
+	if err := backend.Add(item); err != nil {
+		return fmt.Errorf("failed to add item: %w", err)
+	}
+
+	fmt.Printf("Added %s: %s (id: %s)\n", itemType, title, item.ID)
 	return nil
 }
 
-func openRecallStorage() (*recall.Storage, error) {
+// expandTilde replaces a leading ~ with the home directory and resolves relative paths.
+func expandTilde(path, home string) string {
+	if path == "" {
+		return path
+	}
+	if path[0] == '~' {
+		path = filepath.Join(home, path[1:])
+	}
+	if !filepath.IsAbs(path) {
+		if abs, err := filepath.Abs(path); err == nil {
+			path = abs
+		}
+	}
+	return path
+}
+
+// openRecallBackend returns the appropriate Backend based on config.
+func openRecallBackend() (recall.Backend, error) {
+	cfg, _ := config.Load()
+
+	if cfg.Recall.Backend == "codex" {
+		home, _ := os.UserHomeDir()
+		dbPath := expandTilde(cfg.Codex.MetadataDB, home)
+		if dbPath == "" {
+			dbPath = filepath.Join(home, ".edi", "codex.db")
+		}
+		// Use FTS-only for CLI commands (no Ollama dependency)
+		return recall.NewCodexBackend(dbPath, true)
+	}
+
+	// v0 backend
 	cwd, _ := os.Getwd()
 
 	// Try project DB first
 	projectDB := filepath.Join(cwd, ".edi", "recall", "project.db")
 	if _, err := os.Stat(filepath.Dir(projectDB)); err == nil {
-		return recall.NewStorage(projectDB)
+		s, err := recall.NewStorage(projectDB)
+		if err != nil {
+			return nil, err
+		}
+		return s, nil
 	}
 
 	// Fall back to global DB
 	home, _ := os.UserHomeDir()
 	globalDB := filepath.Join(home, ".edi", "recall", "global.db")
-	return recall.NewStorage(globalDB)
+	s, err := recall.NewStorage(globalDB)
+	if err != nil {
+		return nil, err
+	}
+	return s, nil
 }

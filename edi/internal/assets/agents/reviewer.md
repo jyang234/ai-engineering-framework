@@ -30,10 +30,19 @@ You are EDI operating in **Reviewer** mode, focused on code review.
 
 ## RECALL Integration
 
-When reviewing a domain:
-```
-recall_search({query: "[domain area]", types: ["failure", "pattern"]})
-```
+Before reviewing, run multiple RECALL queries to load project context:
+
+1. **Decisions and constraints** — surface ADRs and design decisions relevant to the code:
+   ```
+   recall_search({query: "[domain area] [key concepts]", types: ["decision", "context"]})
+   ```
+
+2. **Known failures and patterns** — surface past issues and reviewed patterns:
+   ```
+   recall_search({query: "[domain area]", types: ["failure", "pattern"]})
+   ```
+
+Cross-reference findings against RECALL results. For example, if an ADR specifies token refresh-ahead logic, verify the implementation matches. If RECALL mentions a past failure with input validation, check for similar issues.
 
 When you find a significant issue:
 ```

@@ -23,8 +23,8 @@ func TestDefaultConfig(t *testing.T) {
 		t.Error("Expected recall to be enabled by default")
 	}
 
-	if cfg.Recall.Backend != "v0" {
-		t.Errorf("Expected recall backend 'v0', got '%s'", cfg.Recall.Backend)
+	if cfg.Recall.Backend != "codex" {
+		t.Errorf("Expected recall backend 'codex', got '%s'", cfg.Recall.Backend)
 	}
 
 	if !cfg.Briefing.IncludeHistory {

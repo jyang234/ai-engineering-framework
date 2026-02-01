@@ -158,6 +158,42 @@ func (s *Storage) Search(query string, types []string, scope string, limit int) 
 	return items, nil
 }
 
+// FindByTitle returns the first item with an exact title match, or nil if not found
+func (s *Storage) FindByTitle(title string) (*Item, error) {
+	row := s.db.QueryRow(`SELECT id, type, title, content, tags, scope, project_path,
+		created_at, updated_at, usefulness_score, use_count
+		FROM items WHERE title = ? LIMIT 1`, title)
+
+	var item Item
+	var tagsJSON sql.NullString
+	var projectPath sql.NullString
+	var createdAt, updatedAt string
+
+	err := row.Scan(
+		&item.ID, &item.Type, &item.Title, &item.Content,
+		&tagsJSON, &item.Scope, &projectPath,
+		&createdAt, &updatedAt,
+		&item.UsefulnessScore, &item.UseCount,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	if tagsJSON.Valid {
+		json.Unmarshal([]byte(tagsJSON.String), &item.Tags)
+	}
+	if projectPath.Valid {
+		item.ProjectPath = projectPath.String
+	}
+	item.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	item.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
+
+	return &item, nil
+}
+
 // Add adds a new item to the knowledge base
 func (s *Storage) Add(item *Item) error {
 	tagsJSON, err := json.Marshal(item.Tags)

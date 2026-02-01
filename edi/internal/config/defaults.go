@@ -11,7 +11,7 @@ func DefaultConfig() *Config {
 		Agent:   "coder",
 		Recall: RecallConfig{
 			Enabled: true,
-			Backend: "v0", // Default to v0 for backward compatibility
+			Backend: "codex",
 		},
 		Codex: CodexConfig{},
 		Briefing: BriefingConfig{
@@ -43,14 +43,13 @@ agent: coder
 # RECALL knowledge system
 recall:
   enabled: true
-  backend: v0  # "v0" (SQLite FTS) or "codex" (hybrid vector search)
+  backend: codex  # "v0" (SQLite FTS) or "codex" (hybrid vector search)
 
-# Codex v1 backend configuration (used when recall.backend = "codex")
-# Requires: Ollama running locally with nomic-embed-text model
-# codex:
-#   models_path: ~/.edi/models
-#   metadata_db: ~/.edi/codex.db
-#   binary_path: ~/.edi/bin/recall-mcp
+# Codex v1 backend configuration
+codex:
+  models_path: ~/.edi/models
+  metadata_db: ~/.edi/codex.db
+  binary_path: ~/.edi/bin/recall-mcp
 
 # Session briefing
 briefing:

@@ -60,10 +60,7 @@ When the task is complete and all acceptance criteria are met:
 
 1. State clearly: **"Task [ID] complete"** (e.g., "Task US-001 complete")
 
-2. If this was the LAST task in the backlog, also output:
-   ```
-   <promise>DONE</promise>
-   ```
+**IMPORTANT:** Do NOT output `<promise>DONE</promise>`. The loop manages task progression automatically. You are responsible for ONE task only.
 
 ## Guidelines
 

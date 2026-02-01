@@ -137,7 +137,7 @@ build_prompt() {
         # Add instructions (CWD takes precedence over .ralph/)
         cat PROMPT.md 2>/dev/null || cat .ralph/PROMPT.md
         
-    } > .ralph/prompt.md
+    } > .ralph/current-prompt.md
 
     echo "OK"
 }
@@ -329,16 +329,8 @@ main() {
         output_file=".ralph/output_${iteration}.txt"
         log "Running Claude..."
         
-        if ! cat .ralph/prompt.md | claude -p 2>&1 | tee "$output_file"; then
+        if ! cat .ralph/current-prompt.md | claude -p --allowedTools 'Edit,Write,Bash(go build:*),Bash(go test:*),Bash(git:*),Read,Glob,Grep' 2>&1 | tee "$output_file"; then
             log "Warning: Claude exited with error"
-        fi
-        
-        # Check for loop completion
-        if check_for_loop_done "$output_file"; then
-            log_header "🎉 All Done"
-            log "Final: $(get_progress_summary)"
-            git add -A && git commit -m "Ralph: all tasks complete" 2>/dev/null || true
-            exit 0
         fi
         
         # Check for escalation
@@ -348,16 +340,23 @@ main() {
             consecutive_failures=0
             continue
         fi
-        
-        # Check for task completion
+
+        # Check for task completion (must run before loop-done check)
         if check_for_task_complete "$output_file" "$task_id"; then
             mark_task_complete "$task_id"
             git add -A && git commit -m "Ralph: complete $task_id" 2>/dev/null || true
             consecutive_failures=0
             last_error=""
+            # After marking complete, check if ALL tasks are now done (from PRD, not Claude's claim)
+            next=$(get_next_task_id)
+            if [ -z "$next" ]; then
+                log_header "🎉 All Tasks Complete"
+                log "Final: $(get_progress_summary)"
+                exit 0
+            fi
             continue
         fi
-        
+
         # Check for repeated errors
         current_error=$(extract_error "$output_file")
         

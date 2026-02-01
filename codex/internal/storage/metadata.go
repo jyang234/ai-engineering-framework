@@ -412,12 +412,23 @@ func (s *MetadataStore) KeywordSearch(query string, limit int) ([]KeywordResult,
 		limit = 50
 	}
 
-	// Sanitize query for FTS5: escape double quotes and wrap in quotes
-	// to prevent FTS5 syntax errors from special characters.
-	// NOTE: This disables FTS5 advanced syntax (AND, OR, NEAR, *) by design —
-	// the query is treated as a literal phrase match for safety.
-	sanitized := strings.ReplaceAll(query, `"`, `""`)
-	sanitized = `"` + sanitized + `"`
+	// Sanitize query for FTS5: split into words, quote each term individually,
+	// and join with OR so any matching term surfaces results.
+	// Hyphens are treated as word separators so that "acme-integration" matches
+	// documents where "acme" and "integration" were tokenized separately.
+	raw := strings.Fields(query)
+	var terms []string
+	for _, w := range raw {
+		for _, part := range strings.Split(w, "-") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			escaped := strings.ReplaceAll(part, `"`, `""`)
+			terms = append(terms, `"`+escaped+`"`)
+		}
+	}
+	sanitized := strings.Join(terms, " OR ")
 
 	rows, err := s.db.Query(`
 		SELECT i.id, i.type, i.title, i.content, i.tags, i.scope,

@@ -26,7 +26,7 @@ With --global: Creates ~/.edi/ with default agents, commands, and skills.`,
 func init() {
 	initCmd.Flags().Bool("global", false, "Initialize global EDI installation at ~/.edi/")
 	initCmd.Flags().Bool("force", false, "Overwrite existing files")
-	initCmd.Flags().String("backend", "v0", "RECALL backend: 'v0' (SQLite FTS) or 'codex' (hybrid vector search)")
+	initCmd.Flags().String("backend", "codex", "RECALL backend: 'v0' (SQLite FTS) or 'codex' (hybrid vector search)")
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
