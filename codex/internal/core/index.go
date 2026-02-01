@@ -213,6 +213,14 @@ func (idx *Indexer) indexCode(ctx context.Context, req IndexRequest) (*IndexResu
 
 		// Store in vector storage
 		if err := idx.vectorStore.Upsert(ctx, item.ID, vec); err != nil {
+			// Compensate: delete metadata for this chunk
+			_ = idx.metaStore.DeleteItem(item.ID)
+			// Delete all previously saved chunks
+			for j := 0; j < i; j++ {
+				prevID := fmt.Sprintf("%s-chunk-%d", parentID, j)
+				_ = idx.metaStore.DeleteItem(prevID)
+				_ = idx.vectorStore.Delete(ctx, prevID)
+			}
 			return nil, fmt.Errorf("failed to store chunk %d: %w", i, err)
 		}
 	}
@@ -286,6 +294,14 @@ func (idx *Indexer) indexDoc(ctx context.Context, req IndexRequest) (*IndexResul
 
 		// Store in vector storage
 		if err := idx.vectorStore.Upsert(ctx, item.ID, vec); err != nil {
+			// Compensate: delete metadata for this chunk
+			_ = idx.metaStore.DeleteItem(item.ID)
+			// Delete all previously saved chunks
+			for j := 0; j < i; j++ {
+				prevID := fmt.Sprintf("%s-chunk-%d", parentID, j)
+				_ = idx.metaStore.DeleteItem(prevID)
+				_ = idx.vectorStore.Delete(ctx, prevID)
+			}
 			return nil, fmt.Errorf("failed to store doc chunk %d: %w", i, err)
 		}
 	}
@@ -333,6 +349,7 @@ func (idx *Indexer) indexManual(ctx context.Context, req IndexRequest) (*IndexRe
 
 	// Store in vector storage
 	if err := idx.vectorStore.Upsert(ctx, item.ID, vec); err != nil {
+		_ = idx.metaStore.DeleteItem(item.ID)
 		return nil, fmt.Errorf("failed to store item: %w", err)
 	}
 

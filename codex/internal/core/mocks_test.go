@@ -204,6 +204,18 @@ func (m *MockMetadataStorage) SaveItem(item *storage.ItemRecord) error {
 	return nil
 }
 
+func (m *MockMetadataStorage) FindByTitle(title string) (*storage.ItemRecord, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, item := range m.Items {
+		if item.Title == title {
+			return item, nil
+		}
+	}
+	return nil, nil
+}
+
 func (m *MockMetadataStorage) GetItem(id string) (*storage.ItemRecord, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

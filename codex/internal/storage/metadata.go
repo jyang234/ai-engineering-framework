@@ -78,6 +78,7 @@ func NewMetadataStore(dbPath string) (*MetadataStore, error) {
 	if err != nil {
 		return nil, err
 	}
+	db.SetMaxOpenConns(2)
 
 	store := &MetadataStore{db: db}
 	if err := store.migrate(); err != nil {
@@ -400,6 +401,38 @@ func (s *MetadataStore) ListItems(itemType, scope string, limit, offset int) ([]
 	}
 
 	return items, rows.Err()
+}
+
+// FindByTitle returns the first item with an exact title match, or nil.
+func (s *MetadataStore) FindByTitle(title string) (*ItemRecord, error) {
+	row := s.db.QueryRow(`
+		SELECT id, type, title, content, tags, scope, source, metadata, created_at, updated_at
+		FROM items WHERE title = ? LIMIT 1
+	`, title)
+
+	var item ItemRecord
+	var tagsJSON, metaJSON string
+
+	err := row.Scan(&item.ID, &item.Type, &item.Title, &item.Content, &tagsJSON, &item.Scope, &item.Source, &metaJSON, &item.CreatedAt, &item.UpdatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	if tagsJSON != "" {
+		if err := json.Unmarshal([]byte(tagsJSON), &item.Tags); err != nil {
+			return nil, fmt.Errorf("unmarshal tags for %s: %w", item.ID, err)
+		}
+	}
+	if metaJSON != "" {
+		if err := json.Unmarshal([]byte(metaJSON), &item.Metadata); err != nil {
+			return nil, fmt.Errorf("unmarshal metadata for %s: %w", item.ID, err)
+		}
+	}
+
+	return &item, nil
 }
 
 // KeywordSearch performs FTS5 full-text search on items.

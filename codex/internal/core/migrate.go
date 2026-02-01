@@ -42,8 +42,8 @@ func MigrateV0ToV1(ctx context.Context, v0DBPath string, engine *SearchEngine) (
 		StartTime: time.Now(),
 	}
 
-	// Open V0 database
-	v0DB, err := sql.Open("sqlite3", v0DBPath)
+	// Open V0 database (read-only)
+	v0DB, err := sql.Open("sqlite3", v0DBPath+"?mode=ro")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open v0 database: %w", err)
 	}
@@ -179,8 +179,8 @@ func MigrateV0ToV1WithProgress(ctx context.Context, v0DBPath string, engine *Sea
 		StartTime: time.Now(),
 	}
 
-	// Open V0 database
-	v0DB, err := sql.Open("sqlite3", v0DBPath)
+	// Open V0 database (read-only)
+	v0DB, err := sql.Open("sqlite3", v0DBPath+"?mode=ro")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open v0 database: %w", err)
 	}

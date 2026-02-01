@@ -220,7 +220,16 @@ func (h *ToolHandler) handleAdd(ctx context.Context, args map[string]interface{}
 
 func (h *ToolHandler) handleFeedback(args map[string]interface{}) (interface{}, error) {
 	itemID, _ := args["item_id"].(string)
-	useful, _ := args["useful"].(bool)
+
+	usefulVal, ok := args["useful"]
+	if !ok {
+		return nil, fmt.Errorf("useful is required")
+	}
+	useful, ok := usefulVal.(bool)
+	if !ok {
+		return nil, fmt.Errorf("useful must be a boolean")
+	}
+
 	ctx, _ := args["context"].(string)
 
 	if itemID == "" {

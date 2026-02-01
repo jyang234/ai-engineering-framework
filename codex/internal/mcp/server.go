@@ -200,7 +200,14 @@ func (s *Server) handleCallTool(ctx context.Context, req *MCPRequest) *MCPRespon
 		}
 	}
 
-	resultJSON, _ := json.Marshal(result)
+	resultJSON, err := json.Marshal(result)
+	if err != nil {
+		return &MCPResponse{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error:   &MCPError{Code: -32603, Message: fmt.Sprintf("Internal error: %v", err)},
+		}
+	}
 	return &MCPResponse{
 		JSONRPC: "2.0",
 		ID:      req.ID,

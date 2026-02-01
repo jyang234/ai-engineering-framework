@@ -38,14 +38,7 @@ func NewClient(ctx context.Context, cfg Config) (*Client, error) {
 		return nil, fmt.Errorf("recall: open engine: %w", err)
 	}
 
-	// Open a separate metadata handle for FindByTitle (keyword search on title column)
-	meta, err := storage.NewMetadataStore(dbPath)
-	if err != nil {
-		engine.Close()
-		return nil, fmt.Errorf("recall: open metadata: %w", err)
-	}
-
-	return &Client{engine: engine, metadata: meta}, nil
+	return &Client{engine: engine, metadata: nil}, nil
 }
 
 // NewFTSOnlyClient creates a Client that only uses FTS keyword search,
@@ -80,9 +73,7 @@ func (c *Client) Search(ctx context.Context, query string, opts SearchOpts) ([]I
 		})
 		if err != nil {
 			// Fall through to FTS-only on embedding errors
-			if c.metadata != nil {
-				return c.ftsSearch(query, opts, limit)
-			}
+			return c.ftsSearch(query, opts, limit)
 			return nil, err
 		}
 
@@ -98,7 +89,7 @@ func (c *Client) Search(ctx context.Context, query string, opts SearchOpts) ([]I
 }
 
 func (c *Client) ftsSearch(query string, opts SearchOpts, limit int) ([]Item, error) {
-	kwResults, err := c.metadata.KeywordSearch(query, limit*3)
+	kwResults, err := c.keywordSearcher().KeywordSearch(query, limit*3)
 	if err != nil {
 		return nil, fmt.Errorf("recall: keyword search: %w", err)
 	}
@@ -162,6 +153,14 @@ func (c *Client) Add(ctx context.Context, item Item) (string, error) {
 
 // Get retrieves an item by ID.
 func (c *Client) Get(ctx context.Context, id string) (*Item, error) {
+	if c.engine != nil {
+		coreItem, err := c.engine.Get(ctx, id)
+		if err != nil {
+			return nil, fmt.Errorf("recall: get: %w", err)
+		}
+		item := itemFromCore(coreItem)
+		return &item, nil
+	}
 	record, err := c.metadata.GetItem(id)
 	if err != nil {
 		return nil, fmt.Errorf("recall: get: %w", err)
@@ -172,25 +171,22 @@ func (c *Client) Get(ctx context.Context, id string) (*Item, error) {
 
 // FindByTitle returns the first item with an exact title match, or nil.
 func (c *Client) FindByTitle(ctx context.Context, title string) (*Item, error) {
-	// Use keyword search + exact filter (MetadataStore has no direct FindByTitle)
-	results, err := c.metadata.KeywordSearch(title, 50)
+	var record *storage.ItemRecord
+	var err error
+
+	if c.engine != nil {
+		record, err = c.engine.MetadataStore().FindByTitle(title)
+	} else {
+		record, err = c.metadata.FindByTitle(title)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("recall: find by title: %w", err)
 	}
-	for _, r := range results {
-		if r.Title == title {
-			item := Item{
-				ID:      r.ID,
-				Type:    r.Type,
-				Title:   r.Title,
-				Content: r.Content,
-				Tags:    r.Tags,
-				Scope:   r.Scope,
-			}
-			return &item, nil
-		}
+	if record == nil {
+		return nil, nil
 	}
-	return nil, nil
+	item := itemFromRecord(record)
+	return &item, nil
 }
 
 // Close releases all resources.
@@ -201,7 +197,8 @@ func (c *Client) Close() error {
 			errs = append(errs, err.Error())
 		}
 	}
-	if c.metadata != nil {
+	// Only close metadata if it's a standalone store (FTS-only mode)
+	if c.metadata != nil && c.engine == nil {
 		if err := c.metadata.Close(); err != nil {
 			errs = append(errs, err.Error())
 		}
@@ -210,6 +207,15 @@ func (c *Client) Close() error {
 		return fmt.Errorf("recall: close: %s", strings.Join(errs, "; "))
 	}
 	return nil
+}
+
+// keywordSearcher returns the keyword searcher, preferring engine's store.
+func (c *Client) keywordSearcher() *storage.MetadataStore {
+	if c.metadata != nil {
+		return c.metadata
+	}
+	// Engine's metadata store is a *storage.MetadataStore
+	return c.engine.MetadataStore().(*storage.MetadataStore)
 }
 
 // --- conversion helpers ---
@@ -276,10 +282,8 @@ func coreItemToRecord(i *core.Item) *storage.ItemRecord {
 
 func expandHome(path string) string {
 	if strings.HasPrefix(path, "~/") {
-		home, err := os.Getwd() // fallback
-		if h, err2 := os.UserHomeDir(); err2 == nil {
-			home = h
-		} else if err != nil {
+		home, err := os.UserHomeDir()
+		if err != nil {
 			return path
 		}
 		return filepath.Join(home, path[2:])

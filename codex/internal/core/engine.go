@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sort"
 	"time"
 
 	"github.com/anthropics/aef/codex/internal/embedding"
@@ -87,6 +88,11 @@ func NewSearchEngineWithDeps(deps SearchEngineDeps) *SearchEngine {
 		embedder: deps.Embedder,
 		reranker: deps.Reranker,
 	}
+}
+
+// MetadataStore returns the engine's metadata storage for direct access.
+func (e *SearchEngine) MetadataStore() MetadataStorage {
+	return e.metadata
 }
 
 // Close releases all resources
@@ -190,6 +196,10 @@ func (e *SearchEngine) Search(ctx context.Context, req SearchRequest) ([]SearchR
 			log.Printf("Warning: reranking failed: %v\n", err)
 		} else {
 			results = applyRerankScores(results, reranked)
+			// Re-sort by rerank score descending
+			sort.Slice(results, func(i, j int) bool {
+				return results[i].Score > results[j].Score
+			})
 		}
 	}
 
@@ -237,6 +247,8 @@ func (e *SearchEngine) Add(ctx context.Context, item *Item) error {
 
 	// Store vector
 	if err := e.vecStore.Upsert(ctx, item.ID, vec); err != nil {
+		// Compensate: remove the metadata row we just saved
+		_ = e.metadata.DeleteItem(item.ID)
 		return fmt.Errorf("failed to store vector: %w", err)
 	}
 
@@ -358,14 +370,14 @@ func (e *SearchEngine) Update(ctx context.Context, item *Item) error {
 
 // Delete removes an item from both vector store and metadata store
 func (e *SearchEngine) Delete(ctx context.Context, id string) error {
-	// Delete from vector store (best-effort — metadata is the source of truth)
-	if err := e.vecStore.Delete(ctx, id); err != nil {
-		log.Printf("Warning: failed to delete vector for %s: %v", id, err)
-	}
-
-	// Delete from metadata store
+	// Delete from metadata store first (source of truth)
 	if err := e.metadata.DeleteItem(id); err != nil {
 		return fmt.Errorf("failed to delete from metadata: %w", err)
+	}
+
+	// Delete from vector store (best-effort)
+	if err := e.vecStore.Delete(ctx, id); err != nil {
+		log.Printf("Warning: failed to delete vector for %s: %v", id, err)
 	}
 
 	return nil

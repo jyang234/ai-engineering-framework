@@ -42,6 +42,7 @@ type KeywordSearcher interface {
 type MetadataStorage interface {
 	SaveItem(item *storage.ItemRecord) error
 	GetItem(id string) (*storage.ItemRecord, error)
+	FindByTitle(title string) (*storage.ItemRecord, error)
 	ListItems(itemType, scope string, limit, offset int) ([]*storage.ItemRecord, error)
 	DeleteItem(id string) error
 	CountItemsByType() (map[string]int, error)
