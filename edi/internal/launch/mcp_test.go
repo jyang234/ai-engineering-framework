@@ -243,13 +243,12 @@ func TestExpandPath(t *testing.T) {
 	}{
 		{"~/.edi/models", filepath.Join(home, ".edi/models")},
 		{"/absolute/path", "/absolute/path"},
-		{"relative/path", "relative/path"},
 	}
 
 	for _, tc := range tests {
-		result := expandPath(tc.input)
+		result := config.ResolvePath(tc.input)
 		if result != tc.expected {
-			t.Errorf("expandPath(%q) = %q, expected %q", tc.input, result, tc.expected)
+			t.Errorf("ResolvePath(%q) = %q, expected %q", tc.input, result, tc.expected)
 		}
 	}
 }

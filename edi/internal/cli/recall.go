@@ -101,7 +101,7 @@ func runRecallStatus(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 
 	if cfg.Recall.Backend == "codex" {
-		dbPath := expandTilde(cfg.Codex.MetadataDB, home)
+		dbPath := config.ResolvePath(cfg.Codex.MetadataDB)
 		if dbPath == "" {
 			dbPath = filepath.Join(home, ".edi", "codex.db")
 		}
@@ -184,29 +184,13 @@ func runRecallAdd(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// expandTilde replaces a leading ~ with the home directory and resolves relative paths.
-func expandTilde(path, home string) string {
-	if path == "" {
-		return path
-	}
-	if path[0] == '~' {
-		path = filepath.Join(home, path[1:])
-	}
-	if !filepath.IsAbs(path) {
-		if abs, err := filepath.Abs(path); err == nil {
-			path = abs
-		}
-	}
-	return path
-}
-
 // openRecallBackend returns the appropriate Backend based on config.
 func openRecallBackend() (recall.Backend, error) {
 	cfg, _ := config.Load()
 
 	if cfg.Recall.Backend == "codex" {
 		home, _ := os.UserHomeDir()
-		dbPath := expandTilde(cfg.Codex.MetadataDB, home)
+		dbPath := config.ResolvePath(cfg.Codex.MetadataDB)
 		if dbPath == "" {
 			dbPath = filepath.Join(home, ".edi", "codex.db")
 		}

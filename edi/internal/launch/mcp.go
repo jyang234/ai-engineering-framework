@@ -53,7 +53,7 @@ func getCodexMCPConfig(cfg *config.Config, sessionID string) MCPServerConfig {
 	home, _ := os.UserHomeDir()
 
 	// Determine binary path
-	binaryPath := expandPath(cfg.Codex.BinaryPath)
+	binaryPath := config.ResolvePath(cfg.Codex.BinaryPath)
 	if binaryPath == "" {
 		binaryPath = filepath.Join(home, ".edi", "bin", "recall-mcp")
 	}
@@ -65,10 +65,10 @@ func getCodexMCPConfig(cfg *config.Config, sessionID string) MCPServerConfig {
 
 	// Add Codex configuration
 	if cfg.Codex.ModelsPath != "" {
-		env["CODEX_MODELS_PATH"] = expandPath(cfg.Codex.ModelsPath)
+		env["CODEX_MODELS_PATH"] = config.ResolvePath(cfg.Codex.ModelsPath)
 	}
 	if cfg.Codex.MetadataDB != "" {
-		env["CODEX_METADATA_DB"] = expandPath(cfg.Codex.MetadataDB)
+		env["CODEX_METADATA_DB"] = config.ResolvePath(cfg.Codex.MetadataDB)
 	}
 
 	// Pass through API keys and embedding config from environment
@@ -201,23 +201,6 @@ func findEdiBinary() string {
 	return "edi"
 }
 
-// expandPath expands ~ to home directory and resolves relative paths to absolute.
-func expandPath(path string) string {
-	if path == "" {
-		return path
-	}
-	if path[0] == '~' {
-		home, _ := os.UserHomeDir()
-		path = filepath.Join(home, path[1:])
-	}
-	if !filepath.IsAbs(path) {
-		if abs, err := filepath.Abs(path); err == nil {
-			path = abs
-		}
-	}
-	return path
-}
-
 // gitInfo returns the current git branch and short SHA, or empty strings if not in a git repo
 func gitInfo() (branch string, sha string) {
 	branchOut, err := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD").Output()
@@ -247,7 +230,7 @@ func ValidateCodexRequirements(cfg *config.Config) error {
 		binaryPath = filepath.Join(home, ".edi", "bin", "recall-mcp")
 	}
 
-	if _, err := os.Stat(expandPath(binaryPath)); os.IsNotExist(err) {
+	if _, err := os.Stat(config.ResolvePath(binaryPath)); os.IsNotExist(err) {
 		return fmt.Errorf("codex binary not found at %s. Run 'make build' in codex/ directory and copy to ~/.edi/bin/", binaryPath)
 	}
 
