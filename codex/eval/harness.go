@@ -16,6 +16,7 @@ type EvalHarness struct {
 	client     *MCPClient
 	engine     *core.SearchEngine
 	collection TestCollection
+	tmpDir     string
 	// Maps test doc ID (e.g. "adr-001") to MCP-assigned ID (e.g. "D-abc12345")
 	idMap      map[string]string
 	// Maps MCP-assigned ID back to test doc ID
@@ -60,6 +61,7 @@ func NewEvalHarness(ctx context.Context) (*EvalHarness, error) {
 	return &EvalHarness{
 		engine:        engine,
 		collection:    collection,
+		tmpDir:        tmpDir,
 		idMap:         make(map[string]string),
 		reverseMap:    make(map[string]string),
 		titleToTestID: titleMap,
@@ -73,6 +75,9 @@ func (h *EvalHarness) Close() {
 	}
 	if h.engine != nil {
 		h.engine.Close()
+	}
+	if h.tmpDir != "" {
+		os.RemoveAll(h.tmpDir)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/anthropics/aef/codex/internal/core"
@@ -34,7 +35,7 @@ func main() {
 	engine, err := core.NewSearchEngine(ctx, core.Config{
 		AnthropicAPIKey:        os.Getenv("ANTHROPIC_API_KEY"),
 		ModelsPath:             getEnv("CODEX_MODELS_PATH", "./models"),
-		MetadataDBPath:         getEnv("CODEX_METADATA_DB", "~/.edi/codex.db"),
+		MetadataDBPath:         getEnv("CODEX_METADATA_DB", defaultMetadataDB()),
 		LocalEmbeddingURL:   os.Getenv("LOCAL_EMBEDDING_URL"),
 		LocalEmbeddingModel: os.Getenv("LOCAL_EMBEDDING_MODEL"),
 	})
@@ -56,6 +57,14 @@ func main() {
 	if err := server.Run(addr); err != nil {
 		log.Fatalf("Web server error: %v", err)
 	}
+}
+
+func defaultMetadataDB() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "codex.db"
+	}
+	return filepath.Join(home, ".edi", "codex.db")
 }
 
 func getEnv(key, defaultVal string) string {

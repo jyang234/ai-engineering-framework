@@ -38,13 +38,15 @@ func init() {
 func runMigrate(cmd *cobra.Command, args []string) error {
 	v0Path := args[0]
 
+	ctx := context.Background()
+
 	// Validate v0 database
-	if err := core.ValidateV0Database(v0Path); err != nil {
+	if err := core.ValidateV0Database(ctx, v0Path); err != nil {
 		return fmt.Errorf("invalid v0 database: %w", err)
 	}
 
 	// Get item count
-	count, err := core.GetV0ItemCount(v0Path)
+	count, err := core.GetV0ItemCount(ctx, v0Path)
 	if err != nil {
 		return fmt.Errorf("failed to count items: %w", err)
 	}
@@ -59,8 +61,6 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 	// Load config
 	cfg := LoadConfig()
 	// Local Ollama embedders are used — no API keys required for migration.
-
-	ctx := context.Background()
 	engine, err := core.NewSearchEngine(ctx, cfg.ToEngineConfig())
 	if err != nil {
 		return fmt.Errorf("failed to create engine: %w", err)

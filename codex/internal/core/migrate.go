@@ -57,7 +57,7 @@ func MigrateV0ToV1(ctx context.Context, v0DBPath string, engine *SearchEngine) (
 	defer indexer.Close()
 
 	// Query all items from v0
-	rows, err := v0DB.Query(`
+	rows, err := v0DB.QueryContext(ctx, `
 		SELECT id, type, title, content, tags, scope, created_at, updated_at
 		FROM items
 		ORDER BY created_at ASC
@@ -96,6 +96,9 @@ func MigrateV0ToV1(ctx context.Context, v0DBPath string, engine *SearchEngine) (
 			migrateBatch(ctx, batch, indexer, stats)
 			batch = batch[:0]
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %w", err)
 	}
 
 	// Process remaining items
@@ -188,7 +191,7 @@ func MigrateV0ToV1WithProgress(ctx context.Context, v0DBPath string, engine *Sea
 
 	// Count total items first
 	var total int
-	err = v0DB.QueryRow("SELECT COUNT(*) FROM items").Scan(&total)
+	err = v0DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM items").Scan(&total)
 	if err != nil {
 		return nil, fmt.Errorf("failed to count items: %w", err)
 	}
@@ -202,7 +205,7 @@ func MigrateV0ToV1WithProgress(ctx context.Context, v0DBPath string, engine *Sea
 	defer indexer.Close()
 
 	// Query all items
-	rows, err := v0DB.Query(`
+	rows, err := v0DB.QueryContext(ctx, `
 		SELECT id, type, title, content, tags, scope, created_at, updated_at
 		FROM items
 		ORDER BY created_at ASC
@@ -249,14 +252,17 @@ func MigrateV0ToV1WithProgress(ctx context.Context, v0DBPath string, engine *Sea
 
 		current++
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %w", err)
+	}
 
 	stats.EndTime = time.Now()
 	return stats, nil
 }
 
 // ValidateV0Database checks if the given path is a valid RECALL v0 database
-func ValidateV0Database(dbPath string) error {
-	db, err := sql.Open("sqlite3", dbPath)
+func ValidateV0Database(ctx context.Context, dbPath string) error {
+	db, err := sql.Open("sqlite3", dbPath+"?mode=ro")
 	if err != nil {
 		return fmt.Errorf("cannot open database: %w", err)
 	}
@@ -264,7 +270,7 @@ func ValidateV0Database(dbPath string) error {
 
 	// Check for items table
 	var tableName string
-	err = db.QueryRow(`
+	err = db.QueryRowContext(ctx, `
 		SELECT name FROM sqlite_master
 		WHERE type='table' AND name='items'
 	`).Scan(&tableName)
@@ -273,7 +279,7 @@ func ValidateV0Database(dbPath string) error {
 	}
 
 	// Check for FTS table (v0 uses FTS5)
-	err = db.QueryRow(`
+	err = db.QueryRowContext(ctx, `
 		SELECT name FROM sqlite_master
 		WHERE type='table' AND name='items_fts'
 	`).Scan(&tableName)
@@ -286,15 +292,15 @@ func ValidateV0Database(dbPath string) error {
 }
 
 // GetV0ItemCount returns the number of items in a V0 database
-func GetV0ItemCount(dbPath string) (int, error) {
-	db, err := sql.Open("sqlite3", dbPath)
+func GetV0ItemCount(ctx context.Context, dbPath string) (int, error) {
+	db, err := sql.Open("sqlite3", dbPath+"?mode=ro")
 	if err != nil {
 		return 0, err
 	}
 	defer db.Close()
 
 	var count int
-	err = db.QueryRow("SELECT COUNT(*) FROM items").Scan(&count)
+	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM items").Scan(&count)
 	return count, err
 }
 

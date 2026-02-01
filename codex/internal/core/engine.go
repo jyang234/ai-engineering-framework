@@ -340,8 +340,8 @@ func (e *SearchEngine) List(ctx context.Context, itemType, scope string, limit, 
 
 // Update updates an existing item
 func (e *SearchEngine) Update(ctx context.Context, item *Item) error {
-	// Verify item exists
-	_, err := e.metadata.GetItem(item.ID)
+	// Verify item exists and save old record for rollback
+	oldRecord, err := e.metadata.GetItem(item.ID)
 	if err != nil {
 		return fmt.Errorf("item not found: %w", err)
 	}
@@ -362,6 +362,8 @@ func (e *SearchEngine) Update(ctx context.Context, item *Item) error {
 
 	// Update vector
 	if err := e.vecStore.Upsert(ctx, item.ID, vec); err != nil {
+		// Rollback: restore the old metadata record
+		_ = e.metadata.SaveItem(oldRecord)
 		return fmt.Errorf("failed to update vector: %w", err)
 	}
 

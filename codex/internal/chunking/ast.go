@@ -3,6 +3,7 @@ package chunking
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	sitter "github.com/smacker/go-tree-sitter"
 	"github.com/smacker/go-tree-sitter/golang"
@@ -15,6 +16,9 @@ type ASTChunker struct {
 	goParser *sitter.Parser
 	pyParser *sitter.Parser
 	tsParser *sitter.Parser
+	goMu     sync.Mutex
+	pyMu     sync.Mutex
+	tsMu     sync.Mutex
 	available bool
 }
 
@@ -49,11 +53,17 @@ func (c *ASTChunker) ChunkFile(content []byte, lang, filePath string) ([]CodeChu
 	var tree *sitter.Tree
 	switch lang {
 	case "go":
+		c.goMu.Lock()
 		tree = c.goParser.Parse(nil, content)
+		c.goMu.Unlock()
 	case "python":
+		c.pyMu.Lock()
 		tree = c.pyParser.Parse(nil, content)
+		c.pyMu.Unlock()
 	case "typescript", "tsx", "javascript", "jsx":
+		c.tsMu.Lock()
 		tree = c.tsParser.Parse(nil, content)
+		c.tsMu.Unlock()
 	default:
 		// Unsupported language - fall back
 		return c.fallbackChunk(content, filePath, lang), nil

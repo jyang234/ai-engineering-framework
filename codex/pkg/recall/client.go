@@ -6,6 +6,7 @@ package recall
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,7 +75,6 @@ func (c *Client) Search(ctx context.Context, query string, opts SearchOpts) ([]I
 		if err != nil {
 			// Fall through to FTS-only on embedding errors
 			return c.ftsSearch(query, opts, limit)
-			return nil, err
 		}
 
 		items := make([]Item, len(results))
@@ -89,7 +89,11 @@ func (c *Client) Search(ctx context.Context, query string, opts SearchOpts) ([]I
 }
 
 func (c *Client) ftsSearch(query string, opts SearchOpts, limit int) ([]Item, error) {
-	kwResults, err := c.keywordSearcher().KeywordSearch(query, limit*3)
+	ks, err := c.keywordSearcher()
+	if err != nil {
+		return nil, err
+	}
+	kwResults, err := ks.KeywordSearch(query, limit*3)
 	if err != nil {
 		return nil, fmt.Errorf("recall: keyword search: %w", err)
 	}
@@ -210,12 +214,17 @@ func (c *Client) Close() error {
 }
 
 // keywordSearcher returns the keyword searcher, preferring engine's store.
-func (c *Client) keywordSearcher() *storage.MetadataStore {
+func (c *Client) keywordSearcher() (*storage.MetadataStore, error) {
 	if c.metadata != nil {
-		return c.metadata
+		return c.metadata, nil
 	}
 	// Engine's metadata store is a *storage.MetadataStore
-	return c.engine.MetadataStore().(*storage.MetadataStore)
+	ms, ok := c.engine.MetadataStore().(*storage.MetadataStore)
+	if !ok {
+		slog.Warn("recall: MetadataStore type assertion failed, expected *storage.MetadataStore")
+		return nil, fmt.Errorf("recall: MetadataStore type assertion failed")
+	}
+	return ms, nil
 }
 
 // --- conversion helpers ---

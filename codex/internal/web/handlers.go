@@ -1,6 +1,7 @@
 package web
 
 import (
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -43,7 +44,8 @@ func (s *Server) handleSearch(c *gin.Context) {
 		Limit: 20,
 	})
 	if err != nil {
-		c.HTML(http.StatusInternalServerError, "error.html", gin.H{"error": err.Error()})
+		slog.Error("search failed", "error", err)
+		c.HTML(http.StatusInternalServerError, "error.html", gin.H{"error": "internal error"})
 		return
 	}
 
@@ -83,7 +85,8 @@ func (s *Server) handleBrowse(c *gin.Context) {
 
 	items, err := s.engine.List(c.Request.Context(), itemType, scope, limit, offset)
 	if err != nil {
-		c.HTML(http.StatusInternalServerError, "error.html", gin.H{"error": err.Error()})
+		slog.Error("browse failed", "error", err)
+		c.HTML(http.StatusInternalServerError, "error.html", gin.H{"error": "internal error"})
 		return
 	}
 
@@ -124,9 +127,10 @@ func (s *Server) handleAPISearch(c *gin.Context) {
 		Limit: 20,
 	})
 	if err != nil {
+		slog.Error("API search failed", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
-			"error":   err.Error(),
+			"error":   "internal error",
 		})
 		return
 	}
@@ -191,9 +195,10 @@ func (s *Server) handleAPICreate(c *gin.Context) {
 	}
 
 	if err := s.engine.Add(c.Request.Context(), &item); err != nil {
+		slog.Error("API create failed", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
-			"error":   err.Error(),
+			"error":   "internal error",
 		})
 		return
 	}
@@ -229,9 +234,10 @@ func (s *Server) handleAPIUpdate(c *gin.Context) {
 	}
 
 	if err := s.engine.Update(c.Request.Context(), &item); err != nil {
+		slog.Error("API update failed", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
-			"error":   err.Error(),
+			"error":   "internal error",
 		})
 		return
 	}
@@ -247,9 +253,10 @@ func (s *Server) handleAPIDelete(c *gin.Context) {
 	id := c.Param("id")
 
 	if err := s.engine.Delete(c.Request.Context(), id); err != nil {
+		slog.Error("API delete failed", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
-			"error":   err.Error(),
+			"error":   "internal error",
 		})
 		return
 	}

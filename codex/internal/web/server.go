@@ -1,6 +1,7 @@
 package web
 
 import (
+	"crypto/subtle"
 	"html/template"
 	"net/http"
 	"strings"
@@ -44,8 +45,14 @@ func NewServer(engine *core.SearchEngine, opts ...ServerOption) *Server {
 			return s[:length] + "..."
 		},
 		"slice": func(s string, start, end int) string {
-			if len(s) <= end {
-				return s
+			if start < 0 {
+				start = 0
+			}
+			if end > len(s) {
+				end = len(s)
+			}
+			if start >= end {
+				return ""
 			}
 			return s[start:end]
 		},
@@ -93,7 +100,8 @@ func WithAPIKey(key string) ServerOption {
 func (s *Server) apiKeyAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		auth := c.GetHeader("Authorization")
-		if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != s.config.APIKey {
+		token := strings.TrimPrefix(auth, "Bearer ")
+		if !strings.HasPrefix(auth, "Bearer ") || subtle.ConstantTimeCompare([]byte(token), []byte(s.config.APIKey)) != 1 {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 				"success": false,
 				"error":   "unauthorized: invalid or missing API key",

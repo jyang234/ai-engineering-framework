@@ -140,14 +140,14 @@ func TestValidateV0Database(t *testing.T) {
 	dbPath, cleanup := createTestV0Database(t)
 	defer cleanup()
 
-	err := ValidateV0Database(dbPath)
+	err := ValidateV0Database(context.Background(), dbPath)
 	if err != nil {
 		t.Errorf("ValidateV0Database() failed for valid db: %v", err)
 	}
 }
 
 func TestValidateV0Database_InvalidPath(t *testing.T) {
-	err := ValidateV0Database("/nonexistent/path/db.sqlite")
+	err := ValidateV0Database(context.Background(), "/nonexistent/path/db.sqlite")
 	if err == nil {
 		t.Error("Expected error for nonexistent database")
 	}
@@ -174,7 +174,7 @@ func TestValidateV0Database_NotV0DB(t *testing.T) {
 		t.Fatalf("Failed to create table: %v", err)
 	}
 
-	err = ValidateV0Database(dbPath)
+	err = ValidateV0Database(context.Background(), dbPath)
 	if err == nil {
 		t.Error("Expected error for database without items table")
 	}
@@ -184,7 +184,7 @@ func TestGetV0ItemCount(t *testing.T) {
 	dbPath, cleanup := createTestV0Database(t)
 	defer cleanup()
 
-	count, err := GetV0ItemCount(dbPath)
+	count, err := GetV0ItemCount(context.Background(), dbPath)
 	if err != nil {
 		t.Fatalf("GetV0ItemCount() failed: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestGetV0ItemCount_EmptyDB(t *testing.T) {
 		t.Fatalf("Failed to create table: %v", err)
 	}
 
-	count, err := GetV0ItemCount(dbPath)
+	count, err := GetV0ItemCount(context.Background(), dbPath)
 	if err != nil {
 		t.Fatalf("GetV0ItemCount() failed: %v", err)
 	}
@@ -540,7 +540,7 @@ func TestValidateV0Database_EmptyFile(t *testing.T) {
 		t.Fatalf("Failed to create empty file: %v", err)
 	}
 
-	err = ValidateV0Database(emptyPath)
+	err = ValidateV0Database(context.Background(), emptyPath)
 	if err == nil {
 		t.Error("Expected error for empty database file")
 	}
@@ -559,7 +559,7 @@ func TestValidateV0Database_CorruptedFile(t *testing.T) {
 		t.Fatalf("Failed to create corrupt file: %v", err)
 	}
 
-	err = ValidateV0Database(corruptPath)
+	err = ValidateV0Database(context.Background(), corruptPath)
 	if err == nil {
 		t.Error("Expected error for corrupted database file")
 	}
@@ -616,7 +616,7 @@ func TestGetV0ItemCount_LargeDataset(t *testing.T) {
 	db.Close()
 
 	// Test count
-	count, err := GetV0ItemCount(dbPath)
+	count, err := GetV0ItemCount(context.Background(), dbPath)
 	if err != nil {
 		t.Fatalf("GetV0ItemCount failed: %v", err)
 	}

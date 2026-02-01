@@ -98,7 +98,7 @@ func (s *Server) Run(ctx context.Context) error {
 // RunForIO starts the MCP server reading from r and writing to w.
 // This allows in-process testing via io.Pipe.
 func (s *Server) RunForIO(ctx context.Context, r io.Reader, w io.Writer) error {
-	reader := bufio.NewReader(r)
+	reader := bufio.NewReaderSize(r, 10<<20)
 	writer := w
 
 	for {

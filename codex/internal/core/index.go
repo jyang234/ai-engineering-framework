@@ -115,6 +115,13 @@ func (idx *Indexer) IndexDirectory(ctx context.Context, dirPath string, scope st
 			return err
 		}
 
+		// Respect context cancellation
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		// Skip hidden files and directories
 		if strings.HasPrefix(info.Name(), ".") {
 			if info.IsDir() {
@@ -130,6 +137,11 @@ func (idx *Indexer) IndexDirectory(ctx context.Context, dirPath string, scope st
 
 		// Skip non-indexable files
 		if !isIndexable(path) {
+			return nil
+		}
+
+		// Skip files larger than 1MB
+		if info.Size() > 1<<20 {
 			return nil
 		}
 
