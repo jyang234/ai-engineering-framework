@@ -86,7 +86,7 @@ See [AEF Install Model](docs/architecture/aef-install-model.md) for details.
 
 ## Skills
 
-EDI ships with 6 skills that provide specialized guidance to agents:
+EDI ships with 7 skills that provide specialized guidance to agents:
 
 | Skill | Used By | Purpose |
 |-------|---------|---------|
@@ -96,6 +96,7 @@ EDI ships with 6 skills that provide specialized guidance to agents:
 | **testing** | Coder, Test Writer | Testing standards — table-driven tests, coverage, anti-patterns |
 | **scaffolding-tests** | Coder, Test Writer | Golden master / characterization tests for safe refactoring |
 | **refactoring-planning** | Architect | Structured methodology for planning and executing refactoring |
+| **plan-review** | Reviewer | Review plans for regression risk, complexity, and over-engineering before implementation |
 
 Skills are installed to `~/.claude/skills/` by `edi init --global` and loaded into the system prompt based on each agent's `skills` list. See [edi/README.md](edi/README.md#skills) for detailed usage and examples.
 

@@ -56,6 +56,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 		{"testing", assets.TestingSkill},
 		{"scaffolding-tests", assets.ScaffoldingTestsSkill},
 		{"refactoring-planning", assets.RefactoringPlanningSkill},
+		{"plan-review", assets.PlanReviewSkill},
 	}
 	for _, skill := range skills {
 		if err := installSkill(home, skill.name, skill.fs); err != nil {

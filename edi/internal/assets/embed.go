@@ -26,6 +26,9 @@ var ScaffoldingTestsSkill embed.FS
 //go:embed skills/refactoring-planning/SKILL.md
 var RefactoringPlanningSkill embed.FS
 
+//go:embed skills/plan-review/SKILL.md
+var PlanReviewSkill embed.FS
+
 //go:embed subagents/*.md
 var Subagents embed.FS
 

@@ -86,7 +86,7 @@ edi sync
 ```
   Synced agents
   Synced commands
-  Synced skills (6)
+  Synced skills (7)
   Synced subagents
 
 Assets synced successfully.
@@ -94,7 +94,7 @@ Assets synced successfully.
 
 ## Skills
 
-Skills are detailed guidance documents loaded into the system prompt based on each agent's `skills` list. EDI ships with 6 skills, all installed to `~/.claude/skills/` by `edi init --global` or `edi sync`.
+Skills are detailed guidance documents loaded into the system prompt based on each agent's `skills` list. EDI ships with 7 skills, all installed to `~/.claude/skills/` by `edi init --global` or `edi sync`.
 
 | Skill | Agents | What it does |
 |-------|--------|-------------|
@@ -104,6 +104,7 @@ Skills are detailed guidance documents loaded into the system prompt based on ea
 | `testing` | Coder, Test Writer | Testing standards — table-driven tests, coverage, anti-patterns |
 | `scaffolding-tests` | Coder, Test Writer | Golden master / characterization tests for safe refactoring |
 | `refactoring-planning` | Architect | Structured methodology for planning and executing refactoring |
+| `plan-review` | Reviewer | Review plans for regression risk, complexity, and over-engineering before implementation |
 
 ### EDI Core
 
@@ -294,6 +295,37 @@ You: [Refactors handler, moves logic to UserService]
 EDI: [Runs scaffolding tests to verify behavior is preserved]
 ```
 
+### Plan Review
+
+Loaded by the reviewer agent. Provides a structured framework for reviewing architectural plans before implementation begins — catching regression risk, unnecessary complexity, and over-engineering at design time.
+
+**When to use:** After `/plan` produces a design and before `/build` starts implementation. Use `/review-plan` to trigger.
+
+**Workflow:**
+1. **Load RECALL context** — Query for past failures in affected areas, relevant ADRs, and known patterns
+2. **Assess regression risk** — Blast radius, past failures, test coverage gaps, rollback strategy
+3. **Assess complexity** — Flag new abstractions for single use cases, novel patterns when existing ones work, premature optimization
+4. **Detect over-engineering (YAGNI)** — Future-driven design, missing scope boundaries, high new-file ratio
+5. **Output structured verdict** — Approved, Approved with Conditions, or Revise
+
+**Example — plan review in the workflow:**
+```
+You: /plan
+EDI: Switched to architect mode.
+
+You: Design a caching layer for the API.
+EDI: [Produces architectural plan with approach, trade-offs, implementation steps]
+
+You: /review-plan
+EDI: Reviewing plan for regression risk, complexity, and over-engineering.
+     [RECALL: 3/5 results kept for "caching API"]
+     [Structured assessment with risk summary, complexity, YAGNI check]
+     Verdict: Approved with Conditions — add rollback strategy for cache invalidation.
+
+You: /build
+EDI: Switched to coder mode. [Implements with conditions addressed]
+```
+
 ## Ralph Loop
 
 Ralph is an autonomous execution mode for running well-defined coding tasks in a loop. Each iteration starts with a fresh context window — no accumulated cruft, full attention on one task.
@@ -419,6 +451,7 @@ Common issues and their causes:
 | `/review` | Switch to reviewer mode |
 | `/incident` | Switch to incident mode |
 | `/task` | Manage tasks with RECALL context |
+| `/review-plan` | Review a plan for regression risk and complexity |
 | `/ralph` | Guided PRD authoring for Ralph execution |
 | `/end` | End session and save history |
 

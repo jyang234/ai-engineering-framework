@@ -98,6 +98,7 @@ func initGlobal(force bool, backend string) error {
 		{"testing", assets.TestingSkill},
 		{"scaffolding-tests", assets.ScaffoldingTestsSkill},
 		{"refactoring-planning", assets.RefactoringPlanningSkill},
+		{"plan-review", assets.PlanReviewSkill},
 	}
 	for _, skill := range skills {
 		if err := installSkill(home, skill.name, skill.fs); err != nil {
@@ -187,7 +188,7 @@ func initGlobal(force bool, backend string) error {
 	fmt.Println("  ~/.edi/config.yaml     - Configuration")
 	fmt.Println("")
 	fmt.Println("Installed to Claude Code:")
-	fmt.Println("  ~/.claude/skills/           - EDI skills (6)")
+	fmt.Println("  ~/.claude/skills/           - EDI skills (7)")
 	fmt.Println("  ~/.claude/agents/           - EDI subagents (7)")
 	fmt.Println("")
 	fmt.Println("Next steps:")
