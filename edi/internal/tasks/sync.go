@@ -13,7 +13,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var manifestLock sync.RWMutex
+var manifestLock sync.Mutex
 
 // ManifestPath returns the path to the active tasks file for a project
 // Note: Renamed from manifest.yaml to active.yaml to clarify that only active tasks are stored
@@ -30,7 +30,9 @@ func legacyManifestPath(projectPath string) string {
 // Returns an empty manifest if the file doesn't exist
 // Handles migration from legacy manifest.yaml to active.yaml
 func LoadManifest(projectPath string) (*Manifest, error) {
-	manifestLock.RLock()
+	manifestLock.Lock()
+	defer manifestLock.Unlock()
+
 	path := ManifestPath(projectPath)
 
 	data, err := os.ReadFile(path)
@@ -42,25 +44,19 @@ func LoadManifest(projectPath string) (*Manifest, error) {
 			if legacyErr == nil {
 				var manifest Manifest
 				if err := yaml.Unmarshal(legacyData, &manifest); err != nil {
-					manifestLock.RUnlock()
 					return nil, fmt.Errorf("failed to parse legacy manifest: %w", err)
 				}
 				// Remove completed tasks during migration
 				manifest.RemoveCompletedTasks()
-				// Upgrade to write lock for save
-				manifestLock.RUnlock()
-				if saveErr := SaveManifest(projectPath, &manifest); saveErr == nil {
+				if saveErr := saveManifestLocked(projectPath, &manifest); saveErr == nil {
 					os.Remove(legacyPath)
 				}
 				return &manifest, nil
 			}
-			manifestLock.RUnlock()
 			return NewManifest(), nil
 		}
-		manifestLock.RUnlock()
 		return nil, fmt.Errorf("failed to read manifest: %w", err)
 	}
-	manifestLock.RUnlock()
 
 	var manifest Manifest
 	if err := yaml.Unmarshal(data, &manifest); err != nil {
@@ -74,7 +70,11 @@ func LoadManifest(projectPath string) (*Manifest, error) {
 func SaveManifest(projectPath string, manifest *Manifest) error {
 	manifestLock.Lock()
 	defer manifestLock.Unlock()
+	return saveManifestLocked(projectPath, manifest)
+}
 
+// saveManifestLocked writes the manifest to disk. Caller must hold manifestLock.
+func saveManifestLocked(projectPath string, manifest *Manifest) error {
 	path := ManifestPath(projectPath)
 
 	// Ensure directory exists

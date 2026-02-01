@@ -12,11 +12,15 @@ Transitioning to reviewer mode for code review.
 ## Actions
 
 1. Acknowledge the mode switch
-2. Query RECALL for known issues in the domain:
+2. Query RECALL for project decisions and constraints relevant to the code:
+   ```
+   recall_search({query: "[domain/key concepts being reviewed]", types: ["decision", "context"]})
+   ```
+3. Query RECALL for known failures and patterns:
    ```
    recall_search({query: "[domain/files being reviewed]", types: ["failure", "pattern"]})
    ```
-3. Log the agent switch:
+4. Log the agent switch:
    ```
    flight_recorder_log({
      type: "agent_switch",
