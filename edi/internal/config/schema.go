@@ -62,5 +62,6 @@ type TasksConfig struct {
 
 // ProjectConfig holds project-specific settings
 type ProjectConfig struct {
-	Name string `yaml:"name" mapstructure:"name"`
+	Name      string   `yaml:"name" mapstructure:"name"`
+	Languages []string `yaml:"languages" mapstructure:"languages"` // e.g., ["go", "python"]
 }

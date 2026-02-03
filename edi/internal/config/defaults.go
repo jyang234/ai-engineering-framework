@@ -127,12 +127,23 @@ tasks:
 
 // WriteProjectDefault writes the default project configuration to a file
 func WriteProjectDefault(path string) error {
+	return WriteProjectDefaultWithLanguages(path, nil)
+}
+
+// WriteProjectDefaultWithLanguages writes project config with detected languages
+func WriteProjectDefaultWithLanguages(path string, languages []string) error {
+	langLine := "  languages: []  # Auto-detect failed or no recognized languages"
+	if len(languages) > 0 {
+		langLine = "  languages: [" + joinQuoted(languages) + "]  # Auto-detected, edit if incorrect"
+	}
+
 	content := `# EDI Project Configuration
 version: "1"
 
 # Project information
 project:
   name: ""  # Auto-detected from directory name if empty
+` + langLine + `
 
 # Override global settings as needed
 # agent: coder
@@ -143,4 +154,16 @@ project:
 #   history_entries: 3
 `
 	return os.WriteFile(path, []byte(content), 0644)
+}
+
+// joinQuoted joins strings with quotes for YAML array format
+func joinQuoted(items []string) string {
+	if len(items) == 0 {
+		return ""
+	}
+	result := items[0]
+	for _, item := range items[1:] {
+		result += ", " + item
+	}
+	return result
 }

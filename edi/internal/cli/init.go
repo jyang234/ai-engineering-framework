@@ -99,6 +99,7 @@ func initGlobal(force bool, backend string) error {
 		{"scaffolding-tests", assets.ScaffoldingTestsSkill},
 		{"refactoring-planning", assets.RefactoringPlanningSkill},
 		{"plan-review", assets.PlanReviewSkill},
+		{"golang-idioms", assets.GolangIdiomsSkill},
 	}
 	for _, skill := range skills {
 		if err := installSkill(home, skill.name, skill.fs); err != nil {
@@ -188,7 +189,7 @@ func initGlobal(force bool, backend string) error {
 	fmt.Println("  ~/.edi/config.yaml     - Configuration")
 	fmt.Println("")
 	fmt.Println("Installed to Claude Code:")
-	fmt.Println("  ~/.claude/skills/           - EDI skills (7)")
+	fmt.Println("  ~/.claude/skills/           - EDI skills (8)")
 	fmt.Println("  ~/.claude/agents/           - EDI subagents (7)")
 	fmt.Println("")
 	fmt.Println("Next steps:")
@@ -215,6 +216,9 @@ func initProject(force bool, backend string) error {
 		return fmt.Errorf(".edi already exists (use --force to overwrite)")
 	}
 
+	// Detect project languages
+	detectedLangs := config.DetectLanguages(cwd)
+
 	// Create directory structure
 	dirs := []string{
 		ediDir,
@@ -229,9 +233,9 @@ func initProject(force bool, backend string) error {
 		}
 	}
 
-	// Create project config
+	// Create project config with detected languages
 	configPath := filepath.Join(ediDir, "config.yaml")
-	if err := config.WriteProjectDefault(configPath); err != nil {
+	if err := config.WriteProjectDefaultWithLanguages(configPath, detectedLangs); err != nil {
 		return fmt.Errorf("failed to write config: %w", err)
 	}
 
@@ -243,6 +247,11 @@ func initProject(force bool, backend string) error {
 
 	fmt.Println("Initialized EDI in current project")
 	fmt.Println("")
+	if len(detectedLangs) > 0 {
+		fmt.Printf("Detected languages: %v\n", detectedLangs)
+		fmt.Println("  (edit .edi/config.yaml to adjust)")
+		fmt.Println("")
+	}
 	fmt.Println("Created:")
 	fmt.Println("  .edi/config.yaml  - Project configuration")
 	fmt.Println("  .edi/profile.md   - Project description")

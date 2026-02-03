@@ -42,6 +42,22 @@ func BuildContext(cfg *config.Config, sessionID string, brief *briefing.Briefing
 		sb.WriteString("\n\n")
 	}
 
+	// Load and include filtered skills
+	if len(agent.Skills) > 0 {
+		filteredSkills := agents.FilterSkills(agent.Skills, cfg.Project.Languages)
+		for _, skillName := range filteredSkills {
+			skill, err := agents.LoadSkill(skillName)
+			if err != nil {
+				continue // Skip skills that can't be loaded
+			}
+			if skill.Content != "" {
+				sb.WriteString(fmt.Sprintf("## Skill: %s\n\n", skill.Name))
+				sb.WriteString(skill.Content)
+				sb.WriteString("\n\n")
+			}
+		}
+	}
+
 	// Include briefing
 	if brief != nil {
 		rendered := brief.Render(projectName)

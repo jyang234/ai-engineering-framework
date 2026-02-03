@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/anthropics/aef/edi/internal/agents"
+	"github.com/anthropics/aef/edi/internal/config"
 )
 
 var agentCmd = &cobra.Command{
@@ -83,9 +84,21 @@ func runAgentShow(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(agent.Skills) > 0 {
+		// Load config to get project languages for filtering
+		cfg, _ := config.Load()
+		filteredSkills := agents.FilterSkills(agent.Skills, cfg.Project.Languages)
+
 		fmt.Println("Skills:")
 		for _, skill := range agent.Skills {
-			fmt.Printf("  - %s\n", skill)
+			// Mark filtered-out skills
+			if !containsSkill(filteredSkills, skill) {
+				fmt.Printf("  - %s (filtered: not in project languages)\n", skill)
+			} else {
+				fmt.Printf("  - %s\n", skill)
+			}
+		}
+		if len(cfg.Project.Languages) > 0 {
+			fmt.Printf("\nProject languages: %v\n", cfg.Project.Languages)
 		}
 		fmt.Println()
 	}
@@ -109,4 +122,13 @@ func runAgentShow(cmd *cobra.Command, args []string) error {
 	fmt.Println(agent.SystemPrompt)
 
 	return nil
+}
+
+func containsSkill(skills []string, skill string) bool {
+	for _, s := range skills {
+		if s == skill {
+			return true
+		}
+	}
+	return false
 }
