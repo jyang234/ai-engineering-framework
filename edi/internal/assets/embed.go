@@ -29,6 +29,9 @@ var RefactoringPlanningSkill embed.FS
 //go:embed skills/plan-review/SKILL.md
 var PlanReviewSkill embed.FS
 
+//go:embed skills/golang-idioms/SKILL.md
+var GolangIdiomsSkill embed.FS
+
 //go:embed subagents/*.md
 var Subagents embed.FS
 
