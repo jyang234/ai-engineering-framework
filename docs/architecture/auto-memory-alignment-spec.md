@@ -1,9 +1,9 @@
 # Auto Memory Alignment Specification
 
-**Status**: Proposed
+**Status**: Implemented (Phases 1 + 3)
 **Created**: February 9, 2026
 **Author**: EDI Analysis
-**Version**: 0.1
+**Version**: 1.0
 
 ---
 
@@ -757,3 +757,26 @@ func DetermineMemoryMode(cfg *config.Config) MemoryMode {
 | Topic files for overflow | 200-line limit requires prioritization; depth goes to topic files |
 | User approval at /end | Maintains human curation principle from EDI's design philosophy |
 | Three operational modes | Backward compatibility with older Claude Code or disabled auto memory |
+
+---
+
+## Appendix C: Design Review Outcomes (February 9, 2026)
+
+The following decisions were made during design review, superseding initial proposals where noted:
+
+| # | Topic | Initial Proposal | Final Decision | Rationale |
+|---|---|---|---|---|
+| 1 | **MEMORY.md ownership** | EDI fully manages, Claude cannot write | EDI manages + "EDI Observations" section for Claude session notes | Gives Claude a voice (concurrence/dissent) without freestyle chaos; section is re-evaluated each session |
+| 2 | **Profile/status deduplication** | Move profile/status from context to MEMORY.md only | Keep both — no deduplication | Simpler, less risk; MEMORY.md is additive (promoted RECALL items + topic index) |
+| 3 | **Bloat prevention** | Promotion criteria only | Fixed slot budget (10/10/10) as primary mechanism | Predictable size cap; decay and consolidation deferred until needed |
+| 4 | **Implementation scope** | 4 phases | Phases 1 + 3 only (generation + /end capture) | Core read/write loop provides maximum learning signal; Phase 2 unnecessary per #2; Phase 4 is polish |
+| 5 | **Promotion at /end** | Apply scoring thresholds to all types | Decisions and failures always promoted (already human-approved); patterns need explicit user confirmation | Reduces friction for high-confidence items |
+
+### Deferred Items
+
+| Item | Deferred Until |
+|---|---|
+| Phase 2: Context deduplication | Reconsidered if token budget becomes a problem |
+| Phase 4: `edi memory` CLI, promotion tracking columns | After real usage validates the architecture |
+| Decay/eviction by time | After fixed slot budget proves insufficient |
+| LLM-based consolidation of related items | After fragmentation is observed in practice |

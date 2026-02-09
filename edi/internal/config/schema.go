@@ -22,6 +22,9 @@ type Config struct {
 	// Tasks configuration
 	Tasks TasksConfig `yaml:"tasks" mapstructure:"tasks"`
 
+	// Auto memory integration (Claude Code MEMORY.md)
+	Memory MemoryConfig `yaml:"memory" mapstructure:"memory"`
+
 	// Project-specific settings (only in project config)
 	Project ProjectConfig `yaml:"project" mapstructure:"project"`
 }
@@ -58,6 +61,13 @@ type TasksConfig struct {
 	LazyLoading        bool `yaml:"lazy_loading" mapstructure:"lazy_loading"`
 	CaptureOnComplete  bool `yaml:"capture_on_completion" mapstructure:"capture_on_completion"`
 	PropagateDecisions bool `yaml:"propagate_decisions" mapstructure:"propagate_decisions"`
+}
+
+// MemoryConfig configures Claude Code auto memory (MEMORY.md) integration
+type MemoryConfig struct {
+	Enabled        bool `yaml:"enabled" mapstructure:"enabled"`                 // Enable auto memory management
+	UpdateOnLaunch bool `yaml:"update_on_launch" mapstructure:"update_on_launch"` // Update MEMORY.md on session start
+	UpdateOnEnd    bool `yaml:"update_on_end" mapstructure:"update_on_end"`       // Update MEMORY.md on session end
 }
 
 // ProjectConfig holds project-specific settings

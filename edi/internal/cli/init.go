@@ -11,6 +11,7 @@ import (
 	"github.com/anthropics/aef/edi/internal/assets"
 	"github.com/anthropics/aef/edi/internal/codex"
 	"github.com/anthropics/aef/edi/internal/config"
+	"github.com/anthropics/aef/edi/internal/memory"
 )
 
 var initCmd = &cobra.Command{
@@ -239,6 +240,13 @@ func initProject(force bool, backend string) error {
 	profilePath := filepath.Join(ediDir, "profile.md")
 	if err := writeProfileTemplate(profilePath); err != nil {
 		return fmt.Errorf("failed to write profile: %w", err)
+	}
+
+	// Seed auto memory (MEMORY.md) from project profile
+	if memPath, err := memory.SeedFromProfile(cwd); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to seed auto memory: %v\n", err)
+	} else if memPath != "" {
+		fmt.Printf("Seeded auto memory at %s\n\n", memPath)
 	}
 
 	fmt.Println("Initialized EDI in current project")

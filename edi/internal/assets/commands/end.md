@@ -64,7 +64,33 @@ Generate a session summary and save it to history.
    })
    ```
 
-6. **Update** `.edi/status.md` with current project status:
+6. **Update MEMORY.md** with session insights:
+
+   Read the current auto memory file at `~/.claude/projects/<project>/memory/MEMORY.md`.
+   Update it with newly captured items from this session:
+
+   - **Decisions and failures** captured in step 5 are always promoted to MEMORY.md
+   - **Patterns** are promoted if the user confirms them as broadly useful
+   - Update the "Current State" section from the new `.edi/status.md` (step 7)
+   - Each type section has a **slot budget** of 10 items maximum:
+     - If a section is full, replace the oldest or least-referenced item
+     - Keep entries as one-line summaries: `- **Title**: brief description`
+   - Ensure total MEMORY.md stays under 195 lines
+
+   Present changes to user:
+   ```
+   MEMORY.md updates:
+   + Added pattern: "Exponential backoff with jitter for retries"
+   + Added failure: "Race condition in token refresh"
+   ~ Updated: Current State section
+   - Removed: [oldest item pushed out by slot budget]
+
+   Apply? [Y]es / [E]dit / [S]kip
+   ```
+
+   Write the updated MEMORY.md only after user approval.
+
+7. **Update** `.edi/status.md` with current project status:
    - Read the existing `.edi/status.md` (if any)
    - Update it based on what was accomplished this session and what's next
    - Include a `Last updated: {current date}` line at the top
@@ -82,7 +108,7 @@ Generate a session summary and save it to history.
    - [What comes next]
    ```
 
-7. **Write** session history to `.edi/history/{date}-{session-id}.md`:
+8. **Write** session history to `.edi/history/{date}-{session-id}.md`:
    ```markdown
    ---
    session_id: [full session ID from context]
@@ -105,8 +131,9 @@ Generate a session summary and save it to history.
    - [work remaining, blockers]
    ```
 
-8. **Confirm** session ended:
+9. **Confirm** session ended:
    ```
    Session saved to .edi/history/2026-01-25-abc12345.md
    Captured 2 items to RECALL.
+   Updated MEMORY.md with 2 new entries.
    ```

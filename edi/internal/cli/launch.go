@@ -10,6 +10,7 @@ import (
 	"github.com/anthropics/aef/edi/internal/briefing"
 	"github.com/anthropics/aef/edi/internal/config"
 	"github.com/anthropics/aef/edi/internal/launch"
+	"github.com/anthropics/aef/edi/internal/memory"
 	"github.com/anthropics/aef/edi/internal/tasks"
 )
 
@@ -76,6 +77,17 @@ func runLaunch(cmd *cobra.Command, args []string) error {
 			if verbose {
 				fmt.Fprintf(os.Stderr, "Warning: failed to write briefing file: %v\n", err)
 			}
+		}
+	}
+
+	// Update auto memory (MEMORY.md) with promoted RECALL items
+	if cfg.Memory.Enabled && cfg.Memory.UpdateOnLaunch {
+		if memPath, err := memory.WriteMemoryFile(cfg, cwd); err != nil {
+			if verbose {
+				fmt.Fprintf(os.Stderr, "Warning: failed to update MEMORY.md: %v\n", err)
+			}
+		} else if verbose {
+			fmt.Printf("Auto memory: %s\n", memPath)
 		}
 	}
 

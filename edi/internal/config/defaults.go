@@ -29,6 +29,11 @@ func DefaultConfig() *Config {
 			CaptureOnComplete:  true,
 			PropagateDecisions: true,
 		},
+		Memory: MemoryConfig{
+			Enabled:        true,
+			UpdateOnLaunch: true,
+			UpdateOnEnd:    true,
+		},
 	}
 }
 
@@ -69,6 +74,12 @@ tasks:
   lazy_loading: true
   capture_on_completion: true
   propagate_decisions: true
+
+# Auto memory (Claude Code MEMORY.md integration)
+memory:
+  enabled: true           # Manage MEMORY.md for Claude Code auto memory
+  update_on_launch: true  # Sync MEMORY.md with RECALL on session start
+  update_on_end: true     # Update MEMORY.md with captures at session end
 `
 	return os.WriteFile(path, []byte(content), 0644)
 }
@@ -121,6 +132,12 @@ tasks:
   lazy_loading: true
   capture_on_completion: true
   propagate_decisions: true
+
+# Auto memory (Claude Code MEMORY.md integration)
+memory:
+  enabled: true           # Manage MEMORY.md for Claude Code auto memory
+  update_on_launch: true  # Sync MEMORY.md with RECALL on session start
+  update_on_end: true     # Update MEMORY.md with captures at session end
 `
 	return os.WriteFile(path, []byte(content), 0644)
 }
