@@ -1,9 +1,10 @@
 # Auto Memory Alignment Specification
 
-**Status**: Implemented (Phases 1 + 3)
+**Status**: Implemented (Phases 1 + 3) — Revised to merge-based co-ownership model
 **Created**: February 9, 2026
+**Revised**: February 19, 2026
 **Author**: EDI Analysis
-**Version**: 1.0
+**Version**: 1.1
 
 ---
 
@@ -178,7 +179,8 @@ The best architecture uses MEMORY.md as a **curated index** pointing to RECALL's
 │  - Key Decisions (promoted from RECALL decisions)         │
 │  - Topic Index (links to memory/*.md files)               │
 │                                                           │
-│  Updated by: EDI at session start + session end           │
+│  Updated by: EDI (merge) at session start + session end   │
+│  Co-owned: Claude auto-writes preserved across merges     │
 └───────────┬───────────────────────────────────────────────┘
             │ sync/promote
 ┌───────────▼───────────────────────────────────────────────┐
@@ -212,11 +214,12 @@ The best architecture uses MEMORY.md as a **curated index** pointing to RECALL's
 
 ### 4.2 Design Principles
 
-1. **MEMORY.md is EDI-managed** — EDI generates and updates MEMORY.md content; Claude should not freestyle-write to it outside of EDI's capture workflow
+1. **MEMORY.md is co-managed** — EDI manages structured sections (project context, promoted RECALL items); Claude can freely write to other sections (EDI Observations, auto-saved memories). EDI uses merge-based updates that preserve non-EDI content.
 2. **Deduplication over duplication** — Move profile and status content from EDI's system prompt to MEMORY.md; don't have both
 3. **Promote, don't copy** — RECALL items are promoted to MEMORY.md when they prove high-value (high usefulness score, frequently retrieved)
 4. **Topic files for depth** — Use `memory/*.md` topic files for detailed knowledge that doesn't fit in 200-line MEMORY.md
 5. **Backward compatible** — EDI should work with or without auto memory; degrade gracefully
+6. **Never overwrite** — EDI reads existing MEMORY.md before writing, parses sections, and preserves anything it doesn't manage. This prevents destroying Claude's auto-saved memories.
 
 ### 4.3 What Changes
 
@@ -224,7 +227,7 @@ The best architecture uses MEMORY.md as a **curated index** pointing to RECALL's
 |---|---|---|
 | **Briefing generator** | Renders profile+status+history into context | Writes profile+status to MEMORY.md; renders only agent+tasks+RECALL instructions into context |
 | **`/end` command** | Captures to RECALL only | Also updates MEMORY.md with promoted insights |
-| **MEMORY.md** | Not managed by EDI | Generated and maintained by EDI |
+| **MEMORY.md** | Not managed by EDI | Co-managed: EDI owns structured sections via merge; Claude's auto-writes preserved |
 | **Context file** | Contains everything | Contains only session-specific content (agent, tasks, RECALL, commands) |
 | **RECALL items** | No promotion tracking | New `promoted_to_memory` field |
 | **`edi init`** | Creates `.edi/` structure | Also seeds initial MEMORY.md from profile |
@@ -751,7 +754,7 @@ func DetermineMemoryMode(cfg *config.Config) MemoryMode {
 
 | Decision | Rationale |
 |---|---|
-| EDI manages MEMORY.md (not Claude freestyle) | Ensures consistency, structured content, line budget compliance |
+| EDI co-manages MEMORY.md via merge (not overwrite) | Preserves Claude's auto-saved memories while maintaining structured EDI sections |
 | Profile/status move to MEMORY.md | Eliminates token duplication between context file and auto memory |
 | Conservative promotion criteria | Prevents noise; only proven-useful items enter MEMORY.md |
 | Topic files for overflow | 200-line limit requires prioritization; depth goes to topic files |
@@ -780,3 +783,55 @@ The following decisions were made during design review, superseding initial prop
 | Phase 4: `edi memory` CLI, promotion tracking columns | After real usage validates the architecture |
 | Decay/eviction by time | After fixed slot budget proves insufficient |
 | LLM-based consolidation of related items | After fragmentation is observed in practice |
+
+---
+
+## Appendix D: Merge-Based Pivot (February 19, 2026)
+
+### Problem Discovered
+
+Research into Claude Code's auto memory feature revealed a critical conflict with the original design:
+
+1. **Claude Code writes to MEMORY.md automatically** during sessions — saving patterns, debugging insights, and decisions without being prompted
+2. **Original design had EDI overwrite MEMORY.md** on every launch with freshly generated content
+3. **Result**: EDI would destroy Claude's auto-saved memories on each session start
+
+### Solution: Merge-Based Co-Ownership
+
+Instead of overwriting, EDI now uses a **section-aware merge** approach:
+
+| Section Type | Owner | On Launch |
+|---|---|---|
+| Project Quick Reference | EDI | Regenerated from `.edi/profile.md` |
+| Current State | EDI | Regenerated from `.edi/status.md` |
+| Key Patterns | EDI | Regenerated from RECALL promotions |
+| Known Pitfalls | EDI | Regenerated from RECALL promotions |
+| Key Decisions | EDI | Regenerated from RECALL promotions |
+| Topic Index | EDI | Regenerated from memory dir listing |
+| EDI Observations | Claude | **Preserved** across launches |
+| Any other sections | Claude/User | **Preserved** across launches |
+
+### Implementation
+
+The merge works by:
+1. Parsing existing MEMORY.md into sections (by `##` headers)
+2. Identifying which sections are EDI-managed vs. preserved
+3. Generating fresh EDI content
+4. Appending preserved sections after EDI content
+5. Enforcing the 195-line budget on the merged result
+
+Key functions in `edi/internal/memory/generator.go`:
+- `parseMemorySections()` — splits content by `##` headers
+- `extractPreservedSections()` — filters to non-EDI sections
+- `mergeWithExisting()` — combines EDI + preserved content
+- `WriteMemoryFile()` — orchestrates read→generate→merge→write
+
+### Design Decisions
+
+| Decision | Rationale |
+|---|---|
+| Section-based parsing (not line-based) | Robust to content changes within sections |
+| EDI sections identified by heading name | Simple, no markers needed; heading names are stable |
+| Preserved sections appended after EDI sections | EDI controls top-of-file structure; Claude's additions go at bottom |
+| EDI Observations always present | Placeholder added if not found in existing content |
+| Line budget applied after merge | Ensures final output respects 200-line system prompt limit |

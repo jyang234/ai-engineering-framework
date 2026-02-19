@@ -67,14 +67,19 @@ Generate a session summary and save it to history.
 6. **Update MEMORY.md** with session insights:
 
    Read the current auto memory file at `~/.claude/projects/<project>/memory/MEMORY.md`.
-   Update it with newly captured items from this session:
 
-   - **Decisions and failures** captured in step 5 are always promoted to MEMORY.md
+   **Important**: MEMORY.md has two types of sections:
+   - **EDI-managed sections** (regenerated on launch): Project Quick Reference, Current State, Key Patterns, Known Pitfalls, Key Decisions, Topic Index
+   - **Preserved sections** (survive across launches): EDI Observations, and any sections Claude or the user added
+
+   Update rules:
+   - **Decisions and failures** captured in step 5 are always promoted — add to Key Patterns, Known Pitfalls, or Key Decisions sections
    - **Patterns** are promoted if the user confirms them as broadly useful
-   - Update the "Current State" section from the new `.edi/status.md` (step 7)
-   - Each type section has a **slot budget** of 10 items maximum:
+   - Each EDI-managed type section has a **slot budget** of 10 items maximum:
      - If a section is full, replace the oldest or least-referenced item
      - Keep entries as one-line summaries: `- **Title**: brief description`
+   - **Preserve all non-EDI sections** — do not remove sections that Claude auto-saved or that the user wrote manually
+   - Update the "EDI Observations" section: clear stale observations from prior sessions, keep any that are still relevant
    - Ensure total MEMORY.md stays under 195 lines
 
    Present changes to user:
@@ -82,8 +87,8 @@ Generate a session summary and save it to history.
    MEMORY.md updates:
    + Added pattern: "Exponential backoff with jitter for retries"
    + Added failure: "Race condition in token refresh"
-   ~ Updated: Current State section
-   - Removed: [oldest item pushed out by slot budget]
+   ~ Updated: EDI Observations (cleared 2 stale, kept 1)
+   = Preserved: 2 Claude auto-saved sections unchanged
 
    Apply? [Y]es / [E]dit / [S]kip
    ```

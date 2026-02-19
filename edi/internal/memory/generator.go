@@ -22,6 +22,18 @@ const (
 // Claude Code truncates lines after 200 in the system prompt.
 const MaxMemoryLines = 195
 
+// ediManagedHeadings lists section headings that EDI generates and manages.
+// Sections with these headings are replaced on each generation.
+// All other sections (e.g., Claude's auto-written memories) are preserved.
+var ediManagedHeadings = map[string]bool{
+	"Project Quick Reference": true,
+	"Current State":           true,
+	"Key Patterns":            true,
+	"Known Pitfalls":          true,
+	"Key Decisions":           true,
+	"Topic Index":             true,
+}
+
 // PromotionCriteria defines what makes a RECALL item eligible for MEMORY.md.
 type PromotionCriteria struct {
 	MinUsefulnessScore float64
@@ -38,9 +50,10 @@ func DefaultPromotionCriteria() PromotionCriteria {
 	}
 }
 
-// Generate creates MEMORY.md content from project context and RECALL items.
+// Generate creates the EDI-managed portion of MEMORY.md content.
 // It assembles: project quick reference, current state, promoted RECALL items,
-// and a topic index.
+// and a topic index. It does NOT include sections that Claude manages
+// (like EDI Observations or user-added sections).
 func Generate(cfg *config.Config, projectPath string) (string, error) {
 	var sb strings.Builder
 
@@ -84,33 +97,36 @@ func Generate(cfg *config.Config, projectPath string) (string, error) {
 		}
 	}
 
-	// Section 7: EDI Observations (reserved section for Claude to add notes)
-	sb.WriteString("## EDI Observations\n")
-	sb.WriteString("<!-- EDI may add concurrence/dissent notes here during sessions -->\n")
-	sb.WriteString("<!-- This section is re-evaluated each session -->\n\n")
-
-	result := sb.String()
-
-	// Enforce line budget
-	result = enforceLineBudget(result, MaxMemoryLines)
-
-	return result, nil
+	return sb.String(), nil
 }
 
-// WriteMemoryFile generates and writes MEMORY.md to the auto memory directory.
-// Returns the path written, or empty string if auto memory is not available.
+// WriteMemoryFile generates EDI content and merges it with existing MEMORY.md,
+// preserving any sections that Claude or the user wrote (like EDI Observations
+// and auto-saved memories). Returns the path written.
 func WriteMemoryFile(cfg *config.Config, projectPath string) (string, error) {
 	memPath := MemoryFilePath(projectPath)
 	if memPath == "" {
 		return "", fmt.Errorf("could not resolve auto memory directory for %s", projectPath)
 	}
 
-	content, err := Generate(cfg, projectPath)
+	ediContent, err := Generate(cfg, projectPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate memory content: %w", err)
 	}
 
-	if err := os.WriteFile(memPath, []byte(content), 0644); err != nil {
+	// Read existing MEMORY.md to preserve non-EDI sections
+	var result string
+	if existing, err := os.ReadFile(memPath); err == nil && len(existing) > 0 {
+		result = mergeWithExisting(ediContent, string(existing))
+	} else {
+		// First generation — add EDI Observations placeholder
+		result = ediContent + ediObservationsPlaceholder()
+	}
+
+	// Enforce line budget on the final merged content
+	result = enforceLineBudget(result, MaxMemoryLines)
+
+	if err := os.WriteFile(memPath, []byte(result), 0644); err != nil {
 		return "", fmt.Errorf("failed to write MEMORY.md: %w", err)
 	}
 
@@ -148,14 +164,110 @@ func SeedFromProfile(projectPath string) (string, error) {
 	sb.WriteString("## Key Decisions\n")
 	sb.WriteString("<!-- Populated from RECALL as decisions are captured -->\n\n")
 
-	sb.WriteString("## EDI Observations\n")
-	sb.WriteString("<!-- EDI may add concurrence/dissent notes here during sessions -->\n\n")
+	sb.WriteString(ediObservationsPlaceholder())
 
 	if err := os.WriteFile(memPath, []byte(sb.String()), 0644); err != nil {
 		return "", fmt.Errorf("failed to write initial MEMORY.md: %w", err)
 	}
 
 	return memPath, nil
+}
+
+// --- merge logic ---
+
+// memorySection represents a parsed section of MEMORY.md.
+type memorySection struct {
+	heading string // The ## heading text (without "## " prefix)
+	body    string // Everything after the heading line until next ## or EOF
+}
+
+// mergeWithExisting combines EDI-generated content with preserved sections
+// from the existing MEMORY.md. EDI-managed sections (Project Quick Reference,
+// Current State, Key Patterns, Known Pitfalls, Key Decisions, Topic Index)
+// are replaced with freshly generated content. All other sections — including
+// Claude's auto-written memories and EDI Observations — are preserved.
+func mergeWithExisting(ediContent, existing string) string {
+	preserved := extractPreservedSections(existing)
+
+	var sb strings.Builder
+	sb.WriteString(strings.TrimRight(ediContent, "\n"))
+	sb.WriteString("\n")
+
+	hasObservations := false
+	for _, section := range preserved {
+		sb.WriteString("\n")
+		sb.WriteString(fmt.Sprintf("## %s\n", section.heading))
+		sb.WriteString(section.body)
+		if !strings.HasSuffix(section.body, "\n") {
+			sb.WriteString("\n")
+		}
+		if section.heading == "EDI Observations" {
+			hasObservations = true
+		}
+	}
+
+	// Ensure EDI Observations section always exists
+	if !hasObservations {
+		sb.WriteString("\n")
+		sb.WriteString(ediObservationsPlaceholder())
+	}
+
+	return sb.String()
+}
+
+// extractPreservedSections returns sections from existing MEMORY.md that
+// are NOT EDI-managed — these are preserved across regenerations.
+func extractPreservedSections(content string) []memorySection {
+	sections := parseMemorySections(content)
+	var preserved []memorySection
+	for _, s := range sections {
+		if !ediManagedHeadings[s.heading] {
+			preserved = append(preserved, s)
+		}
+	}
+	return preserved
+}
+
+// parseMemorySections splits MEMORY.md content into sections by ## headers.
+// Content before the first ## header (typically the "# Project Memory" line)
+// is not included in the returned sections.
+func parseMemorySections(content string) []memorySection {
+	var sections []memorySection
+	lines := strings.Split(content, "\n")
+
+	var current *memorySection
+	var bodyLines []string
+
+	for _, line := range lines {
+		if strings.HasPrefix(line, "## ") {
+			// Save previous section
+			if current != nil {
+				current.body = strings.Join(bodyLines, "\n")
+				sections = append(sections, *current)
+			}
+			heading := strings.TrimPrefix(line, "## ")
+			current = &memorySection{heading: heading}
+			bodyLines = nil
+		} else if current != nil {
+			bodyLines = append(bodyLines, line)
+		}
+		// Lines before the first ## are the file header — ignored
+	}
+
+	// Save last section
+	if current != nil {
+		current.body = strings.Join(bodyLines, "\n")
+		sections = append(sections, *current)
+	}
+
+	return sections
+}
+
+// ediObservationsPlaceholder returns the default EDI Observations section.
+func ediObservationsPlaceholder() string {
+	return "## EDI Observations\n" +
+		"<!-- EDI may add concurrence/dissent notes here during sessions -->\n" +
+		"<!-- This section is re-evaluated each session -->\n\n"
 }
 
 // --- internal helpers ---

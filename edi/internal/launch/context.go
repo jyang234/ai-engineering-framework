@@ -73,8 +73,9 @@ func BuildContext(cfg *config.Config, sessionID string, brief *briefing.Briefing
 		sb.WriteString("3. Show summary to user: \"RECALL: X/Y results kept for [query]\"\n\n")
 
 		if cfg.Memory.Enabled {
-			sb.WriteString("**Auto Memory**: MEMORY.md contains promoted RECALL items (key patterns, pitfalls, decisions). ")
-			sb.WriteString("These are always available in your system prompt. For deeper or broader searches, use recall_search.\n\n")
+			sb.WriteString("**Auto Memory**: MEMORY.md is co-managed by EDI and Claude. EDI maintains structured sections ")
+			sb.WriteString("(project context, promoted RECALL items). You may write to the EDI Observations section or create ")
+			sb.WriteString("new sections — these are preserved across EDI regenerations. For deeper searches, use recall_search.\n\n")
 		}
 	}
 

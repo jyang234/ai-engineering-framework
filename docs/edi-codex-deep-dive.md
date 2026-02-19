@@ -540,10 +540,11 @@ Claude Code ships with **auto memory** — a built-in feature that persists a `M
 │  - Known Pitfalls (promoted from RECALL failures)         │
 │  - Key Decisions (promoted from RECALL decisions)         │
 │  - Topic Index (links to memory/*.md files)               │
-│  - EDI Observations (session notes, re-evaluated each     │
-│    session)                                               │
+│  - EDI Observations (Claude's session notes — preserved)  │
+│  - Claude auto-saved sections (preserved)                 │
 │                                                           │
-│  Updated by: EDI at session start + session end           │
+│  Updated by: EDI merge at session start + session end     │
+│  Claude auto-writes to non-EDI sections are preserved     │
 └───────────┬───────────────────────────────────────────────┘
             │ additive (no deduplication with L2)
 ┌───────────▼───────────────────────────────────────────────┐
@@ -577,11 +578,12 @@ Claude Code ships with **auto memory** — a built-in feature that persists a `M
 
 | Decision | Rationale |
 |----------|-----------|
-| **EDI owns MEMORY.md** | Ensures structured content, line budget compliance, and no conflicts. Claude may only write to the "EDI Observations" section during sessions. |
+| **Co-ownership via merge** | EDI manages structured sections; Claude's auto-written memories and user additions are preserved. Merge-based updates prevent data loss. |
 | **No deduplication** — profile and status remain in both L1 and L2 | Simpler fallback if auto memory is unavailable; no risk of context loss. MEMORY.md is additive (promoted RECALL items + topic index). |
 | **Fixed slot budget** (10 patterns, 10 failures, 10 decisions) | Caps MEMORY.md growth. New items push out lowest-scored old items — effectively an LRU cache with type partitions. |
 | **195-line hard limit** | Claude Code truncates after 200 lines in the system prompt. The 5-line buffer prevents edge cases. |
 | **Decisions and failures always promoted at /end** | These are already human-approved via the capture workflow. Patterns are promoted only with explicit confirmation. |
+| **Section-based parsing** | MEMORY.md is split by `##` headings. EDI-managed headings are a known set; everything else is preserved. |
 
 ### Configuration
 
@@ -606,9 +608,12 @@ When `edi` launches with `memory.enabled: true` and `memory.update_on_launch: tr
    - Usefulness score >= 2.0
    - Retrieved >= 3 times
    - Created within last 90 days
-3. Generate MEMORY.md with sections: Quick Reference, Current State, Key Patterns, Known Pitfalls, Key Decisions, Topic Index, EDI Observations
-4. Enforce 195-line budget (truncate if needed)
-5. Write to auto memory directory
+3. Generate EDI-managed sections: Quick Reference, Current State, Key Patterns, Known Pitfalls, Key Decisions, Topic Index
+4. Read existing MEMORY.md (if present)
+5. **Merge**: Replace EDI-managed sections with fresh content; preserve all other sections (EDI Observations, Claude auto-saved content, user additions)
+6. If no existing MEMORY.md, add EDI Observations placeholder
+7. Enforce 195-line budget on merged result
+8. Write to auto memory directory
 
 ### Session End Flow (`/end`)
 
@@ -616,10 +621,11 @@ Step 6 of `/end` (inserted between RECALL capture and status update):
 
 1. Read current MEMORY.md
 2. Identify which newly captured RECALL items qualify for promotion
-3. Add promoted items to the appropriate section, respecting slot budget
+3. Add promoted items to the appropriate EDI-managed section, respecting slot budget
 4. Update "Current State" from the new `.edi/status.md`
-5. Present diff to user for approval
-6. Write updated MEMORY.md
+5. Preserve all non-EDI sections; clean stale EDI Observations
+6. Present diff to user for approval
+7. Write updated MEMORY.md
 
 ### Promotion Criteria
 
@@ -649,7 +655,7 @@ EDI works in three modes:
 
 | Mode | Condition | Behavior |
 |------|-----------|----------|
-| **Full auto memory** | `memory.enabled: true` + auto memory directory exists | EDI manages MEMORY.md |
+| **Full auto memory** | `memory.enabled: true` + auto memory directory exists | EDI co-manages MEMORY.md via merge |
 | **EDI only** | `memory.enabled: false` or auto memory directory missing | Current behavior unchanged |
 | **Graceful degradation** | RECALL unavailable but auto memory exists | Profile/status written to MEMORY.md, no promoted items |
 
