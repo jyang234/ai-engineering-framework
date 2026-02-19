@@ -524,7 +524,14 @@ Commits are non-fatal — if `git commit` fails (no changes, not a repo), the lo
 
 **Key files:** `edi/internal/memory/generator.go`, `edi/internal/memory/detect.go`, `edi/internal/assets/commands/end.md`, `edi/internal/assets/skills/edi-core/SKILL.md`
 
-Claude Code ships with **auto memory** — a built-in feature that persists a `MEMORY.md` file at `~/.claude/projects/<sanitized-project-path>/memory/` and automatically loads it into the system prompt at the start of every session. EDI integrates with this feature to create a layered memory architecture.
+Claude Code ships with **auto memory** — a built-in feature that persists a `MEMORY.md` file at `~/.claude/projects/<sanitized-git-root>/memory/` and loads the first 200 lines into the system prompt at session start. Claude **autonomously** writes memories during sessions (users see "Wrote X memories" in terminal). There is no formal API — external tools read/write the files directly. EDI integrates with this feature to create a layered memory architecture.
+
+**Why EDI adds value** over vanilla auto memory:
+- **Quality control** — RECALL items are scored by usefulness; only proven items promoted
+- **Bloat prevention** — Fixed slot budgets (10/10/10) vs auto memory's unbounded accumulation
+- **Structure** — Predictable sections vs freeform notes
+- **Depth** — RECALL goes beyond the 200-line limit via on-demand MCP search
+- **Freshness** — Profile and status synced from `.edi/` files each launch
 
 ### Layered Memory Architecture
 
@@ -597,7 +604,7 @@ memory:
 
 ### Memory Directory Detection
 
-Claude Code stores auto memory at `~/.claude/projects/-<sanitized-path>/memory/` where the absolute project path has `/` replaced with `-`. The `memory.DetectAutoMemoryDir()` function resolves this path and returns empty string if the directory does not exist.
+Claude Code stores auto memory at `~/.claude/projects/-<sanitized-git-root>/memory/` where the **git repository root** (not cwd) has `/` replaced with `-`. The `memory.DetectAutoMemoryDir()` function resolves the git root via `git rev-parse --show-toplevel`, sanitizes it, and returns the memory directory path. Falls back to the provided path if not inside a git repo.
 
 ### Session Start Flow
 

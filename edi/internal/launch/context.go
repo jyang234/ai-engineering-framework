@@ -74,8 +74,8 @@ func BuildContext(cfg *config.Config, sessionID string, brief *briefing.Briefing
 
 		if cfg.Memory.Enabled {
 			sb.WriteString("**Auto Memory**: MEMORY.md is co-managed by EDI and Claude. EDI maintains structured sections ")
-			sb.WriteString("(project context, promoted RECALL items). You may write to the EDI Observations section or create ")
-			sb.WriteString("new sections — these are preserved across EDI regenerations. For deeper searches, use recall_search.\n\n")
+			sb.WriteString("(project context, promoted RECALL items) and regenerates them on launch. Your autonomous memory ")
+			sb.WriteString("writes and any non-EDI sections are preserved across launches. For deeper searches, use recall_search.\n\n")
 		}
 	}
 

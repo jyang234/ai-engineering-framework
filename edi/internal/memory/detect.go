@@ -2,6 +2,7 @@ package memory
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -11,16 +12,18 @@ import (
 //
 // Claude Code stores auto memory at:
 //
-//	~/.claude/projects/-<sanitized-cwd>/memory/
+//	~/.claude/projects/-<sanitized-git-root>/memory/
 //
-// where the cwd path has "/" replaced with "-" and leading slash becomes "-".
+// The project path is the git repository root (not necessarily cwd).
+// The path has "/" replaced with "-" to form the directory name.
 func DetectAutoMemoryDir(projectPath string) string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
 	}
 
-	sanitized := sanitizePath(projectPath)
+	root := gitRoot(projectPath)
+	sanitized := sanitizePath(root)
 	memDir := filepath.Join(home, ".claude", "projects", sanitized, "memory")
 
 	if _, err := os.Stat(memDir); os.IsNotExist(err) {
@@ -37,7 +40,8 @@ func EnsureAutoMemoryDir(projectPath string) string {
 		return ""
 	}
 
-	sanitized := sanitizePath(projectPath)
+	root := gitRoot(projectPath)
+	sanitized := sanitizePath(root)
 	memDir := filepath.Join(home, ".claude", "projects", sanitized, "memory")
 
 	if err := os.MkdirAll(memDir, 0755); err != nil {
@@ -54,6 +58,17 @@ func MemoryFilePath(projectPath string) string {
 		return ""
 	}
 	return filepath.Join(dir, "MEMORY.md")
+}
+
+// gitRoot returns the git repository root for the given path.
+// Falls back to the path itself if not inside a git repo.
+func gitRoot(path string) string {
+	cmd := exec.Command("git", "-C", path, "rev-parse", "--show-toplevel")
+	out, err := cmd.Output()
+	if err != nil {
+		return path // Not a git repo — use path as-is
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // sanitizePath converts an absolute path to the format Claude Code uses

@@ -181,17 +181,40 @@ type memorySection struct {
 	body    string // Everything after the heading line until next ## or EOF
 }
 
+// parsedMemory holds the result of parsing a MEMORY.md file.
+type parsedMemory struct {
+	preamble string          // Content before the first ## header (e.g., "# Project Memory\n\nSome notes")
+	sections []memorySection // Sections identified by ## headers
+}
+
 // mergeWithExisting combines EDI-generated content with preserved sections
 // from the existing MEMORY.md. EDI-managed sections (Project Quick Reference,
 // Current State, Key Patterns, Known Pitfalls, Key Decisions, Topic Index)
 // are replaced with freshly generated content. All other sections — including
-// Claude's auto-written memories and EDI Observations — are preserved.
+// Claude's memories and EDI Observations — are preserved.
+//
+// Preamble content from the existing file (freeform text between the # header
+// and the first ## section) is also preserved, since Claude may write there.
 func mergeWithExisting(ediContent, existing string) string {
-	preserved := extractPreservedSections(existing)
+	parsed := parseMemory(existing)
+	preserved := filterPreservedSections(parsed.sections)
+
+	// Check if existing preamble has content beyond just the "# Project Memory" header.
+	// If Claude added freeform notes before the first ## section, preserve them.
+	preambleExtra := extractPreambleContent(parsed.preamble)
 
 	var sb strings.Builder
 	sb.WriteString(strings.TrimRight(ediContent, "\n"))
 	sb.WriteString("\n")
+
+	// Insert preserved preamble content (Claude's freeform notes) after EDI header
+	if preambleExtra != "" {
+		sb.WriteString("\n")
+		sb.WriteString(preambleExtra)
+		if !strings.HasSuffix(preambleExtra, "\n") {
+			sb.WriteString("\n")
+		}
+	}
 
 	hasObservations := false
 	for _, section := range preserved {
@@ -215,10 +238,8 @@ func mergeWithExisting(ediContent, existing string) string {
 	return sb.String()
 }
 
-// extractPreservedSections returns sections from existing MEMORY.md that
-// are NOT EDI-managed — these are preserved across regenerations.
-func extractPreservedSections(content string) []memorySection {
-	sections := parseMemorySections(content)
+// filterPreservedSections returns sections that are NOT EDI-managed.
+func filterPreservedSections(sections []memorySection) []memorySection {
 	var preserved []memorySection
 	for _, s := range sections {
 		if !ediManagedHeadings[s.heading] {
@@ -228,39 +249,67 @@ func extractPreservedSections(content string) []memorySection {
 	return preserved
 }
 
-// parseMemorySections splits MEMORY.md content into sections by ## headers.
-// Content before the first ## header (typically the "# Project Memory" line)
-// is not included in the returned sections.
-func parseMemorySections(content string) []memorySection {
+// parseMemory splits MEMORY.md content into a preamble and sections.
+// The preamble is everything before the first ## header.
+// Sections are identified by ## headers.
+func parseMemory(content string) parsedMemory {
+	var result parsedMemory
 	var sections []memorySection
 	lines := strings.Split(content, "\n")
 
 	var current *memorySection
 	var bodyLines []string
+	var preambleLines []string
 
 	for _, line := range lines {
 		if strings.HasPrefix(line, "## ") {
-			// Save previous section
+			// Save previous section or preamble
 			if current != nil {
 				current.body = strings.Join(bodyLines, "\n")
 				sections = append(sections, *current)
+			} else {
+				result.preamble = strings.Join(preambleLines, "\n")
 			}
 			heading := strings.TrimPrefix(line, "## ")
 			current = &memorySection{heading: heading}
 			bodyLines = nil
 		} else if current != nil {
 			bodyLines = append(bodyLines, line)
+		} else {
+			preambleLines = append(preambleLines, line)
 		}
-		// Lines before the first ## are the file header — ignored
 	}
 
-	// Save last section
+	// Save last section or preamble (if no sections at all)
 	if current != nil {
 		current.body = strings.Join(bodyLines, "\n")
 		sections = append(sections, *current)
+	} else {
+		result.preamble = strings.Join(preambleLines, "\n")
 	}
 
-	return sections
+	result.sections = sections
+	return result
+}
+
+// extractPreambleContent returns any meaningful content from the preamble
+// beyond the standard "# Project Memory" header. Returns empty string if
+// the preamble is just the header or whitespace.
+func extractPreambleContent(preamble string) string {
+	lines := strings.Split(preamble, "\n")
+	var contentLines []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		// Skip the standard header and empty lines
+		if trimmed == "" || trimmed == "# Project Memory" {
+			continue
+		}
+		contentLines = append(contentLines, line)
+	}
+	if len(contentLines) == 0 {
+		return ""
+	}
+	return strings.Join(contentLines, "\n")
 }
 
 // ediObservationsPlaceholder returns the default EDI Observations section.

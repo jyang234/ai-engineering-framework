@@ -284,7 +284,7 @@ Not every issue requires full option analysis:
 
 ## Auto Memory Integration
 
-MEMORY.md is a shared resource between EDI and Claude Code's auto memory feature. EDI manages specific sections (project context, promoted RECALL items), while Claude can freely write to other sections. This co-ownership model ensures EDI's structured knowledge coexists with Claude's auto-saved memories.
+MEMORY.md is a shared resource between EDI and Claude Code's auto memory feature. EDI manages specific sections (project context, promoted RECALL items). You autonomously write memories to other sections during sessions. This co-ownership model ensures EDI's structured knowledge coexists with your session memories.
 
 ### Section Ownership
 
@@ -316,7 +316,8 @@ MEMORY.md has two types of sections:
   - A critical pitfall that caused significant time loss
   - Concurrence that a documented pattern worked as expected
 - Keep observations to 1-2 lines each, maximum 5 observations per session
-- Claude's auto memory feature may also write additional sections — these are preserved
+- You may also create entirely new sections — these are preserved across EDI regenerations
+- Avoid creating sections named "Project Quick Reference", "Current State", "Key Patterns", "Known Pitfalls", "Key Decisions", or "Topic Index" — EDI regenerates these on launch
 
 ### Writing at Session End (`/end`)
 

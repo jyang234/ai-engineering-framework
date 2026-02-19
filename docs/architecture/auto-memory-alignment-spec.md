@@ -39,7 +39,7 @@ These two systems currently operate in isolation:
 | **Injection** | Automatic (system prompt) | Manual (system prompt file via `--append-system-prompt-file`) |
 | **Granularity** | Free-form markdown (<200 lines) | Typed knowledge (pattern/decision/failure) + structured briefings |
 | **Retrieval** | Always loaded (full file) | On-demand search (recall_search MCP tool) |
-| **Capture** | Agent writes via Edit/Write tools | Prompted at session end via `/end` + `recall_add` |
+| **Capture** | Claude autonomously writes during sessions (users see "Wrote X memories") | Prompted at session end via `/end` + `recall_add` |
 | **Scope** | Per-project directory | Global + project scoped |
 | **Cross-session** | Yes (file persists) | Yes (DB persists) |
 
@@ -93,20 +93,44 @@ SESSION END (/end)
 
 ### Claude Auto Memory (New Built-in)
 
+**Official behavior** (from docs.anthropic.com, verified February 2026):
+
+- **Path**: `~/.claude/projects/<sanitized-git-root>/memory/` — uses git repo root, not cwd
+- **Loading**: First 200 lines of MEMORY.md loaded into system prompt at session start
+- **Writing**: Claude **autonomously** decides what to record during sessions. Users see "Wrote X memories" in terminal. Users can also explicitly ask Claude to remember things.
+- **Topic files**: Other `.md` files in the same directory are NOT auto-loaded — Claude reads them on demand
+- **`/remember` command**: Reviews auto memory, identifies patterns, proposes additions to `CLAUDE.local.md`
+- **Disable**: `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` env var
+- **No formal API**: External tools read/write files directly (no hooks or events)
+
+**Known weaknesses** (from GitHub issues and community):
+- Quality is uncontrolled — Claude may record incorrect info (false memories)
+- Bloat over time — no automatic pruning
+- Silent failures — memory creation can fail silently (#1365)
+- Action-based references unreliable — "always do X" instructions in MEMORY.md not guaranteed
+
 ```
-ALWAYS LOADED
-└── ~/.claude/projects/<project>/memory/MEMORY.md
+ALWAYS LOADED (first 200 lines)
+└── ~/.claude/projects/<sanitized-git-root>/memory/MEMORY.md
     ├── Key learnings from past sessions
     ├── Project patterns and conventions
     ├── Common mistakes to avoid
     └── Links to detailed topic files (e.g., debugging.md)
 
-TOPIC FILES (Optional)
-└── ~/.claude/projects/<project>/memory/*.md
+ON-DEMAND (Claude reads when relevant)
+└── ~/.claude/projects/<sanitized-git-root>/memory/*.md
     ├── debugging.md
     ├── patterns.md
     └── architecture.md
 ```
+
+**CLAUDE.md hierarchy** (from broadest to most specific):
+1. Managed policy (`/etc/claude-code/CLAUDE.md`)
+2. User memory (`~/.claude/CLAUDE.md`)
+3. Project memory (`./CLAUDE.md`)
+4. Project rules (`./.claude/rules/*.md`)
+5. Project local memory (`./CLAUDE.local.md`)
+6. Auto memory (`~/.claude/projects/<project>/memory/`) ← EDI co-manages this
 
 ### How EDI Currently Launches Claude Code
 
@@ -150,7 +174,9 @@ The context file goes into `~/.edi/cache/session-*.md`.
 - Topic-based organization with linked files
 - Native integration (no harness needed, works outside EDI)
 - Concise format — forces distillation to highest-signal content
-- Self-updating — Claude writes to it naturally during sessions
+- Autonomous capture — Claude writes memories during sessions without being prompted
+- `/remember` command — promotes auto memory learnings into CLAUDE.local.md
+- Fits into CLAUDE.md hierarchy (managed policy → user → project → rules → local → auto memory)
 
 ### Key Insight
 
@@ -792,9 +818,9 @@ The following decisions were made during design review, superseding initial prop
 
 Research into Claude Code's auto memory feature revealed a critical conflict with the original design:
 
-1. **Claude Code writes to MEMORY.md automatically** during sessions — saving patterns, debugging insights, and decisions without being prompted
+1. **Claude writes to MEMORY.md** during sessions using Write/Edit tools — recording learnings, patterns, and debugging insights at its own discretion (prompted by system instructions, not a background process)
 2. **Original design had EDI overwrite MEMORY.md** on every launch with freshly generated content
-3. **Result**: EDI would destroy Claude's auto-saved memories on each session start
+3. **Result**: EDI would destroy Claude's memory writes on each session start
 
 ### Solution: Merge-Based Co-Ownership
 
@@ -809,6 +835,7 @@ Instead of overwriting, EDI now uses a **section-aware merge** approach:
 | Key Decisions | EDI | Regenerated from RECALL promotions |
 | Topic Index | EDI | Regenerated from memory dir listing |
 | EDI Observations | Claude | **Preserved** across launches |
+| Preamble content | Claude/User | **Preserved** (freeform text before first ## header) |
 | Any other sections | Claude/User | **Preserved** across launches |
 
 ### Implementation
@@ -835,3 +862,14 @@ Key functions in `edi/internal/memory/generator.go`:
 | Preserved sections appended after EDI sections | EDI controls top-of-file structure; Claude's additions go at bottom |
 | EDI Observations always present | Placeholder added if not found in existing content |
 | Line budget applied after merge | Ensures final output respects 200-line system prompt limit |
+| Preamble content preserved | Freeform text before first ## header is kept across merges |
+
+### Limitations and Edge Cases
+
+| Limitation | Impact | Mitigation |
+|---|---|---|
+| **Line budget truncates from bottom** | Preserved sections (Claude's content) are cut first when 195-line limit is hit | EDI content is bounded by slot budgets (~100 lines max); leaves ~95 lines for preserved content |
+| **`##` in code blocks** | A `## ` line inside a markdown code fence would be falsely parsed as a section header | Unlikely in MEMORY.md (short summaries, not code); would cause section split but content is preserved |
+| **Claude writes to EDI-managed section** | If Claude adds content to "Key Patterns" directly, it's overwritten on next launch | edi-core SKILL.md instructs Claude to avoid EDI-managed sections; /end captures items to RECALL for proper promotion |
+| **No /end → no RECALL items** | If users close terminals without /end, RECALL stays empty and EDI's promoted sections are empty | EDI Observations and Claude-written sections still provide value; profile/status always synced |
+| **CLAUDE.md overlap** | Some projects use CLAUDE.md (another Claude Code feature) for similar purpose as .edi/profile.md | No conflict — they serve different roles: CLAUDE.md is project instructions; .edi/profile.md feeds MEMORY.md via EDI |
