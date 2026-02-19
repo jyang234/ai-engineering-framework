@@ -848,10 +848,11 @@ The merge works by:
 5. Enforcing the 195-line budget on the merged result
 
 Key functions in `edi/internal/memory/generator.go`:
-- `parseMemorySections()` — splits content by `##` headers
-- `extractPreservedSections()` — filters to non-EDI sections
-- `mergeWithExisting()` — combines EDI + preserved content
-- `WriteMemoryFile()` — orchestrates read→generate→merge→write
+- `parseMemory()` — splits content into preamble + sections (by `##` headers)
+- `filterPreservedSections()` — filters to non-EDI sections
+- `extractPreambleContent()` — extracts freeform content from preamble (preserving Claude's notes before the first section)
+- `mergeWithExisting()` — combines EDI + preserved preamble + preserved sections
+- `WriteMemoryFile()` — orchestrates read→generate→merge→budget→write
 
 ### Design Decisions
 

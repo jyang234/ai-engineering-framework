@@ -268,7 +268,7 @@ type Config struct {
 type MemoryConfig struct {
     Enabled        bool  // Enable auto memory management (default: true)
     UpdateOnLaunch bool  // Sync MEMORY.md on session start (default: true)
-    UpdateOnEnd    bool  // Update MEMORY.md on session end (default: true)
+    UpdateOnEnd    bool  // Reserved: /end always includes MEMORY.md step (prompt-driven, not enforced by Go code)
 }
 
 type RecallConfig struct {
@@ -287,6 +287,7 @@ type BriefingConfig struct {
     HistoryEntries int   // Number of history entries to include
     IncludeTasks   bool  // Include current task status
     IncludeProfile bool  // Include project profile
+    IncludeStatus  bool  // Include project status (.edi/status.md)
 }
 ```
 
@@ -599,7 +600,7 @@ Claude Code ships with **auto memory** — a built-in feature that persists a `M
 memory:
   enabled: true           # Enable auto memory management
   update_on_launch: true  # Sync MEMORY.md on session start
-  update_on_end: true     # Update MEMORY.md on session end
+  update_on_end: true     # Reserved: /end always includes MEMORY.md step (prompt-driven)
 ```
 
 ### Memory Directory Detection

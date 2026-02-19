@@ -1,9 +1,9 @@
 # AEF Component Registry
 
-> **Implementation Status (February 9, 2026):** Updated with Auto Memory alignment.
+> **Implementation Status (February 19, 2026):** Updated with Auto Memory alignment (merge-based co-ownership model).
 
 **Purpose**: Quick reference for what exists, what is planned, and where to find details.
-**Updated**: February 9, 2026
+**Updated**: February 19, 2026
 
 ---
 
@@ -112,13 +112,15 @@
 | **Specification** | `docs/architecture/auto-memory-alignment-spec.md` |
 
 **Capabilities:**
-- Generates and manages MEMORY.md from RECALL's highest-value items
+- Co-manages MEMORY.md via merge-based approach — EDI manages structured sections, Claude's autonomous writes and user additions are preserved
+- Detects auto memory directory using git repository root (matching Claude Code's path convention)
 - Seeds MEMORY.md from project profile during `edi init`
 - Updates MEMORY.md on session launch with promoted RECALL items
 - Captures session insights to MEMORY.md during `/end`
 - Fixed slot budget (10 per type) prevents unbounded growth
-- 195-line hard limit enforced
+- 195-line hard limit enforced (truncates from bottom, preserving EDI-managed content)
 - EDI Observations section for in-session notes
+- Preamble preservation — freeform content Claude writes before the first section header is kept
 
 **Architecture:**
 - L1 (MEMORY.md): Always-loaded cache of best RECALL content
@@ -130,7 +132,7 @@
 memory:
   enabled: true
   update_on_launch: true
-  update_on_end: true
+  update_on_end: true     # Reserved: /end always includes MEMORY.md step (prompt-driven)
 ```
 
 ---
