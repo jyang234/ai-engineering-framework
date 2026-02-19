@@ -18,6 +18,7 @@ A comprehensive guide for engineers who will operate and maintain the EDI sessio
 4. [Configuration](#4-configuration)
 5. [Briefing Generation](#5-briefing-generation)
 5A. [Ralph Loop Execution Mode](#5a-ralph-loop-execution-mode)
+5B. [Auto Memory Integration](#5b-auto-memory-integration)
 
 ### Codex Internals
 6. [Codex: System Overview](#6-codex-system-overview)
@@ -89,7 +90,8 @@ When the user runs `edi`, the following happens in order:
    - **Patterns**: Pattern description, When to Use, Implementation, Files
    - **Failures**: Symptom, Root Cause, Fix, Prevention, Files
 4. Prompt user to save approved items to RECALL via `recall_add`
-5. Update `.edi/status.md` and save session history to `.edi/history/`
+5. Update MEMORY.md with promoted items from this session (see [5B. Auto Memory Integration](#5b-auto-memory-integration))
+6. Update `.edi/status.md` and save session history to `.edi/history/`
 
 ### Stale Session Recovery
 
@@ -259,7 +261,14 @@ type Config struct {
     Briefing BriefingConfig  // Briefing generation settings
     Capture  CaptureConfig   // Knowledge capture settings
     Tasks    TasksConfig     // Task integration settings
+    Memory   MemoryConfig    // Auto memory (MEMORY.md) integration settings
     Project  ProjectConfig   // Project-specific settings
+}
+
+type MemoryConfig struct {
+    Enabled        bool  // Enable auto memory management (default: true)
+    UpdateOnLaunch bool  // Sync MEMORY.md on session start (default: true)
+    UpdateOnEnd    bool  // Reserved: /end always includes MEMORY.md step (prompt-driven, not enforced by Go code)
 }
 
 type RecallConfig struct {
@@ -278,6 +287,7 @@ type BriefingConfig struct {
     HistoryEntries int   // Number of history entries to include
     IncludeTasks   bool  // Include current task status
     IncludeProfile bool  // Include project profile
+    IncludeStatus  bool  // Include project status (.edi/status.md)
 }
 ```
 
@@ -508,6 +518,154 @@ Ralph commits after each state change:
 - All done: `git add -A && git commit -m "Ralph: all tasks complete"`
 
 Commits are non-fatal — if `git commit` fails (no changes, not a repo), the loop continues.
+
+---
+
+## 5B. Auto Memory Integration
+
+**Key files:** `edi/internal/memory/generator.go`, `edi/internal/memory/detect.go`, `edi/internal/assets/commands/end.md`, `edi/internal/assets/skills/edi-core/SKILL.md`
+
+Claude Code ships with **auto memory** — a built-in feature that persists a `MEMORY.md` file at `~/.claude/projects/<sanitized-git-root>/memory/` and loads the first 200 lines into the system prompt at session start. Claude **autonomously** writes memories during sessions (users see "Wrote X memories" in terminal). There is no formal API — external tools read/write the files directly. EDI integrates with this feature to create a layered memory architecture.
+
+**Why EDI adds value** over vanilla auto memory:
+- **Quality control** — RECALL items are scored by usefulness; only proven items promoted
+- **Bloat prevention** — Fixed slot budgets (10/10/10) vs auto memory's unbounded accumulation
+- **Structure** — Predictable sections vs freeform notes
+- **Depth** — RECALL goes beyond the 200-line limit via on-demand MCP search
+- **Freshness** — Profile and status synced from `.edi/` files each launch
+
+### Layered Memory Architecture
+
+```
+┌───────────────────────────────────────────────────────────┐
+│  LAYER 1: MEMORY.md (Always Loaded)                       │
+│  ← ~150 lines, highest-signal content                     │
+│                                                           │
+│  Sections:                                                │
+│  - Project Quick Reference (from .edi/profile.md)         │
+│  - Current State (from .edi/status.md)                    │
+│  - Key Patterns (promoted from RECALL)                    │
+│  - Known Pitfalls (promoted from RECALL failures)         │
+│  - Key Decisions (promoted from RECALL decisions)         │
+│  - Topic Index (links to memory/*.md files)               │
+│  - EDI Observations (Claude's session notes — preserved)  │
+│  - Claude auto-saved sections (preserved)                 │
+│                                                           │
+│  Updated by: EDI merge at session start + session end     │
+│  Claude auto-writes to non-EDI sections are preserved     │
+└───────────┬───────────────────────────────────────────────┘
+            │ additive (no deduplication with L2)
+┌───────────▼───────────────────────────────────────────────┐
+│  LAYER 2: EDI Session Context                             │
+│  ← System prompt via --append-system-prompt-file          │
+│                                                           │
+│  Contains:                                                │
+│  - Agent mode and instructions                            │
+│  - Session ID and metadata                                │
+│  - RECALL tool instructions                               │
+│  - Slash command docs                                     │
+│  - Recent session history                                 │
+│  - Active tasks                                           │
+│  - Profile and status (also in MEMORY.md — kept in both   │
+│    for backward compatibility)                            │
+└───────────┬───────────────────────────────────────────────┘
+            │ search/retrieve
+┌───────────▼───────────────────────────────────────────────┐
+│  LAYER 3: RECALL Knowledge Base                           │
+│  ← On-demand via MCP tools                                │
+│                                                           │
+│  Contains (unchanged):                                    │
+│  - All knowledge items (pattern, decision, failure, etc.) │
+│  - Full-text + vector search                              │
+│  - Feedback signals and usefulness scoring                │
+│  - Flight recorder logs                                   │
+└───────────────────────────────────────────────────────────┘
+```
+
+### Design Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| **Co-ownership via merge** | EDI manages structured sections; Claude's auto-written memories and user additions are preserved. Merge-based updates prevent data loss. |
+| **No deduplication** — profile and status remain in both L1 and L2 | Simpler fallback if auto memory is unavailable; no risk of context loss. MEMORY.md is additive (promoted RECALL items + topic index). |
+| **Fixed slot budget** (10 patterns, 10 failures, 10 decisions) | Caps MEMORY.md growth. New items push out lowest-scored old items — effectively an LRU cache with type partitions. |
+| **195-line hard limit** | Claude Code truncates after 200 lines in the system prompt. The 5-line buffer prevents edge cases. |
+| **Decisions and failures always promoted at /end** | These are already human-approved via the capture workflow. Patterns are promoted only with explicit confirmation. |
+| **Section-based parsing** | MEMORY.md is split by `##` headings. EDI-managed headings are a known set; everything else is preserved. |
+
+### Configuration
+
+```yaml
+# In ~/.edi/config.yaml or .edi/config.yaml
+memory:
+  enabled: true           # Enable auto memory management
+  update_on_launch: true  # Sync MEMORY.md on session start
+  update_on_end: true     # Reserved: /end always includes MEMORY.md step (prompt-driven)
+```
+
+### Memory Directory Detection
+
+Claude Code stores auto memory at `~/.claude/projects/-<sanitized-git-root>/memory/` where the **git repository root** (not cwd) has `/` replaced with `-`. The `memory.DetectAutoMemoryDir()` function resolves the git root via `git rev-parse --show-toplevel`, sanitizes it, and returns the memory directory path. Falls back to the provided path if not inside a git repo.
+
+### Session Start Flow
+
+When `edi` launches with `memory.enabled: true` and `memory.update_on_launch: true`:
+
+1. Load `.edi/profile.md` and `.edi/status.md`
+2. Query RECALL for items meeting promotion criteria:
+   - Usefulness score >= 2.0
+   - Retrieved >= 3 times
+   - Created within last 90 days
+3. Generate EDI-managed sections: Quick Reference, Current State, Key Patterns, Known Pitfalls, Key Decisions, Topic Index
+4. Read existing MEMORY.md (if present)
+5. **Merge**: Replace EDI-managed sections with fresh content; preserve all other sections (EDI Observations, Claude auto-saved content, user additions)
+6. If no existing MEMORY.md, add EDI Observations placeholder
+7. Enforce 195-line budget on merged result
+8. Write to auto memory directory
+
+### Session End Flow (`/end`)
+
+Step 6 of `/end` (inserted between RECALL capture and status update):
+
+1. Read current MEMORY.md
+2. Identify which newly captured RECALL items qualify for promotion
+3. Add promoted items to the appropriate EDI-managed section, respecting slot budget
+4. Update "Current State" from the new `.edi/status.md`
+5. Preserve all non-EDI sections; clean stale EDI Observations
+6. Present diff to user for approval
+7. Write updated MEMORY.md
+
+### Promotion Criteria
+
+| Item Type | Always Promoted at /end? | Slot Budget |
+|-----------|-------------------------|-------------|
+| Decision | Yes (human-approved) | 10 |
+| Failure | Yes (human-approved) | 10 |
+| Pattern | Only if user confirms | 10 |
+
+For launch-time promotion from existing RECALL items:
+
+```go
+PromotionCriteria{
+    MinUsefulnessScore: 2.0,   // Accumulated score
+    MinRetrievalCount:  3,     // Retrieved at least 3 times
+    MaxAgeDays:         90,    // Created within last 90 days
+}
+```
+
+### Project Initialization
+
+`edi init` seeds an initial MEMORY.md from the project profile template. This ensures auto memory is populated even before any RECALL items exist.
+
+### Backward Compatibility
+
+EDI works in three modes:
+
+| Mode | Condition | Behavior |
+|------|-----------|----------|
+| **Full auto memory** | `memory.enabled: true` + auto memory directory exists | EDI co-manages MEMORY.md via merge |
+| **EDI only** | `memory.enabled: false` or auto memory directory missing | Current behavior unchanged |
+| **Graceful degradation** | RECALL unavailable but auto memory exists | Profile/status written to MEMORY.md, no promoted items |
 
 ---
 

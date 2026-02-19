@@ -71,6 +71,12 @@ func BuildContext(cfg *config.Config, sessionID string, brief *briefing.Briefing
 		sb.WriteString("1. Evaluate each result for relevance to the query\n")
 		sb.WriteString("2. Log judgment: flight_recorder_log({type: \"retrieval_judgment\", content: \"X/Y results kept for '<query>'\", metadata: {query, kept, dropped}})\n")
 		sb.WriteString("3. Show summary to user: \"RECALL: X/Y results kept for [query]\"\n\n")
+
+		if cfg.Memory.Enabled {
+			sb.WriteString("**Auto Memory**: MEMORY.md is co-managed by EDI and Claude. EDI maintains structured sections ")
+			sb.WriteString("(project context, promoted RECALL items) and regenerates them on launch. Your autonomous memory ")
+			sb.WriteString("writes and any non-EDI sections are preserved across launches. For deeper searches, use recall_search.\n\n")
+		}
 	}
 
 	// Include slash command instructions

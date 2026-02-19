@@ -1,9 +1,9 @@
 # AEF Component Registry
 
-> **Implementation Status (January 31, 2026):** Reflects current state accurately.
+> **Implementation Status (February 19, 2026):** Updated with Auto Memory alignment (merge-based co-ownership model).
 
 **Purpose**: Quick reference for what exists, what is planned, and where to find details.
-**Updated**: January 29, 2026
+**Updated**: February 19, 2026
 
 ---
 
@@ -18,7 +18,9 @@
 │   │     EDI      │   │    Codex     │   │   Learning   │                │
 │   │   (v0 ✅)    │◄─►│   (v1 ✅)    │──►│    (📋)      │                │
 │   │ CLI harness  │   │ Hybrid search│   │ Knowledge QA │                │
-│   └──────────────┘   └──────────────┘   └──────────────┘                │
+│   └──────┬───────┘   └──────────────┘   └──────────────┘                │
+│          │                                                               │
+│          ├──► Auto Memory (✅) ── Claude Code MEMORY.md integration     │
 │          │                                                               │
 │          ▼                                                               │
 │   ┌──────────────┐                                                      │
@@ -100,6 +102,41 @@
 
 ---
 
+### Auto Memory Integration
+
+| Attribute | Value |
+|-----------|-------|
+| **Status** | ✅ Implemented |
+| **Location** | `edi/internal/memory/` |
+| **Purpose** | Bridge between EDI's RECALL system and Claude Code's built-in auto memory (MEMORY.md) |
+| **Specification** | `docs/architecture/auto-memory-alignment-spec.md` |
+
+**Capabilities:**
+- Co-manages MEMORY.md via merge-based approach — EDI manages structured sections, Claude's autonomous writes and user additions are preserved
+- Detects auto memory directory using git repository root (matching Claude Code's path convention)
+- Seeds MEMORY.md from project profile during `edi init`
+- Updates MEMORY.md on session launch with promoted RECALL items
+- Captures session insights to MEMORY.md during `/end`
+- Fixed slot budget (10 per type) prevents unbounded growth
+- 195-line hard limit enforced (truncates from bottom, preserving EDI-managed content)
+- EDI Observations section for in-session notes
+- Preamble preservation — freeform content Claude writes before the first section header is kept
+
+**Architecture:**
+- L1 (MEMORY.md): Always-loaded cache of best RECALL content
+- L2 (EDI Context): Session-specific agent/task/command instructions
+- L3 (RECALL): Full searchable knowledge base via MCP
+
+**Configuration:**
+```yaml
+memory:
+  enabled: true
+  update_on_launch: true
+  update_on_end: true     # Reserved: /end always includes MEMORY.md step (prompt-driven)
+```
+
+---
+
 ### Learning Architecture
 
 | Attribute | Value |
@@ -141,12 +178,14 @@
 ```
 EDI v0 (✅) ◄───► Codex v1 (✅)
     │                  │
+    ├──► Auto Memory (✅) ◄── Promoted items from RECALL
+    │                  │
     │                  └──► Learning Architecture (📋)
     │
     └──► Sandbox (📋) [independent]
 ```
 
-EDI can use either RECALL v0 (built-in) or Codex v1 (external) as its knowledge backend.
+EDI can use either RECALL v0 (built-in) or Codex v1 (external) as its knowledge backend. Auto Memory bridges RECALL with Claude Code's built-in MEMORY.md feature.
 
 ---
 
@@ -162,6 +201,7 @@ EDI can use either RECALL v0 (built-in) or Codex v1 (external) as its knowledge 
 | `docs/architecture/edi-agent-system-spec.md` | Agent schema and core agents |
 | `docs/architecture/edi-subagent-specification.md` | Subagent definitions |
 | `docs/architecture/edi-persona-spec.md` | EDI identity and communication style |
+| `docs/architecture/auto-memory-alignment-spec.md` | Auto memory alignment with Claude Code MEMORY.md |
 
 ---
 

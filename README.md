@@ -8,6 +8,7 @@ AEF gives Claude Code persistent memory, specialized agents, and session continu
 - **Organizational memory (RECALL)** — Stores patterns, decisions, and failures. Searchable across sessions. Only as good as what you capture — EDI prompts you but does not capture automatically. Keyword search works out of the box; semantic search requires Ollama.
 - **Specialized agents** — Four modes (coder, architect, reviewer, incident) with different system prompts and priorities. They guide behavior through prompting but do not enforce constraints — Claude can still do whatever it wants.
 - **Hybrid search (Codex backend)** — Combines vector similarity with FTS5 keyword matching via RRF fusion. Requires Ollama running locally with nomic-embed-text. Without Ollama, falls back to keyword-only (v0 backend), which still works fine for exact queries.
+- **Auto memory alignment** — Integrates with Claude Code's built-in auto memory (MEMORY.md). EDI promotes RECALL's highest-value patterns, failures, and decisions into MEMORY.md so they are always loaded into the system prompt — no explicit search needed for your most important knowledge.
 - **Local-first** — Single SQLite file, local embeddings, no API keys for core features. Privacy and offline-capable. Tradeoff: local embedding model (nomic-embed-text) is good but not as strong as cloud embedding APIs.
 
 ## How It Works
@@ -144,6 +145,7 @@ See [edi/README.md](edi/README.md#ralph-loop) for usage details and [Ralph Loop 
 - [EDI + Codex Technical Deep-Dive](docs/edi-codex-deep-dive.md) — full system architecture, data flows, and operational guide
 - [AEF Components Overview](docs/aef-components.md)
 - [RECALL MCP Server Spec](docs/architecture/recall-mcp-server-spec.md)
+- [Auto Memory Alignment Spec](docs/architecture/auto-memory-alignment-spec.md) — how EDI bridges RECALL with Claude Code's MEMORY.md
 - [EDI Session Lifecycle](docs/architecture/edi-session-lifecycle-spec.md)
 - [EDI CLI Commands](docs/architecture/edi-cli-commands-spec.md)
 
