@@ -73,8 +73,9 @@ Generate a session summary and save it to history.
    - **Preserved sections** (survive across launches): EDI Observations, and any sections Claude or the user added
 
    Update rules:
-   - **Decisions and failures** captured in step 5 are always promoted — add to Key Patterns, Known Pitfalls, or Key Decisions sections
-   - **Patterns** are promoted if the user confirms them as broadly useful
+   - **Failures** captured in step 5 → add to **Known Pitfalls** section
+   - **Decisions** captured in step 5 → add to **Key Decisions** section
+   - **Patterns** → add to **Key Patterns** only if the user confirms them as broadly useful
    - Each EDI-managed type section has a **slot budget** of 10 items maximum:
      - If a section is full, replace the oldest or least-referenced item
      - Keep entries as one-line summaries: `- **Title**: brief description`

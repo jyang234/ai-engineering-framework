@@ -67,7 +67,7 @@ type TasksConfig struct {
 type MemoryConfig struct {
 	Enabled        bool `yaml:"enabled" mapstructure:"enabled"`                 // Enable auto memory management
 	UpdateOnLaunch bool `yaml:"update_on_launch" mapstructure:"update_on_launch"` // Update MEMORY.md on session start
-	UpdateOnEnd    bool `yaml:"update_on_end" mapstructure:"update_on_end"`       // Update MEMORY.md on session end
+	UpdateOnEnd    bool `yaml:"update_on_end" mapstructure:"update_on_end"`       // Reserved: /end always includes MEMORY.md step (prompt-driven, not enforced by Go code)
 }
 
 // ProjectConfig holds project-specific settings
