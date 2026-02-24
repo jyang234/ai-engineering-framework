@@ -730,13 +730,15 @@ CREATE TABLE eval_recall_state (
 
 **Goal**: Produce measured results for the claims that matter most.
 
-| Experiment | Runs | Cost Estimate | Priority |
+| Experiment | Runs | Sonnet 4.6 Cost² | Priority |
 |---|---|---|---|
-| 3A: Defect Rate Comparison (30 tasks × 3 conditions × 3 attempts) | 270 | ~$800-1200 | **Highest** |
-| 3B: Repeat Failure Prevention (10 pairs × 2 conditions × 3 attempts) | 60 | ~$200-350 | High |
-| 3D: Hook Adherence Rate (20 sessions × 2 conditions) | 40 | ~$150-250 | High |
-| 2A: Retrieval-Judge Filtering Quality (20 queries) | 20 | ~$30-50 | Medium |
-| 2B: RECALL + Plan Review (10 scenarios) | 10 | ~$30-50 | Medium |
+| 3A: Defect Rate Comparison (30 tasks × 3 conditions × 3 attempts) | 270 | ~$360 | **Highest** |
+| 3B: Repeat Failure Prevention (10 pairs × 2 conditions × 3 attempts) | 60 | ~$83 | High |
+| 3D: Hook Adherence Rate (20 sessions × 2 conditions) | 40 | ~$50 | High |
+| 2A: Retrieval-Judge Filtering Quality (20 queries) | 20 | <$1 | Medium |
+| 2B: RECALL + Plan Review (10 scenarios) | 10 | <$1 | Medium |
+
+² Costs derived from per-token pricing assumptions in the "Pricing Assumptions" section. Multiply by 1.7× for Opus 4.6. 3A cost breakdown: 180 Strategy B runs × $1.25 + 90 Strategy C1 runs × $1.50 = $360.
 
 **Deliverable**: Measured results for each experiment with pass/fail against defined criteria.
 
@@ -746,9 +748,9 @@ CREATE TABLE eval_recall_state (
 
 | Experiment | Runs | Cost Estimate | Priority |
 |---|---|---|---|
-| 3C: Session Knowledge Accumulation (5 sessions × 2 conditions × 3 trials) | 30 | ~$150-250 | High |
-| 4A: AEF-bench (50 tasks × 2 conditions) | 100 | ~$400-600 | Medium |
-| 4B: Comparative System Analysis (20 tasks × 4 systems) | 80 | ~$300-500 | Lower |
+| 3C: Session Knowledge Accumulation (5 sessions × 2 conditions × 3 trials) | 30 | ~$41 | High |
+| 4A: AEF-bench (50 tasks × 2 conditions) | 100 | ~$138 | Medium |
+| 4B: Comparative System Analysis (20 tasks × 4 systems) | 80 | ~$100 | Lower |
 
 **Deliverable**: Final evaluation report with measured scorecard replacing self-assessed ratings.
 
@@ -811,14 +813,16 @@ Where `X.X` is derived from measured metrics and `n` is the sample size.
 
 ## Cost Estimate
 
-| Phase | Runs | Estimated API Cost | Compute Time |
-|---|---|---|---|
-| Phase 1: Level 1 validation | ~50 | $50-100 | 1-2 days |
-| Phase 4: Core experiments | ~400 | $1,200-1,900 | 3-5 days |
-| Phase 5: Longitudinal + comparative | ~210 | $850-1,350 | 2-4 days |
-| **Total** | **~660** | **$2,100-3,350** | **6-11 days** |
+Costs derived from per-token pricing — see "Pricing Assumptions" in the execution section for the full derivation. Shown for Sonnet 4.6; multiply by 1.7× for Opus 4.6.
 
-The majority of cost is in Experiment 3A (270 runs), which is also the most important experiment. It can be run incrementally — start with 30 runs (10 tasks × 3 conditions × 1 attempt) to get directional signal before committing to full scale.
+| Phase | Runs | Sonnet 4.6 Cost | Compute Time |
+|---|---|---|---|
+| Phase 1: Level 1 validation | ~50 | ~$1 | 1-2 days |
+| Phase 4: Core experiments | ~400 | ~$494 | 3-5 days |
+| Phase 5: Longitudinal + comparative | ~210 | ~$279 | 2-4 days |
+| **Total** | **~660** | **~$774** | **6-11 days** |
+
+The majority of cost is in Experiment 3A (270 runs at ~$360), which is also the most important experiment. It can be run incrementally — start with 30 runs (10 tasks × 3 conditions × 1 attempt, ~$40) to get directional signal before committing to full scale. See "Evaluation Milestones" for the incremental approach.
 
 ---
 
@@ -1007,38 +1011,130 @@ Given the goal is to **prove the design claims** (not prove production viability
 
 Compile results, run statistical tests, produce the claim validation table.
 
+### Pricing Assumptions
+
+All API costs are derived from Anthropic's published pricing (February 2026). Previous estimates in this document were not grounded in per-token math — they were plausible-looking numbers with no derivation. The figures below replace them.
+
+**API rates:**
+
+| Model | Input / MTok | Output / MTok |
+|---|---|---|
+| Claude Sonnet 4.6 | $3.00 | $15.00 |
+| Claude Opus 4.6 | $5.00 | $25.00 |
+
+**Token consumption per implementation run** (estimated by task complexity and typical turn counts):
+
+| Task Complexity | Typical Turns | Cumulative Input Tokens | Total Output Tokens |
+|---|---|---|---|
+| Simple (single function) | 5–8 | ~65K | ~20K |
+| Moderate (multi-file) | 10–15 | ~160K | ~40K |
+| Complex (architectural) | 15–25 | ~325K | ~80K |
+| LLM judge scoring (per task) | 1 | ~3K | ~500 |
+
+Input tokens are cumulative across turns — context grows with each tool call and response. Output tokens are the sum across all turns. These are estimates; the first 3–5 pilot runs should be instrumented to measure actual consumption and adjust.
+
+**Derived cost per implementation run:**
+
+| Model | Simple Task | Moderate Task | Complex Task | Weighted Avg¹ |
+|---|---|---|---|---|
+| Sonnet 4.6 | $0.50 | $1.08 | $2.18 | **$1.25** |
+| Opus 4.6 | $0.83 | $1.80 | $3.63 | **$2.09** |
+
+¹ Weighted average assumes 10 simple + 10 moderate + 10 complex tasks (the Corpus 2 distribution).
+
+**Derivation example** (Sonnet, moderate task): 160K input × $3/MTok + 40K output × $15/MTok = $0.48 + $0.60 = **$1.08**.
+
+**Cost per run by execution strategy:**
+
+| Strategy | Sonnet 4.6 | Opus 4.6 | Notes |
+|---|---|---|---|
+| A: Direct MCP | ~$0.02 | ~$0.02 | Judge call only; RECALL MCP calls are local (Go + SQLite + Ollama) |
+| B: Pipe Mode | ~$1.25 | ~$2.09 | Full implementation session + judge scoring |
+| C1: Synthetic Agent | ~$1.50 | ~$2.50 | Implementation + RECALL tool calls + judge scoring |
+
+Strategy C1 costs ~20% more than B because RECALL retrieval injects additional context (retrieved documents, relevance scores) into the conversation window.
+
+**Batch API optimization**: Anthropic's Batch API provides a flat 50% discount for non-urgent workloads. All eval runs qualify since they have no latency requirements. Using batch processing would halve every cost figure below. The estimates assume standard (non-batch) pricing.
+
 ### Revised Cost Estimate
 
-| Phase | Runs | API Cost | Development | Wall Clock |
+Costs shown for **Sonnet 4.6** (default recommendation). Opus 4.6 costs ~1.7× more — multiply Sonnet figures by 1.7 for Opus estimates.
+
+| Phase | Runs | Strategy | Sonnet 4.6 Cost | Development | Wall Clock |
+|---|---|---|---|---|---|
+| Level 1–2 (Strategy A) | ~42 | A | ~$1 | 3 days | 1 week |
+| Level 3 skills/hooks (Strategy B) | ~100 | B | ~$125 | 5 days | 1.5 weeks |
+| Level 3 RECALL (Strategy C1) | ~135 | C1 | ~$203 | 8 days | 2 weeks |
+| Analysis + report | — | A (judge) | ~$10 | 3 days | 0.5 weeks |
+| **Total** | **~277** | | **~$339** | **19 days** | **5 weeks** |
+
+The previous estimate for the same scope was $900–1,480 — roughly 3× too high. The actual cost is dominated by the Level 3 implementation runs. Level 1–2 runs are nearly free because they call the MCP server directly without invoking Claude for implementation.
+
+Development effort (19 days) dominates API cost by a wide margin. At any reasonable engineering rate, the human time costs 10–50× more than the API spend.
+
+### Evaluation Milestones
+
+The evaluation should be run incrementally, not all-at-once. Each milestone builds on the previous one and answers a sharper question. Stop at the milestone that matches your confidence needs.
+
+#### Milestone 1: Smoke Test — "Does this work at all?" (~60 runs, ~$55)
+
+| Experiment | Runs | Strategy | Sonnet Cost | What It Tests |
 |---|---|---|---|---|
-| Level 1-2 (Strategy A) | ~42 | $50-80 | 3 days | 1 week |
-| Level 3 skills/hooks (Strategy B) | ~100 | $300-500 | 5 days | 1.5 weeks |
-| Level 3 RECALL (Strategy C1) | ~135 | $500-800 | 8 days | 2 weeks |
-| Analysis + report | — | $50-100 (judge) | 3 days | 0.5 weeks |
-| **Total** | **~277** | **$900-1,480** | **19 days** | **5 weeks** |
+| 1C: v0 vs Codex retrieval | 2 | A | <$1 | Codex improvement claim |
+| 2A: Judge filtering quality | 20 | A | <$1 | Judge adds precision |
+| 3A-smoke: 10 tasks × 3 conditions × 1 attempt | 30 | 20 B + 10 C1 | ~$40 | Any signal that AEF beats baseline? |
+| 3D-smoke: 5 sessions × 2 conditions | 10 | B | ~$13 | Do hooks change behavior? |
+| **Total** | **62** | | **~$55** | |
 
-This is significantly more honest than the original estimate. The development effort (19 days) dominates the API cost. The Strategy C1 synthetic agent is the biggest investment — but it's also what enables testing the core design claim.
+**Duration**: 1–2 weeks (3 days dev + 2 days running).
 
-### What To Cut If Time-Constrained
+**Decision gate**: If 3A-smoke shows zero difference between AEF and baseline across 10 tasks, investigate why before investing further. If there's a directional signal (even small), proceed to Milestone 2. The purpose is to fail fast and cheaply — not to prove anything.
 
-If you have 2 weeks instead of 5:
+#### Milestone 2: Design Validation — "Is each claim supported?" (~200 runs, ~$210)
 
-| Keep | Cut | Reason |
-|---|---|---|
-| Level 1-2 (Strategy A) | Level 4 (AEF-bench, comparative) | Level 4 proves market position, not design |
-| 3D: Hook adherence (Strategy B) | 3A-full 270-run version | 30 runs gives directional signal |
-| 3B: Repeat failure prevention (C1) | 3C: Longitudinal | 3B is the clearest RECALL test |
-| 3A-partial: 30 runs | 3A: 270-run statistical version | Design validation doesn't need p-values |
+Builds on Milestone 1. Adds enough runs to see patterns, tests every design claim.
 
-**Minimum viable evaluation** (2 weeks, ~$400-600):
+| Experiment | Incremental Runs | Strategy | Sonnet Cost | What It Tests |
+|---|---|---|---|---|
+| 3A: Full 30 tasks × 3 conditions × 1 attempt | +60 (90 total) | 40 B + 20 C1 | ~$80 | AEF vs baseline across full task corpus |
+| 3B: 10 task pairs × 2 conditions × 1 attempt | +20 | 10 B + 10 C1 | ~$28 | Does RECALL prevent repeat failures? |
+| 3D: Full 20 sessions × 2 conditions | +30 (40 total) | B | ~$38 | Hook adherence at scale |
+| 2B: Plan-review failure detection | +10 | A | <$1 | Cross-reference claim |
+| 2D: Audit trail completeness | +10 | A | <$1 | Flight recorder claim |
+| **Total** | **+130 (192 cumulative)** | | **+$147 (~$202 cumulative)** | |
 
-1. Run existing EvalHarness + JudgeHarness → Level 1 baseline
-2. Extend harness for 2B (plan-review) → Level 2 integration
-3. Build pipe-mode runner for 10 tasks × 2 conditions → Level 3 skills/hooks
-4. Run 10 task pairs via Strategy C2 (semi-automated) → Level 3 RECALL
-5. Write claim validation table
+**Duration**: 3–4 weeks cumulative (8 days dev + 4 days running).
 
-This won't produce statistically rigorous results, but it will produce measured evidence for every design claim — replacing self-assessed ratings with actual numbers, even if the sample sizes are small.
+**Decision gate**: At 90 implementation runs (30 tasks × 3 conditions), you have enough data to compute per-condition medians for every metric. If AEF-full and AEF-minimal show the same pitfall avoidance rate, RECALL is not adding value — that's a real finding. If hooks don't improve adherence across 40 sessions, the hook architecture needs rethinking. This milestone produces a claim validation table with "supported" / "not supported" for each design claim.
+
+**This is the right stopping point for design validation.** 200 runs tests every claim with enough samples to trust the direction. The results won't have tight confidence intervals, but they'll tell you what works and what doesn't.
+
+#### Milestone 3: Statistical Confidence — "How confident are we?" (~660 runs, ~$774)
+
+Builds on Milestone 2. Adds repeat trials for variance estimation and Level 4 comparative benchmarks.
+
+| Experiment | Incremental Runs | Strategy | Sonnet Cost | What It Tests |
+|---|---|---|---|---|
+| 3A: Expand to 3 attempts per task | +180 (270 total) | 120 B + 60 C1 | ~$240 | Variance and reproducibility |
+| 3B: Expand to 3 attempts per pair | +40 (60 total) | 20 B + 20 C1 | ~$55 | Repeat-failure confidence |
+| 3C: Longitudinal (5 sessions × 2 cond × 3 trials) | +30 | 15 B + 15 C1 | ~$41 | "Improves with use" claim |
+| 4A: AEF-bench (50 tasks × 2 conditions) | +100 | 50 B + 50 C1 | ~$138 | Standardized benchmark performance |
+| 4B: Comparative (20 tasks × 4 systems) | +80 | B | ~$100 | Market position |
+| **Total** | **+430 (660 cumulative)** | | **+$574 (~$774 cumulative)** | |
+
+**Duration**: 5–6 weeks cumulative (19 days dev + 5 days running).
+
+**What it adds over Milestone 2**: With 3 attempts per task, you can compute medians, ranges, and confidence intervals. You can report "AEF-full improved pitfall avoidance by 25 ±8 percentage points (n=270)" instead of "AEF-full appeared to improve pitfall avoidance." The Level 4 benchmarks let you make market-positioning claims rather than just internal design claims.
+
+#### Milestone Summary
+
+| Milestone | Cumulative Runs | Sonnet 4.6 Cost | Opus 4.6 Cost | Wall Clock | What You Learn |
+|---|---|---|---|---|---|
+| 1: Smoke Test | ~60 | ~$55 | ~$90 | 1–2 weeks | Go / no-go signal for each component |
+| 2: Design Validation | ~200 | ~$210 | ~$350 | 3–4 weeks | Supported / not-supported for each design claim |
+| 3: Statistical Confidence | ~660 | ~$774 | ~$1,300 | 5–6 weeks | Quantified effect sizes with confidence intervals |
+
+The step from Milestone 1 to 2 costs ~$155 and adds substantial evidence. The step from Milestone 2 to 3 costs ~$564 and adds statistical rigor. Whether that rigor is worth 3× the cost depends on the audience — internal design decisions need Milestone 2; external claims need Milestone 3.
 
 ---
 
