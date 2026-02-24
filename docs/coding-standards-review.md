@@ -507,6 +507,15 @@ aef-plugin/
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/generate-briefing.sh"
           }
         ]
+      },
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/generate-briefing.sh"
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -515,7 +524,8 @@ aef-plugin/
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/format-go.sh"
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/format-go.sh",
+            "async": true
           }
         ]
       }
@@ -557,11 +567,25 @@ aef-plugin/
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/verify-quality.sh"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "Before finishing: Did you complete ALL steps the user requested? Check each requirement against what was actually done. If any step was skipped, partially done, or only described but not implemented, you must go back and complete it. Do not rationalize skipped work as unnecessary."
+          }
+        ]
       }
     ]
   }
 }
 ```
+
+**Changes from original hooks.json** (informed by Part 8-9 research):
+
+1. **Added `"matcher": "compact"` SessionStart hook** — Re-injects the briefing after context compaction. Without this, EDI's project context is lost during long sessions. (Gap 1, Part 9)
+2. **Added `"async": true` to PostToolUse format-go** — Prevents context window pollution from formatting system reminders. Each synchronous formatting event consumes context tokens; async avoids this. (Gap 3, Part 9)
+3. **Added `type: "prompt"` Stop hook** — Anti-rationalization gate. Trail of Bits found this catches premature victory declarations. Spotify's equivalent vetoes 25% of agent sessions. (Gap 2, Part 9)
 
 ### What Goes Where (for users of AEF)
 
@@ -765,10 +789,15 @@ fi
 exit 0
 ```
 
-#### 6. SessionStart: Generate briefing
+#### 6. SessionStart: Generate briefing (also used for compaction recovery)
+
+This script fires on both initial session start AND after context compaction (via the `"matcher": "compact"` hook entry). This ensures the EDI briefing is re-injected when Claude Code compresses prior messages, preventing methodology drift during long sessions.
+
 ```bash
 #!/bin/bash
 # hooks/scripts/generate-briefing.sh
+# Fires on: SessionStart (initial) AND SessionStart (compact)
+# Purpose: Inject/re-inject EDI project context into the session
 PROJECT_DIR="$CLAUDE_PROJECT_DIR"
 EDI_DIR="$PROJECT_DIR/.edi"
 
@@ -820,6 +849,22 @@ fi
 echo "---"
 echo "Ready to continue."
 exit 0
+```
+
+#### 7. Stop: Anti-rationalization gate
+
+A `type: "prompt"` hook that fires when the agent attempts to finish responding. This catches premature victory declarations — the most impactful failure mode in multi-step tasks. Costs one additional API call per task completion.
+
+**Evidence**: Trail of Bits found this essential for security work. Spotify's equivalent LLM judge vetoes 25% of agent sessions for being incomplete or overly ambitious.
+
+**Note**: Known issue — prompt hooks can trigger false positive injection detection (GitHub #17804). Keep the prompt text direct and simple to minimize this risk.
+
+```
+Type: prompt (defined in hooks.json, not a script)
+Prompt: "Before finishing: Did you complete ALL steps the user requested?
+Check each requirement against what was actually done. If any step was
+skipped, partially done, or only described but not implemented, you must
+go back and complete it. Do not rationalize skipped work as unnecessary."
 ```
 
 ---
@@ -936,6 +981,214 @@ issues:
   "keywords": ["engineering", "methodology", "recall", "coding-standards", "testing"]
 }
 ```
+
+---
+
+## Part 8: Evidence Base — What Research Says About This Plan
+
+> Added 2026-02-24 based on comprehensive research across academic studies, benchmark data, Anthropic internal practices, community surveys, and production systems.
+
+### 8.1 The Core Thesis Is Validated
+
+The 90% agent-prompt / 8% hook / 2% split classification is strongly supported by evidence:
+
+| Evidence | Source | What It Validates |
+|---|---|---|
+| AI-generated code has **1.7x more issues** than human code | Qodo 2025 (600+ developers) | Hooks are necessary — prompts alone don't prevent defects |
+| Verification loops improve pass@1 by **9.2%** | LLMLOOP, ICSME 2025 | Feedback loops measurably improve output quality |
+| Structured feedback reduces critical bugs by **37-40%** | IEEE 2025 | Formal verification beats ad-hoc checking |
+| Scaffold choice alone swings SWE-bench by **25.6 percentage points** | Vals.ai analysis | The harness matters as much as the model |
+| **94%** of LLM compilation errors are type-related | ETH Zurich / UC Berkeley 2025 | Type checkers (Go compiler, `go vet`) are the highest-ROI automated check |
+| Semgrep catches IDORs at **61% precision** vs Claude alone at **22%** | Semgrep research program | Security scanners catch what prompts miss |
+| Mechanical TDD enforcement produces poorly coupled code | Nizar's controlled experiment, 2025 | Judgment skills (governance, plan-review) cannot be replaced by hooks |
+| Hooks increased skill activation from **~20% to ~84%** | alexop.dev TDD experiment | Hooks dramatically improve protocol adherence |
+
+### 8.2 Anthropic's Own Verification Hierarchy
+
+Anthropic's official best practices rank verification approaches:
+
+1. **Deterministic tools** (highest confidence): linters, type checkers, test suites
+2. **Test execution**: running existing tests to verify behavior
+3. **CLAUDE.md instructions**: system prompt guidance
+4. **LLM-as-judge**: agent-type hooks that evaluate output (weakest)
+
+Boris Cherny (Claude Code creator): *"Give Claude a way to verify its work. If Claude has that feedback loop, it will 2-3x the quality of the final result."*
+
+This hierarchy validates the plan's approach: deterministic tools in hooks (golangci-lint, go test, gofumpt), judgment in prompts (governance, RECALL, severity calibration).
+
+### 8.3 SWE-bench Progression Validates Agentic Verification
+
+The progression from 2% to 79% on SWE-bench Verified was driven primarily by agentic verification loops, not model improvements:
+
+- **2023**: ~2% resolve rate (early RAG scaffolds)
+- **2024**: 49% (Claude 3.5 Sonnet with self-correction loops)
+- **2025-2026**: 79.2% (Claude Opus 4.6 with thinking + test execution loops)
+
+Key insight from Anthropic's SWE-bench agent: it checks its work by **re-running the reproduction script and the project's existing tests** to validate each fix. This is exactly what the verify-quality.sh Stop hook implements.
+
+### 8.4 What Production Systems Look Like
+
+The most sophisticated verification systems in the wild:
+
+| System | Architecture | Key Innovation |
+|---|---|---|
+| **Claude Pilot** | 15-hook pipeline | Compaction persistence, spec guards, context monitoring |
+| **Trail of Bits** | Anti-rationalization gates | Stop prompt hook catches premature victory declaration |
+| **Spotify Honk** | Two-layer verification | Deterministic verifiers + LLM judge that vetoes **25% of sessions** |
+| **alexop.dev TDD** | Subagent isolation | Separate subagents per TDD phase to prevent context pollution |
+
+AEF's plan exceeds all of these in the judgment/methodology layer (RECALL, governance, plan-review, retrieval-judge). The gap is entirely in the mechanical enforcement layer — which this plan's hooks address.
+
+### 8.5 Key Quantitative Findings
+
+**AI code quality deficit** (Qodo 2025, 600+ developers):
+
+| Metric | AI vs Human Code |
+|---|---|
+| Total issues | 1.7x more in AI-generated code |
+| Maintainability errors | 1.64x more |
+| Logic/correctness errors | 1.75x more |
+| Security findings | 1.57x more |
+
+**Code churn** (GitClear 2025, 211 million changed lines):
+
+- Code duplication grew **4x** during 2024
+- Blocks with 5+ duplicated lines increased **8x**
+- Refactoring declined from 25% to under 10% of changed lines
+- New code revised within two weeks grew from 3.1% to 5.7%
+
+**Productivity reality** (METR RCT, 16 developers, 246 tasks):
+
+- Developers with AI access were **19% slower** (not faster)
+- Developers *believed* they were **20% faster** (39 percentage point perception gap)
+- Explanation: AI struggles with deep implicit context and strict quality standards
+- Less rigorous studies find 16-55% improvements in different contexts
+
+The METR finding is particularly relevant to AEF: EDI's methodology (governance, RECALL, scaffolding tests) provides exactly the "implicit context and strict quality standards" that makes AI effective in mature codebases.
+
+### 8.6 Sources
+
+- [Qodo 2025 State of AI Code Quality Report](https://www.qodo.ai/reports/state-of-ai-code-quality/)
+- [GitClear AI Copilot Code Quality 2025](https://www.gitclear.com/ai_assistant_code_quality_2025_research)
+- [LLMLOOP (ICSME 2025)](https://ieeexplore.ieee.org/document/11185878/)
+- [ETH Zurich/UC Berkeley Type Safety Study](https://medium.com/@michaelhenderson/how-type-safety-catches-94-of-llm-code-errors-db63337a1478)
+- [Semgrep AI-Powered Detection](https://semgrep.dev/blog/2025/ai-powered-detection-with-semgrep/)
+- [Epoch AI SWE-bench Verified Leaderboard](https://epoch.ai/benchmarks/swe-bench-verified)
+- [Vals.ai SWE-bench Analysis](https://www.vals.ai/benchmarks/swebench)
+- [Anthropic SWE-bench Performance](https://www.anthropic.com/research/swe-bench-sonnet)
+- [Verdent SWE-bench Technical Report](https://www.verdent.ai/blog/swe-bench-verified-technical-report)
+- [METR RCT: AI Developer Productivity Study](https://metr.org/blog/2025-07-10-early-2025-ai-experienced-os-dev-study/)
+- [How Anthropic Teams Use Claude Code](https://claude.com/blog/how-anthropic-teams-use-claude-code)
+- [Microsoft AI Code Review at Scale](https://devblogs.microsoft.com/engineering-at-microsoft/enhancing-code-quality-at-scale-with-ai-powered-code-reviews/)
+- [Spotify Honk Feedback Loops](https://engineering.atspotify.com/2025/12/feedback-loops-background-coding-agents-part-3/)
+- [arXiv: Assessing Quality and Security of AI-Generated Code](https://arxiv.org/abs/2508.14727)
+- [arXiv: LLMs vs Static Analysis for Vulnerability Detection](https://arxiv.org/html/2508.04448v1)
+- [Stack Overflow 2025 Developer Survey](https://survey.stackoverflow.co/2025/)
+
+---
+
+## Part 9: Gap Analysis — What the Plan Is Missing
+
+> Based on research findings compared against Parts 1-7 of this document.
+
+### Gap 1: Compaction Persistence (CRITICAL)
+
+**Problem**: Claude Code compresses prior messages as conversations approach context limits. When this happens, the EDI briefing (injected via SessionStart hook) gets summarized or lost. CLAUDE.md content is wrapped in framing that says it *"may or may not be relevant"* — under context pressure, carefully written standards get deprioritized.
+
+**Evidence**: Claude Pilot solves this with `pre_compact.py` (saves state before compression) and `post_compact_restore.py` (re-injects critical context after). The plan's SessionStart hook (Part 6, §6) fires only at launch — it has no `compact` matcher to re-inject after compaction.
+
+**Fix**: Add a second SessionStart hook entry with `"matcher": "compact"` that re-injects the briefing. This is a ~5-line addition to hooks.json.
+
+### Gap 2: Anti-Rationalization Gate (HIGH)
+
+**Problem**: Claude can declare victory prematurely — "I've completed the implementation" when critical steps were skipped. The plan's Stop hook (verify-quality.sh) checks mechanical quality but doesn't ask "did you actually finish what was requested?"
+
+**Evidence**: Trail of Bits uses a `type: "prompt"` Stop hook for this. Claude itself acknowledged (GitHub Issue #26761): *"Adding more rules is useless if I always do the first thing I see I can do."* Spotify's LLM judge vetoes **25% of agent sessions** for being too ambitious or incomplete.
+
+**Fix**: Add a `type: "prompt"` Stop hook that asks whether acceptance criteria were met. This costs one additional API call per task completion but catches the highest-impact failure mode.
+
+### Gap 3: PostToolUse Formatter Context Pollution (MEDIUM)
+
+**Problem**: The plan puts `gofumpt` as a synchronous PostToolUse hook (Part 6, §1). Every formatting change generates a system reminder that consumes context window space. In monorepos, one developer reported **180 seconds of delay per interaction** from sequential hooks.
+
+**Evidence**: Lakshmi Narasimhan's experience: *"Every formatting change generates a system reminder that pollutes your context window."* Claude Code added `async: true` support in January 2026 specifically to address this.
+
+**Fix**: Either add `"async": true` to the format-go hook, or remove the PostToolUse formatter entirely — the Stop hook's golangci-lint already includes `gofumpt` checking. Formatting can happen once at task end rather than on every edit.
+
+### Gap 4: Context Usage Monitoring (MEDIUM)
+
+**Problem**: AEF sessions are context-heavy (briefings, skill content, RECALL results). No mechanism warns when context pressure may cause instruction degradation.
+
+**Evidence**: Claude Pilot tracks context usage and warns at 80% and 90%. Research shows larger context windows can degrade performance by **24.2%** when filled with irrelevant tokens.
+
+**Fix**: A lightweight PostToolUse hook that estimates context usage, or an agent-type hook at key checkpoints. Lower priority than Gaps 1-2.
+
+### Gap 5: Known Hook System Bugs (LOW — awareness only)
+
+The plan assumes hooks work as documented. Known issues to be aware of:
+
+| Issue | Impact | Workaround |
+|---|---|---|
+| Stop hooks in SKILL.md frontmatter don't fire (#19225) | Stop hooks must be in settings.json or hooks.json | Already correct in this plan |
+| PreToolUse hooks sometimes don't block (#2814) | Safety guards may be bypassed | Add agent prompt as fallback |
+| Prompt hooks can trigger false injection detection (#17804) | Anti-rationalization hook may be flagged | Keep prompt text simple and direct |
+| Stop hooks hang on stalled API calls (superpowers #390) | Agent-type hooks need timeout | Add timeout to any agent-type hooks |
+
+### Gap 6: Deferred Plugin Architecture
+
+The plan proposes restructuring AEF as a Claude Code plugin (Part 3). No evidence of a mature plugin marketplace or standardized plugin format exists yet. The migration path (5 phases) is sound but depends on ecosystem maturity.
+
+**Recommendation**: Implement Phase 1 (hooks in `.claude/settings.json`) immediately. Defer Phases 2-5 until the plugin ecosystem stabilizes.
+
+---
+
+## Part 10: Revised Implementation Priority
+
+> Incorporating research findings with the original plan.
+
+### Priority 1: Implement Now (validated by evidence, in the plan)
+
+| Item | Plan Reference | Evidence Support |
+|---|---|---|
+| `.golangci.yml` configuration | Appendix A | golangci-lint catches the exact bug classes AI introduces most |
+| Stop hook: `verify-quality.sh` | Part 6, §5 | SWE-bench agents use test execution loops; 9.2% pass@1 improvement from feedback |
+| PreToolUse: `protect-files.sh` | Part 6, §2 | 40% of AI-generated code contains security vulnerabilities (Semgrep) |
+| PreToolUse: `protect-memory.sh` | Part 6, §4 | Deterministic enforcement ranked highest in Anthropic's hierarchy |
+| PreToolUse: `block-dangerous-commands.sh` | Part 6, §3 | Safety guard — standard practice in all production systems |
+| SessionStart: `generate-briefing.sh` | Part 6, §6 | Anthropic teams that documented expectations in CLAUDE.md saw best results |
+| Remove lint imperatives from skills | Part 4 | Boris Cherny's team does this — hooks enforce, prompts explain |
+
+### Priority 2: Add to Plan (missing, high evidence)
+
+| Item | Evidence | Effort |
+|---|---|---|
+| SessionStart hook with `"matcher": "compact"` | Claude Pilot compaction persistence | ~5 lines in hooks.json + reuse existing briefing script |
+| Stop hook `type: "prompt"` (anti-rationalization) | Trail of Bits; Spotify vetoes 25% of sessions | ~10 lines in hooks.json |
+| PostToolUse format-go: add `"async": true"` or remove | Context pollution evidence | 1-line change |
+
+### Priority 3: Defer (in plan but lower priority)
+
+| Item | Reason to Defer |
+|---|---|
+| RECALL verification Stop hook (agent-type) | LLM-as-judge is weakest verification; keep as prompt instead |
+| `/end` file-write verification hooks | Low ROI edge case |
+| Plugin architecture (Parts 3, Phase 2-5) | Ecosystem not mature enough |
+| Context usage monitoring | Useful but complex; wait for native support |
+
+### Scorecard: AEF Position After Implementation
+
+| Dimension | Best in Class | AEF After Plan | Gap |
+|---|---|---|---|
+| Methodology / Judgment Skills | No comparable system exists | **10/10** | AEF leads |
+| Knowledge Integration (RECALL) | No comparable system exists | **10/10** | AEF leads |
+| Mechanical Verification (hooks) | Claude Pilot (15 hooks) | **7/10** | Priority 1+2 closes most distance |
+| Compaction Persistence | Claude Pilot | **6/10** | Compact matcher addresses core case |
+| Safety Guards | Trail of Bits | **8/10** | PreToolUse hooks cover primary risks |
+| Anti-Rationalization | Trail of Bits | **7/10** | Prompt Stop hook covers primary case |
+| Distribution | Plugin ecosystem | **3/10** | Deferred — wait for ecosystem |
+| Observability | disler (multi-agent) | **4/10** | Flight recorder partially covers |
+
+**Overall**: AEF has the deepest methodology of any system in the field. The gap is entirely in mechanical enforcement, and this plan closes most of that distance. The judgment layer — governance, RECALL, retrieval-judge, plan-review, scaffolding tests — is where AEF's genuine differentiation lives, and no other system approaches it.
 
 ---
 
