@@ -1416,3 +1416,514 @@ For **proving the design claims** specifically — the stated goal — the frame
 **For identifying what to cut**: The framework is excellent at this. If Experiment 3A shows AEF-full ≈ AEF-minimal, you know RECALL isn't pulling its weight. If 3D shows hooks don't improve adherence, you know the hook architecture needs rethinking. The framework's greatest value may be in what it *disproves*.
 
 **The pass/fail thresholds are arbitrary**: Why ≥20 percentage points for pitfall avoidance? Why ≥10 for combined quality? These are judgment calls, not derived from theory. They should be treated as "meaningful improvement" guidelines, not hard cutoffs. The actual numbers matter more than whether they cross a pre-defined line.
+
+---
+
+## Specification Gap Analysis
+
+> Added 2026-02-24 after auditing the build specification against actual code in `codex/eval/`, skill files in `edi/internal/assets/skills/`, and the Ralph loop in `edi/internal/assets/ralph/ralph.sh`.
+
+This section catalogs everything that's underspecified — things a developer would need to ask about before they could implement each of the seven build components. Gaps are categorized by severity.
+
+### Critical Gaps (Block Implementation)
+
+#### Gap 1: Skills reference RECALL tools unavailable in AEF-minimal condition
+
+The condition configurator (Build Component 4) specifies:
+
+| Condition | System Prompt | RECALL Tools |
+|---|---|---|
+| `aef-minimal` | Skills (edi-core, coding, testing, plan-review) | **None** |
+
+But the actual skill files reference RECALL tools extensively:
+
+| Skill | `recall_search` refs | `flight_recorder_log` refs |
+|---|---|---|
+| `edi-core/SKILL.md` (352 lines) | 3 | 5 |
+| `retrieval-judge/SKILL.md` (63 lines) | 4 | 1 |
+| `plan-review/SKILL.md` (116 lines) | 2 | 1 |
+| `refactoring-planning/SKILL.md` (346 lines) | 1 | 1 |
+| `coding/SKILL.md` (198 lines) | 0 | 0 |
+| `testing/SKILL.md` (147 lines) | 0 | 0 |
+
+In the AEF-minimal condition, the model will see instructions like "Before starting significant work, query RECALL: `recall_search({query: ...})`" but `recall_search` won't be in the tool list. The model will either try to call a nonexistent tool (error) or get confused by contradictory instructions (unpredictable behavior).
+
+**Resolution required — pick one:**
+
+- **Option A: Stripped skill variants.** Create `edi-core-no-recall.md`, etc. that remove RECALL references and keep only the behavioral/methodology guidance. This is clean but doubles the skill maintenance surface.
+- **Option B: RECALL-unavailable preamble.** Prepend to the system prompt: "RECALL tools (recall_search, recall_add, recall_feedback, flight_recorder_log) are not available in this session. Ignore any instructions to use them. Focus on the methodology guidance only." Simpler but the model may still be influenced by the dead references.
+- **Option C: RECALL-free skill set.** For AEF-minimal, only include `coding` and `testing` (which have zero RECALL references). This is cleanest but tests a weaker version of AEF — the methodology skills (plan-review, retrieval-judge) are excluded entirely.
+
+This decision changes the experimental design: Options A/B test "same skills, different tools" while Option C tests "different skills, different tools." The ablation is cleaner with A/B.
+
+#### Gap 2: No LLM judge prompt template for code quality scoring
+
+The document defines a rubric (lines 601–632) with 5 dimensions and anchor descriptions. But the rubric is not a prompt — the LLM judge needs:
+
+1. A **system prompt** telling it what it is and how to behave
+2. A **user prompt template** with placeholders for: task specification, implementation code, test results (pass/fail with output), lint output, pitfall list (what to check for)
+3. An **expected response format** (JSON schema with dimension scores + reasoning)
+4. **Instructions for missing data** (e.g., if tests didn't run, score correctness how?)
+
+The existing judge prompt in `judge.go` is for retrieval relevance — it returns `{relevant_results: [1,3,5], reasoning: "..."}`. The code quality judge returns a completely different shape.
+
+**Specification needed:**
+
+```
+System prompt:
+  You are an expert Go code reviewer evaluating implementations against
+  task specifications. Score each dimension 0-10 using the rubric below.
+  Return ONLY valid JSON matching the schema.
+
+User prompt template:
+  ## Task Specification
+  {task_spec}
+
+  ## Implementation
+  {implementation_code}
+
+  ## Test Results
+  {test_output}          // stdout/stderr from go test
+  {test_pass_rate}       // e.g., "8/10 tests passed"
+
+  ## Lint Results
+  {lint_output}          // golangci-lint output
+
+  ## Known Pitfalls
+  {pitfall_descriptions} // from pitfalls.yaml, for scoring pitfall avoidance
+
+  [rubric text as currently defined]
+
+  Respond with JSON:
+  {
+    "correctness": <0-10>,
+    "code_quality": <0-10>,
+    "pitfall_avoidance": <0-10>,
+    "completeness": <0-10>,
+    "efficiency": <0-10>,
+    "reasoning": "<brief explanation of scores>"
+  }
+```
+
+The **efficiency dimension** has a specific problem: it requires observing the *process* (thrashing, over-engineering), not just the *output*. The judge only sees final code. Either:
+- Pass the session transcript (or turn count + token count) to the judge
+- Redefine efficiency to be output-only: "Is the solution minimally complex for the requirements?"
+- Drop the efficiency dimension (it's only 10% weight)
+
+#### Gap 3: AnthropicClient cannot be "extended" for multi-turn tool use
+
+The Build Component 6 spec says the synthetic agent runner "extends single-turn `AnthropicClient` in `judge.go` to handle `tool_use` stop reason." In practice, the existing client is not extendable — it needs replacement.
+
+What exists (`judge.go`):
+```go
+type anthropicRequest struct {
+    Model     string             `json:"model"`
+    MaxTokens int                `json:"max_tokens"`
+    System    string             `json:"system,omitempty"`
+    Messages  []anthropicMessage `json:"messages"`
+    // NO tools field
+}
+
+type anthropicMessage struct {
+    Role    string `json:"role"`
+    Content string `json:"content"`  // string only, not content blocks
+}
+
+type anthropicResponse struct {
+    Content []struct {
+        Type string `json:"type"`
+        Text string `json:"text"`   // text only, no tool_use blocks
+    } `json:"content"`
+    // ...
+}
+```
+
+What the synthetic agent needs:
+```go
+type agentRequest struct {
+    Model     string           `json:"model"`
+    MaxTokens int              `json:"max_tokens"`
+    System    string           `json:"system,omitempty"`
+    Messages  []agentMessage   `json:"messages"`
+    Tools     []toolDefinition `json:"tools"`       // NEW: tool schemas
+}
+
+type agentMessage struct {
+    Role    string        `json:"role"`
+    Content []contentBlock `json:"content"`  // CHANGED: content block array, not string
+}
+
+type contentBlock struct {
+    Type    string          `json:"type"`              // "text", "tool_use", "tool_result"
+    Text    string          `json:"text,omitempty"`
+    ID      string          `json:"id,omitempty"`      // tool_use ID
+    Name    string          `json:"name,omitempty"`     // tool name
+    Input   json.RawMessage `json:"input,omitempty"`    // tool input
+    ToolUseID string        `json:"tool_use_id,omitempty"` // for tool_result
+    Content string          `json:"content,omitempty"`  // tool_result text
+    IsError bool            `json:"is_error,omitempty"` // tool_result error flag
+}
+
+type toolDefinition struct {
+    Name        string          `json:"name"`
+    Description string          `json:"description"`
+    InputSchema json.RawMessage `json:"input_schema"`  // JSON Schema
+}
+```
+
+This is ~150 lines of struct definitions + marshaling logic before the conversation loop even starts. The build spec's "~200 lines" estimate for the conversation loop sub-component should be **~350 lines** to include the API types.
+
+#### Gap 4: No tool schemas for the synthetic agent
+
+The synthetic agent sends `tools` definitions to the Anthropic Messages API. These tell the model what tools are available and what parameters they accept. The document's pseudocode lists tool names (`Read`, `Edit`, `Write`, `Glob`, `Grep`, `Bash`, `recall_*`) but doesn't define the schemas.
+
+**Schemas needed** (JSON Schema format for `input_schema`):
+
+| Tool | Required Parameters | Notes |
+|---|---|---|
+| `Read` | `file_path: string` | Optional: `offset: integer`, `limit: integer` |
+| `Write` | `file_path: string`, `content: string` | |
+| `Edit` | `file_path: string`, `old_string: string`, `new_string: string` | Must handle uniqueness errors |
+| `Glob` | `pattern: string` | Optional: `path: string` |
+| `Grep` | `pattern: string` | Optional: `path: string`, `glob: string`, `output_mode: enum` |
+| `Bash` | `command: string` | Optional: `timeout: integer` |
+| `recall_search` | `query: string` | Optional: `limit: integer`, `types: string[]` |
+| `recall_add` | `type: string`, `title: string`, `content: string` | Optional: `tags: string[]`, `scope: string` |
+| `recall_get` | `id: string` | |
+| `recall_feedback` | `item_id: string`, `useful: boolean` | |
+| `flight_recorder_log` | `type: string`, `content: string` | Optional: `metadata: object` |
+
+The RECALL tool schemas can be extracted from `codex/internal/mcp/tools.go` (they already exist as MCP tool definitions). The file operation tool schemas must be authored — they should match Claude Code's tool interface closely enough that the model behaves the same way.
+
+This is a discrete work item (~100 lines of JSON Schema definitions) not accounted for in the build estimate.
+
+#### Gap 5: `task_test.go` hiding mechanism unspecified
+
+The task corpus spec says tests are "hidden from agent" (line 500) but the agent has full `Read`, `Glob`, and `Grep` access to the workspace. Nothing prevents it from reading `task_test.go`, understanding the expected behavior, and coding to pass the tests rather than implementing from the spec.
+
+**Resolution required — pick one:**
+
+- **Option A: Separate directory.** Store tests outside the task repo (e.g., `corpus/validation/task-01/task_test.go`). The runner copies them in *after* the agent finishes but *before* scoring. Agent never sees them.
+- **Option B: Inject at scoring time.** Task repo contains no test file. The scoring pipeline writes `task_test.go` into the repo, then runs `go test`. Cleanest isolation.
+- **Option C: Accept the leak.** Let the agent see the tests. This is closer to real-world development (developers see their test files). Redefine "hidden" to mean "not explicitly provided in the spec" rather than "not accessible." Changes what the experiment measures.
+
+Option B is simplest and cleanest. The task corpus directory structure would change:
+
+```
+task-{id}/
+├── README.md           # Task specification (given to agent)
+├── go.mod
+├── go.sum
+├── existing_code.go    # Code the task builds on (given to agent)
+├── pitfalls.yaml       # RECALL seeds (used by runner, not given to agent)
+└── scoring.yaml        # Scoring config (used by runner, not given to agent)
+
+# Stored separately:
+validation/task-{id}/
+└── task_test.go        # Injected by runner after agent finishes
+```
+
+### Significant Gaps (Cause Ambiguity)
+
+#### Gap 6: `pitfalls.yaml` lacks detection rules
+
+The document shows one example pitfall item (lines 518–528):
+
+```yaml
+- type: failure
+  title: "Thundering herd from retry without jitter"
+  content: |
+    Symptom: ...
+    Fix: Add random jitter (±25% of delay) to each retry interval.
+  tags: ["retry", "backoff", "jitter", "thundering-herd"]
+```
+
+This is sufficient for seeding RECALL (`recall_add` takes type, title, content, tags). But the scoring pipeline's pitfall checker needs **detection rules** — how to determine whether the agent fell into the pitfall. "Missing jitter" means the absence of randomization in backoff delays. You can't grep for the absence of something without knowing what presence looks like.
+
+**Schema extension needed:**
+
+```yaml
+- type: failure
+  title: "Thundering herd from retry without jitter"
+  content: |
+    ...
+  tags: ["retry", "backoff", "jitter", "thundering-herd"]
+
+  # Detection rules (used by scoring pipeline, not seeded to RECALL)
+  detection:
+    method: grep          # "grep", "test", or "judge"
+    # For grep: presence of pattern = pitfall avoided
+    pattern: "rand|jitter|Jitter|randomize"
+    files: ["*.go"]
+    # For test: specific test name that catches the pitfall
+    # test_name: "TestRetryHasJitter"
+    # For judge: LLM judge query
+    # judge_query: "Does the implementation add randomized jitter to retry delays?"
+```
+
+Three detection methods cover different pitfall types:
+- **grep**: Pattern presence/absence (works for "did they add jitter?", "did they add a mutex?")
+- **test**: A specific test case designed to fail if the pitfall is hit (most reliable but requires test authoring)
+- **judge**: LLM judge for subtle pitfalls that can't be detected syntactically
+
+#### Gap 7: `scoring.yaml` not defined
+
+Listed in the task directory structure (line 502) but never specified. Propose:
+
+```yaml
+# scoring.yaml — per-task scoring configuration
+weights:
+  correctness: 0.30      # default from rubric; override per task
+  code_quality: 0.20
+  pitfall_avoidance: 0.25
+  completeness: 0.15
+  efficiency: 0.10
+
+# Optional: task-specific test expectations
+tests:
+  total_expected: 8       # how many tests in task_test.go
+  critical_tests:         # tests that MUST pass for correctness > 5
+    - TestRetryExponentialBackoff
+    - TestRetryJitter
+
+# Optional: lint rule overrides
+lint:
+  ignore_rules: []        # golangci-lint rules to skip for this task
+  required_rules:         # rules that MUST pass (violations = score penalty)
+    - errcheck
+    - govet
+```
+
+If `scoring.yaml` is just the default weights, it's unnecessary (use the rubric defaults). If it has per-task overrides, the schema above is what the scoring pipeline needs to parse.
+
+#### Gap 8: Ralph loop description in document is inaccurate
+
+The document (line 899) claims:
+```bash
+# From edi/internal/assets/ralph/ralph.sh — adapted for eval
+cat task-spec.md | claude -p \
+  --append-system-prompt-file aef-skills-context.md \
+  --allowedTools 'Edit,Write,Bash(go build:*),Bash(go test:*),Read,Glob,Grep'
+```
+
+The actual `ralph.sh` (line 332):
+```bash
+cat .ralph/current-prompt.md | claude -p \
+  --allowedTools 'Edit,Write,Bash(go build:*),Bash(go test:*),Bash(git:*),Read,Glob,Grep'
+```
+
+Differences:
+- No `--append-system-prompt-file` flag — skills are NOT injected via Ralph
+- Ralph includes `Bash(git:*)` in allowedTools — the document omits this
+- Ralph's prompt is built from PRD.json task details + PROMPT.md, not from a skills file
+
+This matters because the Strategy B runner spec says it "adapts the existing ralph.sh pattern" — but the actual pattern doesn't inject skills at all. The runner needs to add `--append-system-prompt-file` (which Ralph doesn't use) or bake skills into the piped prompt.
+
+**Correction**: The document should either fix the Ralph reference or explicitly state that the Strategy B runner *departs* from the Ralph pattern by adding `--append-system-prompt-file`.
+
+#### Gap 9: `--allowedTools` not defined per condition
+
+The eval runner needs a different tool allowlist depending on the condition and what actions are safe:
+
+| Condition | Suggested `--allowedTools` | Rationale |
+|---|---|---|
+| `baseline` | `Edit,Write,Read,Glob,Grep,Bash(go build:*),Bash(go test:*),Bash(gofumpt:*)` | No skills, no hooks, no RECALL, no git |
+| `aef-minimal` | Same as baseline | Hooks configured via `.claude/settings.json`, not via allowedTools |
+| `aef-full` (C1 only) | N/A — tools defined in API `tools` parameter | Synthetic agent controls tool dispatch |
+
+Note: `Bash(git:*)` should probably be excluded to prevent the agent from committing/branching/pushing during eval runs. `Bash(gofumpt:*)` and `Bash(golangci-lint:*)` may be needed if hooks or skills instruct the agent to format/lint.
+
+#### Gap 10: No context window management for synthetic agent
+
+The pricing section estimates cumulative input tokens per task:
+
+| Complexity | Typical Turns | Cumulative Input Tokens |
+|---|---|---|
+| Complex | 15–25 | ~325K |
+
+Claude Sonnet 4.6 has a 200K context window. Claude Opus 4.6 has a 200K context window. A complex task at 325K cumulative input tokens **exceeds the context limit**.
+
+The cumulative token estimate appears to account for the growing conversation across turns (each turn adds the previous response + tool results to the context). But if the context hits the model's limit, the API will return an error.
+
+**Resolution required:**
+
+- **Option A: Truncation.** When context exceeds a threshold (e.g., 180K tokens), drop earlier tool_result content blocks (keep the structure, replace content with "[truncated]"). This mirrors Claude Code's compaction behavior.
+- **Option B: Model selection.** Use only Sonnet/Opus with extended context if available, or limit complex tasks to fewer turns.
+- **Option C: Acknowledge the limit.** Cap `maxTurns` for complex tasks at a level that stays within context. If a complex task can't complete in that budget, it scores 0 on completeness. This is realistic — real Claude Code sessions also have context limits.
+
+The synthetic agent runner spec must address this explicitly, since it's a known constraint that will be hit during the first complex task run.
+
+#### Gap 11: Efficiency scoring requires session data the judge doesn't receive
+
+The LLM judge rubric scores EFFICIENCY (0-10):
+```
+- 10: Direct path to solution, minimal wasted effort
+- 4: Significant thrashing or over-engineering
+- 0: Never converged
+```
+
+But the judge sees only the final implementation, not the session. "Thrashing" and "over-engineering" are process observations, not output observations. The judge cannot score this without one of:
+
+- **Turn count** and **token count** (quantitative proxy for process efficiency)
+- **Session transcript** (full process visibility, but expensive — adds ~100K tokens to the judge prompt)
+- **Summary of actions taken** (a compressed list like "11 Edit calls, 3 failed test runs, 2 approach changes")
+
+**Recommendation**: Pass turn count and a one-line action summary to the judge. Redefine the dimension:
+```
+EFFICIENCY (0-10): Was the task completed efficiently?
+- Context: The agent used {turn_count} turns and {token_count} tokens.
+  Action summary: {action_summary}
+- 10: Completed in minimal turns with direct approach
+- 7: Some iteration but converged
+- 4: Excessive turns or abandoned approaches
+- 0: Hit turn limit without completing
+```
+
+#### Gap 12: Hook configuration format unspecified
+
+The condition configurator says AEF-minimal has hooks "gofumpt, protect-files, verify-quality" but doesn't show the `.claude/settings.json` structure. Claude Code hooks use this format:
+
+```json
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "command": "gofumpt -w $TOOL_FILE_PATH",
+        "timeout": 10000
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "command": "protect-files.sh $TOOL_FILE_PATH",
+        "timeout": 5000
+      }
+    ],
+    "Stop": [
+      {
+        "command": "verify-quality.sh",
+        "timeout": 30000
+      }
+    ]
+  }
+}
+```
+
+The hook scripts themselves (`protect-files.sh`, `verify-quality.sh`) don't exist yet. They're described conceptually in `coding-standards-review.md` but not implemented. For the eval runner:
+
+- **Option A: Implement the hooks.** Write the actual shell scripts. This is additional work not in the build estimate.
+- **Option B: Stub the hooks.** Use minimal scripts that log invocations but don't block. This tests "does the hook mechanism fire?" not "does the hook logic work?"
+- **Option C: Skip hooks for Milestone 1.** Test skills-only first (simpler). Add hooks in Milestone 2. This removes a variable from early experiments.
+
+The hook scripts are a dependency of the condition configurator but aren't listed in the build components.
+
+#### Gap 13: Experiment 3B — no mechanism to ensure Session A encounters the pitfall
+
+The repeat-failure experiment (3B) requires:
+1. Session A implements Task A and hits pitfall P
+2. Pitfall P is captured to RECALL
+3. Session B implements Task B (same pitfall, different context) with RECALL
+
+If Session A avoids the pitfall naturally (Claude is sometimes smart enough), the experiment is invalid — there's nothing to capture to RECALL.
+
+**Resolution required:**
+
+- **Option A: Validate pitfalls via baseline.** Before running 3B, run each Task A under the baseline condition 3 times. If the pitfall is hit < 2/3 times, the pitfall isn't reliable enough — redesign the task. This is noted briefly in the corpus spec ("if baseline failure rate < 50%, the pitfall isn't a good test") but isn't formalized as a validation step.
+- **Option B: Seed the failure artificially.** Don't depend on Session A failing organically. Instead, write the RECALL item as if the failure happened and seed it for Session B. This skips the natural capture step but isolates the question "does RECALL knowledge prevent the failure?" from "does the agent reliably fail without help?"
+- **Option C: Force the failure.** Design Task A such that the spec leads directly into the pitfall (e.g., the starter code has the anti-pattern partially implemented). This makes Session A failure near-certain.
+
+Option B is most practical for evaluation purposes. Option A is most rigorous. Option C is most reliable.
+
+#### Gap 14: Experiment 3C — `recall_add` trigger between sessions unspecified
+
+The longitudinal experiment (3C) needs patterns from Session N available in Session N+1. Two possible models:
+
+- **Agent-driven capture**: The agent calls `recall_add` during Session N as part of normal AEF behavior (edi-core skill instructs this). The runner preserves the RECALL database between sessions.
+- **Runner-driven capture**: The runner analyzes Session N's output, extracts patterns, and calls `recall_add` between sessions. The agent never writes to RECALL.
+
+These test different things. Agent-driven capture tests the full AEF loop (does the agent actually use `recall_add` when instructed?). Runner-driven capture isolates RECALL's value (given good knowledge, does it help?).
+
+**Recommendation**: Agent-driven capture for the AEF-full condition. If the agent doesn't call `recall_add` during a session, that's a finding (skill adherence failure). The runner should verify that RECALL items were added after each session and log a warning if not.
+
+### Minor Gaps (Clarifications Needed)
+
+#### Gap 15: Statistical analysis method unspecified
+
+The document mentions "confidence intervals" (line 1342) and "p < 0.05" (line 342) but doesn't name the statistical tests. For small samples (n=10-30) with non-normal distributions:
+
+- **Between conditions**: Mann-Whitney U test (non-parametric, doesn't assume normality)
+- **Confidence intervals**: Bootstrap (10,000 resamples) for median differences
+- **Paired comparisons** (3B task pairs): Wilcoxon signed-rank test
+- **Trend analysis** (3C): Spearman's rank correlation for quality-over-sessions
+
+These should be specified so results are reproducible.
+
+#### Gap 16: Model version not configurable
+
+The existing `AnthropicClient` hardcodes `claude-sonnet-4-20250514`. The pricing section computes costs for both Sonnet 4.6 and Opus 4.6. The runner needs a `--model` flag. This is trivial to implement but should be noted.
+
+#### Gap 17: `--append-system-prompt-file` concatenation order
+
+If multiple skill files are concatenated into one file for `--append-system-prompt-file`, the order matters (earlier content may be weighed more heavily by the model). The condition configurator should specify:
+
+1. `edi-core/SKILL.md` (identity + core behaviors)
+2. `coding/SKILL.md` (Go coding standards)
+3. `testing/SKILL.md` (test-driven development)
+4. `plan-review/SKILL.md` (architectural review)
+5. `retrieval-judge/SKILL.md` (search result filtering) — only for AEF-full
+
+Total: ~876 lines (~1,726 if all 7 skills included). This fits within system prompt limits.
+
+#### Gap 18: No results reporting queries
+
+The results database schema is defined but the query API isn't. The claim validation table needs these queries at minimum:
+
+```sql
+-- Per-condition median for each metric (Experiment 3A)
+SELECT condition,
+  MEDIAN(judge_combined) as median_quality,
+  MEDIAN(CAST(pitfalls_avoided AS REAL) / pitfalls_total) as median_pitfall_rate,
+  AVG(CASE WHEN tests_pass THEN 1.0 ELSE 0.0 END) as test_pass_rate,
+  AVG(CASE WHEN lint_clean THEN 1.0 ELSE 0.0 END) as lint_clean_rate
+FROM eval_runs
+WHERE experiment = '3A'
+GROUP BY condition;
+
+-- Per-complexity breakdown
+SELECT condition, task_complexity,
+  MEDIAN(judge_combined) as median_quality
+FROM eval_runs
+WHERE experiment = '3A'
+GROUP BY condition, task_complexity;
+
+-- RECALL item utilization (was seeded knowledge actually used?)
+SELECT er.condition,
+  AVG(CASE WHEN ers.was_retrieved THEN 1.0 ELSE 0.0 END) as retrieval_rate,
+  AVG(CASE WHEN ers.was_kept THEN 1.0 ELSE 0.0 END) as kept_rate,
+  AVG(CASE WHEN ers.was_used THEN 1.0 ELSE 0.0 END) as usage_rate
+FROM eval_runs er
+JOIN eval_recall_state ers ON er.run_id = ers.run_id
+WHERE er.condition = 'aef-full'
+GROUP BY er.condition;
+```
+
+Note: SQLite doesn't have a built-in `MEDIAN` function. The Go code needs to compute medians in-application or use a SQLite extension.
+
+### Summary: Gap Severity by Build Component
+
+| Build Component | Critical Gaps | Significant Gaps | Minor Gaps | Build-Ready? |
+|---|---|---|---|---|
+| 1. Results Database | — | — | Gap 18 (queries) | **Yes** (schema defined) |
+| 2. Scoring Pipeline | Gap 2 (judge prompt) | Gap 6 (pitfall detection), Gap 7 (scoring.yaml), Gap 11 (efficiency) | — | **No** — needs prompt template + detection rules |
+| 3. Strategy A Extensions | — | — | — | **Yes** (well-specified) |
+| 4. Condition Configurator | Gap 1 (skills ↔ RECALL) | Gap 9 (allowedTools), Gap 12 (hook format) | Gap 17 (concat order) | **No** — needs decision on skills-without-RECALL |
+| 5. Strategy B Runner | — | Gap 8 (Ralph inaccuracy), Gap 9 (allowedTools) | — | **Mostly** — minor clarifications |
+| 6. Synthetic Agent Runner | Gap 3 (API client), Gap 4 (tool schemas) | Gap 10 (context limits) | Gap 16 (model config) | **No** — needs API types + tool schemas |
+| 7. Task Corpus | Gap 5 (test hiding) | Gap 6 (detection rules), Gap 13 (3B pitfall guarantee) | — | **No** — needs test isolation + detection mechanism |
+
+**Components ready to build now**: Results Database (#1), Strategy A Extensions (#3).
+
+**Components blocked on decisions**: Condition Configurator (#4, needs Gap 1 decision), Task Corpus (#7, needs Gap 5 decision).
+
+**Components blocked on specs**: Scoring Pipeline (#2, needs judge prompt), Synthetic Agent Runner (#6, needs API types + tool schemas).
