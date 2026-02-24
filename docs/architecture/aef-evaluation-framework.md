@@ -835,3 +835,265 @@ The majority of cost is in Experiment 3A (270 runs), which is also the most impo
 5. **Production incident response** — The incident agent mode is not evaluated. Building realistic incident scenarios requires production-like environments.
 
 These limitations should be acknowledged in the final report. They represent future evaluation work, not gaps in this framework.
+
+---
+
+## How To Actually Run This
+
+> Added 2026-02-24 after critical review of execution feasibility.
+
+The experiments above describe *what* to measure. This section describes *how* to execute them, given the actual infrastructure that exists. It is honest about what's easy, what's hard, and what's impractical.
+
+### The Execution Gap
+
+Most Level 3-4 experiments assume you can programmatically drive Claude Code through tasks while it has access to MCP tools (RECALL). In practice:
+
+| Invocation Method | MCP Tools? | Programmatic? | Captures Output? |
+|---|---|---|---|
+| `claude -p` (pipe mode) | No | Yes | Yes |
+| `syscall.Exec` (EDI launch) | Yes (via .mcp.json) | No (replaces process) | No |
+| Direct Anthropic Messages API | No (model only) | Yes | Yes |
+| Existing EvalHarness (MCP client) | Yes (direct MCP) | Yes | Yes |
+
+**The problem**: No existing method gives you both MCP tool access AND programmatic control of full Claude Code sessions. `claude -p` can run tasks but can't use RECALL. The EvalHarness can test RECALL but doesn't run Claude Code.
+
+### Three Execution Strategies
+
+Each experiment maps to one of three execution strategies, depending on what it actually tests.
+
+#### Strategy A: Direct MCP Testing (Levels 1-2)
+
+**What**: Test RECALL and its integrations by calling the MCP server directly, without Claude Code in the loop.
+
+**How**: Extend the existing `codex/eval/` harness. The `MCPClient` in `mcpclient.go` already communicates with the RECALL MCP server via JSON-RPC over io.Pipe. The `JudgeHarness` already calls the Anthropic Messages API for LLM-as-judge scoring.
+
+**Runnable today**:
+```bash
+# Level 1: RECALL retrieval quality (already implemented)
+go test -tags "fts5,evalintegration" ./codex/eval/... -run TestE2E
+
+# Level 1: Judge filtering quality (already implemented)
+go test -tags "fts5,evalintegration" ./codex/eval/... -run TestJudge
+```
+
+**Extends to**: Experiments 1C, 2A, 2B, 2D. All of these test RECALL behavior directly — they don't need Claude Code making decisions, they need the MCP tools working correctly and the LLM judge evaluating results.
+
+**Implementation effort**: 2-3 days of Go code extending the existing harness.
+
+**What this proves**: RECALL retrieves relevant knowledge (design claim 1), retrieval-judge filters noise (design claim 2), plan-review can surface past failures (design claim 3).
+
+#### Strategy B: Pipe Mode Testing (Level 3 — Skills and Hooks)
+
+**What**: Test whether AEF's skills and hooks improve Claude Code's behavior on implementation tasks, without RECALL.
+
+**How**: Use `claude -p` with `--append-system-prompt-file` to inject skills, and `.claude/settings.json` to configure hooks. Pipe task specifications in, capture output, run automated scoring.
+
+**Runnable today** (the Ralph loop already does this):
+```bash
+# From edi/internal/assets/ralph/ralph.sh — adapted for eval
+cat task-spec.md | claude -p \
+  --append-system-prompt-file aef-skills-context.md \
+  --allowedTools 'Edit,Write,Bash(go build:*),Bash(go test:*),Read,Glob,Grep' \
+  2>&1 | tee output.txt
+```
+
+**Extends to**: Experiments 3A (skills+hooks condition only), 3D (hook adherence). These test whether skills shape behavior and hooks enforce standards — they don't need RECALL.
+
+**What this can test**:
+- **AEF-minimal condition** (skills + hooks, no RECALL): Fully testable
+- **Baseline condition** (no skills, no hooks): Fully testable
+- **AEF-full condition** (skills + hooks + RECALL): **NOT testable** via pipe mode
+
+**Implementation effort**: 3-5 days to build the task runner, scoring pipeline, and results database.
+
+**What this proves**: Skills influence agent behavior (design claim 4), hooks enforce mechanical standards (design claim 5). The skills+hooks value proposition.
+
+#### Strategy C: Controlled Session Testing (Level 3 — RECALL Integration)
+
+**What**: Test whether RECALL knowledge actually helps Claude Code produce better code. This is the hardest to automate because it requires both MCP access and task execution.
+
+**Three sub-approaches**, in order of practicality:
+
+**C1: Synthetic agent simulation** (most practical)
+- Use the Anthropic Messages API directly with tool definitions that match RECALL's MCP tools
+- Implement RECALL tool calls by proxying to the actual MCP server
+- This creates a "Claude Code simulator" — same model, same tools, but under programmatic control
+- The agent sees the same tool interface and responds identically; the difference is that *we* control the conversation loop instead of Claude Code's runtime
+
+```
+┌──────────────────────────────────────────────────┐
+│              EVAL RUNNER (Go)                     │
+│                                                   │
+│  1. Load task spec                                │
+│  2. Build system prompt (with/without skills)     │
+│  3. Start RECALL MCP server                       │
+│  4. Call Anthropic Messages API in a loop:        │
+│     - Send task prompt                            │
+│     - Model requests tool_use → proxy to MCP      │
+│     - Model requests Edit/Write → apply to repo   │
+│     - Model requests Bash → execute in sandbox    │
+│     - Continue until model says "done" or limit   │
+│  5. Run scoring (tests, lint, judge)              │
+│                                                   │
+└──────────────────────────────────────────────────┘
+```
+
+**Limitation**: This doesn't test Claude Code's specific runtime behavior (hook execution, context management, compaction). It tests the model + tools + skills + RECALL combination.
+
+**Implementation effort**: 5-8 days. Requires building a tool-use conversation loop, tool proxying, and sandboxed execution.
+
+**C2: Orchestrated interactive sessions** (moderate practicality)
+- Launch Claude Code with MCP configured (via EDI or manual .mcp.json)
+- Use `claude --resume` or session files to inject task prompts
+- Capture results by reading modified files from the git repo after each session
+- Semi-automated: session launch is scripted, but Claude Code runs interactively
+
+**Limitation**: Harder to automate fully. Each session requires waiting for Claude Code to finish, then inspecting the workspace. Practical for 10-30 runs, not 270.
+
+**Implementation effort**: 2-3 days for the orchestration script.
+
+**C3: Manual observation** (most accurate, least scalable)
+- Run actual AEF sessions through the eval tasks
+- An evaluator observes and scores each session
+- Record transcripts for offline LLM-judge scoring
+
+**Limitation**: Only practical for 10-20 runs. Sufficient for design validation, not for statistical significance.
+
+**Implementation effort**: Minimal (just the scoring rubric).
+
+### Recommended Execution Path
+
+Given the goal is to **prove the design claims** (not prove production viability), here's the practical execution path:
+
+#### Week 1: Level 1-2 via Strategy A (Direct MCP)
+
+**Effort**: 3 days development, 1 day running.
+
+| Experiment | Method | Runs | Proves |
+|---|---|---|---|
+| 1C: v0 vs Codex retrieval | Existing EvalHarness | 2 | Codex improvement claim |
+| 2A: Retrieval-judge filtering | Extended JudgeHarness | 20 | Judge adds precision |
+| 2B: Plan-review failure detection | New harness extension | 10 | Cross-reference claim |
+| 2D: Audit trail completeness | New harness extension | 10 | Flight recorder claim |
+
+**Deliverable**: Measured retrieval quality and integration metrics.
+
+#### Week 2-3: Level 3 Skills/Hooks via Strategy B (Pipe Mode)
+
+**Effort**: 5 days development, 3 days running.
+
+| Experiment | Method | Runs | Proves |
+|---|---|---|---|
+| 3A-partial: Baseline vs AEF-minimal | `claude -p` with/without skills | 60 | Skills + hooks improve quality |
+| 3D: Hook adherence | `claude -p` with/without hooks | 40 | Hooks improve protocol adherence |
+
+**Deliverable**: Measured skill/hook impact without RECALL.
+
+#### Week 4-5: Level 3 RECALL via Strategy C1 (Synthetic Agent)
+
+**Effort**: 8 days development, 3 days running.
+
+| Experiment | Method | Runs | Proves |
+|---|---|---|---|
+| 3A-full: All three conditions | Synthetic agent with MCP proxy | 90 | RECALL adds value beyond skills |
+| 3B: Repeat failure prevention | Two-session synthetic agent | 30 | Knowledge prevents repeat failures |
+| 3C: Longitudinal accumulation | Five-session synthetic agent | 15 | Knowledge improves over time |
+
+**Deliverable**: Measured RECALL impact including ablation (AEF-full vs AEF-minimal).
+
+#### Week 6: Analysis and Report
+
+**Effort**: 3 days.
+
+Compile results, run statistical tests, produce the claim validation table.
+
+### Revised Cost Estimate
+
+| Phase | Runs | API Cost | Development | Wall Clock |
+|---|---|---|---|---|
+| Level 1-2 (Strategy A) | ~42 | $50-80 | 3 days | 1 week |
+| Level 3 skills/hooks (Strategy B) | ~100 | $300-500 | 5 days | 1.5 weeks |
+| Level 3 RECALL (Strategy C1) | ~135 | $500-800 | 8 days | 2 weeks |
+| Analysis + report | — | $50-100 (judge) | 3 days | 0.5 weeks |
+| **Total** | **~277** | **$900-1,480** | **19 days** | **5 weeks** |
+
+This is significantly more honest than the original estimate. The development effort (19 days) dominates the API cost. The Strategy C1 synthetic agent is the biggest investment — but it's also what enables testing the core design claim.
+
+### What To Cut If Time-Constrained
+
+If you have 2 weeks instead of 5:
+
+| Keep | Cut | Reason |
+|---|---|---|
+| Level 1-2 (Strategy A) | Level 4 (AEF-bench, comparative) | Level 4 proves market position, not design |
+| 3D: Hook adherence (Strategy B) | 3A-full 270-run version | 30 runs gives directional signal |
+| 3B: Repeat failure prevention (C1) | 3C: Longitudinal | 3B is the clearest RECALL test |
+| 3A-partial: 30 runs | 3A: 270-run statistical version | Design validation doesn't need p-values |
+
+**Minimum viable evaluation** (2 weeks, ~$400-600):
+
+1. Run existing EvalHarness + JudgeHarness → Level 1 baseline
+2. Extend harness for 2B (plan-review) → Level 2 integration
+3. Build pipe-mode runner for 10 tasks × 2 conditions → Level 3 skills/hooks
+4. Run 10 task pairs via Strategy C2 (semi-automated) → Level 3 RECALL
+5. Write claim validation table
+
+This won't produce statistically rigorous results, but it will produce measured evidence for every design claim — replacing self-assessed ratings with actual numbers, even if the sample sizes are small.
+
+---
+
+## Rigor Assessment: Is This Enough?
+
+### What "Proving the Design" Means
+
+There are three different things you might want to prove:
+
+| Goal | What It Requires | This Framework Covers? |
+|---|---|---|
+| **Design validity** | Each component works as specified | Yes (Levels 1-2) |
+| **Design value** | Components together produce measurable benefit | Partially (Level 3) |
+| **Production viability** | System works at scale with real teams | No (requires human study) |
+
+For **proving the design claims** specifically — the stated goal — the framework is rigorous at Levels 1-2 and directionally useful at Level 3. Here's why:
+
+### Where the Framework Is Rigorous
+
+**RECALL retrieval quality** (Level 1): The EvalHarness with PayFlow collection provides proper information retrieval evaluation. 20 queries across 3 categories (semantic, keyword, hybrid-advantage), with ground truth annotations, computing standard IR metrics (Recall@K, Precision@K, nDCG@10, MRR). This is the same methodology used in academic IR evaluation. The existing benchmark results (Recall@10: 0.91, nDCG@10: 0.78) are meaningful.
+
+**Retrieval-judge filtering** (Level 2): The JudgeHarness uses an established LLM-as-judge methodology with ground truth comparison. Computing judge precision, recall, F1, and filtering rate against known-relevant documents is standard practice.
+
+**Hook execution** (Level 1): Binary pass/fail — hooks either fire or they don't. No statistical subtlety needed.
+
+### Where the Framework Is Directional But Not Definitive
+
+**Skills improving behavior** (Level 3): Comparing with-skills vs without-skills is a valid experimental design, but:
+- LLM judge scoring introduces variance (the judge may score the same code differently across runs)
+- 10-30 tasks is enough for directional signal, not for statistical significance
+- Claude's inherent non-determinism means the same task can produce different results
+
+**Mitigation**: Run each task 3 times, report medians and ranges, use automated metrics (test pass/fail, lint count) where possible instead of LLM judge. Automated metrics have zero variance.
+
+**RECALL preventing repeat failures** (Level 3): This is the clearest design claim to test — either RECALL knowledge prevents the repeat failure or it doesn't. The task-pair design is strong. But:
+- 10 task pairs is a small sample
+- Claude may avoid the pitfall even without RECALL (inherent model knowledge)
+- The pitfall must be detectable by automated tests, not just LLM judgment
+
+**Mitigation**: Design pitfalls that Claude reliably falls into without help (validate this in the baseline condition first). If the baseline failure rate is < 50%, the pitfall isn't a good test.
+
+### Where the Framework Is Weak
+
+**"Compound value"** (the claim that integrations multiply value): The framework tests each component's contribution but doesn't rigorously test compound effects. A proper test would require a full factorial design (2^N conditions for N components), which is exponentially expensive. The 3-condition comparison (baseline / AEF-minimal / AEF-full) captures the gross effect but not the interaction terms.
+
+**"Improves with use"** (Experiment 3C): 5 sessions is too few for a trend. The claim is inherently about long-term dynamics that can't be compressed into a 5-session experiment. This experiment can show *whether* accumulation happens at all, but not *how much* it improves or whether it plateaus.
+
+**LLM-as-judge reliability**: The judge itself is a source of noise. The framework defines a rubric but doesn't measure inter-judge agreement (would a different Claude instance score the same code the same way?). Adding 3-judge consensus scoring would help but triples cost.
+
+### Honest Conclusion
+
+**For proving design claims**: The framework is sufficient. It maps every claim to a measurable experiment and can produce "yes, this works" or "no, this doesn't" for each one. The sample sizes are small but adequate for design validation — you're not publishing a paper, you're deciding whether to invest further.
+
+**For proving market viability**: The framework is insufficient. That requires real developers, real projects, and longitudinal data that no automated evaluation can provide.
+
+**For identifying what to cut**: The framework is excellent at this. If Experiment 3A shows AEF-full ≈ AEF-minimal, you know RECALL isn't pulling its weight. If 3D shows hooks don't improve adherence, you know the hook architecture needs rethinking. The framework's greatest value may be in what it *disproves*.
+
+**The pass/fail thresholds are arbitrary**: Why ≥20 percentage points for pitfall avoidance? Why ≥10 for combined quality? These are judgment calls, not derived from theory. They should be treated as "meaningful improvement" guidelines, not hard cutoffs. The actual numbers matter more than whether they cross a pre-defined line.
