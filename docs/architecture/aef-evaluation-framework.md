@@ -1076,40 +1076,45 @@ Development effort (19 days) dominates API cost by a wide margin. At any reasona
 
 The evaluation should be run incrementally, not all-at-once. Each milestone builds on the previous one and answers a sharper question. Stop at the milestone that matches your confidence needs.
 
-#### Milestone 1: Smoke Test — "Does this work at all?" (~60 runs, ~$55)
+#### Milestone 1: Smoke Test — "Does this work at all?" (~27 runs, ~$35)
 
-| Experiment | Runs | Strategy | Sonnet Cost | What It Tests |
+Five components need a go/no-go signal. A smoke test needs 5–10 runs per component — enough to see "this is broken" or "this shows promise," not enough to quantify effect size.
+
+| Component | Experiment | Runs | Strategy | Sonnet Cost |
 |---|---|---|---|---|
-| 1C: v0 vs Codex retrieval | 2 | A | <$1 | Codex improvement claim |
-| 2A: Judge filtering quality | 20 | A | <$1 | Judge adds precision |
-| 3A-smoke: 10 tasks × 3 conditions × 1 attempt | 30 | 20 B + 10 C1 | ~$40 | Any signal that AEF beats baseline? |
-| 3D-smoke: 5 sessions × 2 conditions | 10 | B | ~$13 | Do hooks change behavior? |
-| **Total** | **62** | | **~$55** | |
+| RECALL retrieval | 1C: v0 vs Codex | 1 | A | <$0.01 |
+| Retrieval-judge | 2A: Judge filtering (5 queries) | 5 | A | ~$0.10 |
+| Skills impact | 3A-smoke: 5 tasks, baseline vs AEF-minimal | 10³ | B | ~$13 |
+| RECALL integration | 3A-smoke: 5 tasks, AEF-minimal vs AEF-full | 5³ | C1 | ~$8 |
+| Hook adherence | 3D-smoke: 3 sessions × 2 conditions | 6 | B | ~$8 |
+| **Total** | | **27** | | **~$29** |
 
-**Duration**: 1–2 weeks (3 days dev + 2 days running).
+³ The 5 AEF-minimal runs are shared between "Skills impact" and "RECALL integration" (same tasks, same condition). Total unique implementation runs: 5 baseline + 5 AEF-minimal + 5 AEF-full + 6 hook sessions = 21.
 
-**Decision gate**: If 3A-smoke shows zero difference between AEF and baseline across 10 tasks, investigate why before investing further. If there's a directional signal (even small), proceed to Milestone 2. The purpose is to fail fast and cheaply — not to prove anything.
+**Duration**: 1–2 weeks (3 days dev + 1 day running).
 
-#### Milestone 2: Design Validation — "Is each claim supported?" (~200 runs, ~$210)
+**Decision gate**: If 3A-smoke shows zero difference between AEF and baseline across 5 tasks, investigate why before investing further. If there's a directional signal (even small), proceed to Milestone 2. The purpose is to fail fast and cheaply — not to prove anything.
 
-Builds on Milestone 1. Adds enough runs to see patterns, tests every design claim.
+#### Milestone 2: Design Validation — "Is each claim supported?" (~190 runs, ~$200)
+
+Builds on Milestone 1. Expands to the full 30-task corpus and adds the repeat-failure experiment — the clearest test of RECALL's value.
 
 | Experiment | Incremental Runs | Strategy | Sonnet Cost | What It Tests |
 |---|---|---|---|---|
-| 3A: Full 30 tasks × 3 conditions × 1 attempt | +60 (90 total) | 40 B + 20 C1 | ~$80 | AEF vs baseline across full task corpus |
+| 3A: Full 30 tasks × 3 conditions × 1 attempt | +75 (90 total) | 50 B + 25 C1 | ~$100 | AEF vs baseline across full task corpus |
 | 3B: 10 task pairs × 2 conditions × 1 attempt | +20 | 10 B + 10 C1 | ~$28 | Does RECALL prevent repeat failures? |
-| 3D: Full 20 sessions × 2 conditions | +30 (40 total) | B | ~$38 | Hook adherence at scale |
+| 3D: Full 20 sessions × 2 conditions | +34 (40 total) | B | ~$43 | Hook adherence at scale |
 | 2B: Plan-review failure detection | +10 | A | <$1 | Cross-reference claim |
 | 2D: Audit trail completeness | +10 | A | <$1 | Flight recorder claim |
-| **Total** | **+130 (192 cumulative)** | | **+$147 (~$202 cumulative)** | |
+| **Total** | **+149 (190 cumulative)** | | **+$172 (~$201 cumulative)** | |
 
 **Duration**: 3–4 weeks cumulative (8 days dev + 4 days running).
 
 **Decision gate**: At 90 implementation runs (30 tasks × 3 conditions), you have enough data to compute per-condition medians for every metric. If AEF-full and AEF-minimal show the same pitfall avoidance rate, RECALL is not adding value — that's a real finding. If hooks don't improve adherence across 40 sessions, the hook architecture needs rethinking. This milestone produces a claim validation table with "supported" / "not supported" for each design claim.
 
-**This is the right stopping point for design validation.** 200 runs tests every claim with enough samples to trust the direction. The results won't have tight confidence intervals, but they'll tell you what works and what doesn't.
+**This is the right stopping point for design validation.** ~190 runs tests every claim with enough samples to trust the direction. The results won't have tight confidence intervals, but they'll tell you what works and what doesn't.
 
-#### Milestone 3: Statistical Confidence — "How confident are we?" (~660 runs, ~$774)
+#### Milestone 3: Statistical Confidence — "How confident are we?" (~620 runs, ~$775)
 
 Builds on Milestone 2. Adds repeat trials for variance estimation and Level 4 comparative benchmarks.
 
@@ -1120,7 +1125,7 @@ Builds on Milestone 2. Adds repeat trials for variance estimation and Level 4 co
 | 3C: Longitudinal (5 sessions × 2 cond × 3 trials) | +30 | 15 B + 15 C1 | ~$41 | "Improves with use" claim |
 | 4A: AEF-bench (50 tasks × 2 conditions) | +100 | 50 B + 50 C1 | ~$138 | Standardized benchmark performance |
 | 4B: Comparative (20 tasks × 4 systems) | +80 | B | ~$100 | Market position |
-| **Total** | **+430 (660 cumulative)** | | **+$574 (~$774 cumulative)** | |
+| **Total** | **+430 (620 cumulative)** | | **+$574 (~$775 cumulative)** | |
 
 **Duration**: 5–6 weeks cumulative (19 days dev + 5 days running).
 
@@ -1130,11 +1135,11 @@ Builds on Milestone 2. Adds repeat trials for variance estimation and Level 4 co
 
 | Milestone | Cumulative Runs | Sonnet 4.6 Cost | Opus 4.6 Cost | Wall Clock | What You Learn |
 |---|---|---|---|---|---|
-| 1: Smoke Test | ~60 | ~$55 | ~$90 | 1–2 weeks | Go / no-go signal for each component |
-| 2: Design Validation | ~200 | ~$210 | ~$350 | 3–4 weeks | Supported / not-supported for each design claim |
-| 3: Statistical Confidence | ~660 | ~$774 | ~$1,300 | 5–6 weeks | Quantified effect sizes with confidence intervals |
+| 1: Smoke Test | ~27 | ~$29 | ~$50 | 1–2 weeks | Go / no-go signal per component (5 components, 5–10 runs each) |
+| 2: Design Validation | ~190 | ~$201 | ~$340 | 3–4 weeks | Supported / not-supported for each design claim |
+| 3: Statistical Confidence | ~620 | ~$775 | ~$1,300 | 5–6 weeks | Quantified effect sizes with confidence intervals |
 
-The step from Milestone 1 to 2 costs ~$155 and adds substantial evidence. The step from Milestone 2 to 3 costs ~$564 and adds statistical rigor. Whether that rigor is worth 3× the cost depends on the audience — internal design decisions need Milestone 2; external claims need Milestone 3.
+The step from Milestone 1 to 2 costs ~$172 and adds substantial evidence. The step from Milestone 2 to 3 costs ~$574 and adds statistical rigor. Whether that rigor is worth 3× the cost depends on the audience — internal design decisions need Milestone 2; external claims need Milestone 3.
 
 ---
 
