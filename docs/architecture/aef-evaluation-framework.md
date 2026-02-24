@@ -965,6 +965,224 @@ cat task-spec.md | claude -p \
 
 **Implementation effort**: Minimal (just the scoring rubric).
 
+### Build Specification
+
+This section inventories what exists and what needs building. Each component is mapped to the strategy it supports and the experiments it enables.
+
+#### What Exists
+
+| Component | Location | What It Does | Used By |
+|---|---|---|---|
+| MCPClient | `codex/eval/mcpclient.go` | JSON-RPC client for RECALL MCP server via io.Pipe (in-process, no subprocess) | Strategy A, C1 |
+| EvalHarness | `codex/eval/harness.go` | 8-phase pipeline: protocol check, indexing, retrieval eval, audit trail | Strategy A |
+| JudgeHarness | `codex/eval/judge.go` | LLM-as-judge via Anthropic Messages API (single-turn); includes AnthropicClient with retry | Strategy A |
+| IR Metrics | `codex/eval/metrics.go` | Recall@K, Precision@K, nDCG, MRR | Strategy A |
+| Judge Metrics | `codex/eval/judge_metrics.go` | Per-query judge precision, recall, F1, filtering rate, per-category aggregation | Strategy A |
+| Report Generator | `codex/eval/report.go` | Text + JSON output of eval results | Strategy A |
+| PayFlow Corpus | `codex/eval/testdata_payflow.go` | 30 docs, 20 ground-truth queries across 3 categories (semantic, keyword, hybrid-advantage) | Strategy A |
+| MCP Server | `codex/internal/mcp/server.go` + `tools.go` | JSON-RPC handler, 5 tools: recall_search/get/add, recall_feedback, flight_recorder_log | Strategy A, C1 |
+| Ralph Loop | `edi/internal/assets/ralph/ralph.sh` | `claude -p` invocation with `--append-system-prompt-file` skills injection, task iteration from PRD.json | Strategy B (pattern) |
+| SQLite Schema | `edi/internal/recall/schema.sql` | items, vectors, flight_recorder, feedback tables with FTS5 virtual table | All |
+| SearchEngine | `codex/internal/search/engine.go` | Hybrid search: vector cosine similarity + FTS5 BM25 + RRF fusion | Strategy A, C1 |
+
+**What's runnable today:**
+
+```bash
+# RECALL retrieval quality (Level 1)
+go test -tags "fts5,evalintegration" ./codex/eval/... -run TestE2E
+
+# Judge filtering quality (Level 1)
+go test -tags "fts5,evalintegration" ./codex/eval/... -run TestJudge
+```
+
+#### What Needs Building
+
+Seven components, listed in dependency order. Components 1–6 are engineering work; component 7 is authoring work that can be parallelized.
+
+**1. Results Database** — 1–2 days
+
+| | |
+|---|---|
+| Dependencies | None |
+| Used by | All strategies |
+| Enables | Metric storage, cross-run analysis |
+
+The `eval_runs` and `eval_recall_state` schemas are defined in the Results Database Schema section of this document. Implementation: add a migration to `edi/internal/recall/schema.sql`, write Go accessors (insert run, query by experiment/condition, compute per-condition medians). New file: `codex/eval/results.go`, ~200 lines.
+
+**2. Scoring Pipeline** — 2–3 days
+
+| | |
+|---|---|
+| Dependencies | Results database |
+| Used by | Strategies B, C1 |
+| Enables | Automated quality measurement after each implementation run |
+
+After each run, execute in the task repo directory:
+
+1. `go test -race -count=1 ./...` → parse exit code + test output for pass/fail counts
+2. `golangci-lint run` → count violations
+3. Pitfall check: grep implementation for anti-patterns listed in `pitfalls.yaml`
+4. LLM judge: call Anthropic Messages API with the 5-dimension quality rubric (correctness, code quality, pitfall avoidance, completeness, efficiency). Parse scored response.
+5. Compute combined quality score (weighted aggregate) and write to `eval_runs`
+
+The Anthropic API client exists in `judge.go` (single-turn). The quality rubric is defined in the LLM Judge Rubric section of this document. What's new: the judge prompt for code quality (vs retrieval quality), the automated test/lint runners, and the pitfall checker. New file: `codex/eval/scorer.go`, ~400 lines.
+
+**3. Strategy A Extensions** — 2–3 days
+
+| | |
+|---|---|
+| Dependencies | Results database |
+| Used by | Experiments 2A (enhanced), 2B, 2D |
+| Enables | Level 1–2 completeness |
+
+Three additions to the existing harness:
+
+- **2A**: Add `FalseFilteringRate` to `judge_metrics.go` — count ground-truth relevant results the judge incorrectly drops. ~30 lines; data already available, just not computed.
+- **2B**: New `PlanReviewHarness` — seed RECALL with 10 failure items via `MCPClient.RecallAdd()`, present 10 architectural plans to the plan-review skill via Messages API, score detection rate (did the response reference the relevant failure?). ~200 lines, extends `judge.go` pattern.
+- **2D**: Extend `TestAuditTrail` in `harness.go` to compute coverage percentages: % of `recall_search` calls with matching `retrieval_query` entries, % with matching `retrieval_judgment` entries. Currently boolean pass/fail; needs quantification. ~50 lines.
+
+**4. Condition Configurator** — 1 day
+
+| | |
+|---|---|
+| Dependencies | None (consumed by runners) |
+| Used by | Strategies B, C1 |
+| Enables | Reproducible condition setup |
+
+Given a condition name, produce the configuration for a run:
+
+| Condition | System Prompt | Hooks | RECALL Seeds | RECALL Tools |
+|---|---|---|---|---|
+| `baseline` | Empty | None | None | None |
+| `aef-minimal` | Skills (edi-core, coding, testing, plan-review) | gofumpt, protect-files, verify-quality | None | None |
+| `aef-full` | Skills (same as minimal) | Same as minimal | Pitfalls from `pitfalls.yaml` | recall_search, recall_add |
+
+New file: `codex/eval/condition.go`, ~100 lines. Config struct + factory function.
+
+**5. Strategy B Runner (Pipe Mode)** — 3–4 days
+
+| | |
+|---|---|
+| Dependencies | Scoring pipeline, condition configurator |
+| Used by | Experiments 3A (baseline + AEF-minimal conditions), 3D |
+| Enables | Skills + hooks testing without RECALL |
+
+Per task:
+1. Copy task repo to temp directory (isolated workspace)
+2. Apply condition configuration (system prompt file, hooks in `.claude/settings.json`)
+3. Invoke: `cat README.md | claude -p --append-system-prompt-file <skills> --allowedTools <allowlist>`
+4. Capture stdout/stderr and list modified files via `git diff`
+5. Run scoring pipeline against the modified repo
+6. Write results to `eval_runs`, clean up temp directory
+
+Adapts the existing `ralph.sh` invocation pattern into Go with automated scoring. The `claude -p` invocation exists; the orchestration and scoring around it don't. New file: `codex/eval/runner_pipe.go`, ~300 lines.
+
+**6. Synthetic Agent Runner (Strategy C1)** — 5–8 days, **critical path**
+
+| | |
+|---|---|
+| Dependencies | Scoring pipeline, condition configurator, MCPClient (exists), AnthropicClient (exists) |
+| Used by | Experiments 3A (AEF-full condition), 3B, 3C |
+| Enables | Testing whether RECALL knowledge improves implementation quality |
+
+A multi-turn tool-use conversation loop that gives the model the same tools as Claude Code but under programmatic control:
+
+```
+ConversationLoop(taskSpec, condition, repo):
+    messages = [systemPrompt, taskSpec]
+    mcpClient = bootMCPServer(condition.recallSeeds)
+
+    for turn = 0; turn < maxTurns; turn++:
+        response = anthropic.Messages(messages)
+
+        for each tool_use in response.content:
+            result = dispatch(tool_use):
+                recall_*     → mcpClient.CallTool(tool_use)
+                Read         → os.ReadFile(repo + path)
+                Edit/Write   → applyFileChange(repo + path, ...)
+                Glob         → filepath.Glob(repo + pattern)
+                Grep         → exec("rg", pattern, repo)
+                Bash         → sandboxedExec(cmd, repo, allowlist, timeout)
+            messages.append(tool_result)
+
+        if response.stop_reason == "end_turn":
+            break
+
+    return runScoringPipeline(repo)
+```
+
+Four sub-components:
+
+| Sub-component | Lines | What's New |
+|---|---|---|
+| Multi-turn conversation loop | ~200 | Extends single-turn `AnthropicClient` in `judge.go` to handle `tool_use` stop reason, accumulate messages |
+| Tool dispatcher | ~150 | Route `tool_use` blocks: RECALL → MCPClient (exists), file ops → os package, Bash → exec |
+| Bash sandbox | ~100 | Allowlisted commands (`go test`, `go build`, `gofumpt`, `golangci-lint`), 60s timeout, output capture, block dangerous patterns |
+| Turn management | ~50 | Max turns (25), cumulative token logging, graceful termination |
+
+New files: `codex/eval/runner_agent.go` (~350 lines) + `codex/eval/tools.go` (~200 lines).
+
+**This is the gating component.** Without it, you can test baseline vs AEF-minimal (Strategy B) but cannot test whether RECALL adds value — the core design question.
+
+**7. Task Corpus** — 10–15 days (parallelizable with components 1–6)
+
+| | |
+|---|---|
+| Dependencies | None (but must match scoring pipeline's expected directory structure) |
+| Used by | All Level 3–4 experiments |
+| Enables | Implementation tasks for the runners to execute |
+
+| Corpus | Contents | Effort | Used By |
+|---|---|---|---|
+| **Corpus 2**: Go Task Suite | 30 tasks (10 simple, 10 moderate, 10 complex). Each: `README.md` (spec), `go.mod`, `existing_code.go`, `task_test.go` (hidden validation), `pitfalls.yaml`, `scoring.yaml` | 8–10 days | 3A, 3D |
+| **Corpus 3**: Task Pairs | 10 pairs sharing pitfall patterns in different contexts | 2–3 days | 3B |
+| **Corpus 4**: Longitudinal Project | 5-feature project where each session builds on patterns from prior sessions | 2 days | 3C |
+| **PayFlow Extended** | 10 failure items + 10 plan-review scenarios (5 safe, 5 dangerous) | 1 day | 2B, 2D |
+
+Each task requires: a spec, a working test suite, at least one pitfall that Claude reliably falls into without RECALL (validated via baseline runs — if baseline failure rate < 50%, the pitfall isn't a good test), and RECALL seed items. Simple tasks take ~1 hour to author; complex tasks take ~4 hours.
+
+#### Dependency Graph
+
+```
+                    ┌──────────────────┐
+                    │ Results Database  │ (1-2 days)
+                    └────────┬─────────┘
+                             │
+                    ┌────────▼─────────┐
+                    │ Scoring Pipeline  │ (2-3 days)
+                    └──┬───────────┬───┘
+                       │           │
+            ┌──────────▼──┐   ┌───▼──────────────────┐
+            │ Strategy B   │   │ Synthetic Agent (C1)  │ ← critical path
+            │ Runner       │   │ Runner                │
+            │ (3-4 days)   │   │ (5-8 days)            │
+            └──────┬───────┘   └────┬──────────────────┘
+                   │                │
+                   │    ┌───────────▼────────┐
+                   └────► Condition          │
+                        │ Configurator       │ (1 day)
+                        └────────────────────┘
+
+    ┌─────────────────────┐     ┌───────────────┐
+    │ Strategy A           │     │ Task Corpus    │
+    │ Extensions (2-3 days)│     │ (10-15 days)   │
+    │ (independent)        │     │ (independent)  │
+    └─────────────────────┘     └───────────────┘
+```
+
+#### Critical Path to Milestone 1
+
+| Week | Build | Enables | Milestone 1 Runs |
+|---|---|---|---|
+| 1 | Results DB + Scoring Pipeline + Strategy A extensions + Condition Configurator | Level 1–2 experiments | 1C (1 run) + 2A (5 runs) |
+| 2 | Strategy B runner + first 5 tasks from corpus | Baseline vs AEF-minimal | 3A-smoke baseline + AEF-minimal (10 runs) + 3D-smoke (6 runs) |
+| 3 | Synthetic agent runner | AEF-full condition | 3A-smoke AEF-full (5 runs) |
+| **Total** | **3 weeks** | **Milestone 1 complete** | **27 runs** |
+
+Task corpus authoring can start in week 1 and run in parallel. The first 5 tasks (enough for Milestone 1) should be prioritized; the remaining 25 tasks can be authored while Milestone 1 runs.
+
+Milestone 2 (190 runs) requires the full 30-task corpus (Corpus 2) plus Corpus 3 task pairs. At 3–4 tasks per day authoring rate, the corpus is the bottleneck for Milestone 2 — not the infrastructure.
+
 ### Recommended Execution Path
 
 Given the goal is to **prove the design claims** (not prove production viability), here's the practical execution path:
