@@ -285,7 +285,7 @@ func ValidateV0Database(ctx context.Context, dbPath string) error {
 	`).Scan(&tableName)
 	if err != nil {
 		// FTS table is optional, just log
-		fmt.Println("Note: FTS table not found - database may be a newer format")
+		log.Println("note: FTS table not found - database may be a newer format")
 	}
 
 	return nil

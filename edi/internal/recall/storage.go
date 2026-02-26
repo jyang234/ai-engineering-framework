@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -182,21 +183,31 @@ func (s *Storage) FindByTitle(title string) (*Item, error) {
 		&createdAt, &updatedAt,
 		&item.UsefulnessScore, &item.UseCount,
 	)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("find by title %q: %w", title, err)
 	}
 
 	if tagsJSON.Valid {
-		json.Unmarshal([]byte(tagsJSON.String), &item.Tags)
+		if err := json.Unmarshal([]byte(tagsJSON.String), &item.Tags); err != nil {
+			log.Printf("warning: failed to parse tags for item %s: %v", item.ID, err)
+		}
 	}
 	if projectPath.Valid {
 		item.ProjectPath = projectPath.String
 	}
-	item.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
-	item.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
+	if t, err := time.Parse(time.RFC3339, createdAt); err != nil {
+		log.Printf("warning: failed to parse created_at for item %s: %v", item.ID, err)
+	} else {
+		item.CreatedAt = t
+	}
+	if t, err := time.Parse(time.RFC3339, updatedAt); err != nil {
+		log.Printf("warning: failed to parse updated_at for item %s: %v", item.ID, err)
+	} else {
+		item.UpdatedAt = t
+	}
 
 	return &item, nil
 }
@@ -217,8 +228,11 @@ func (s *Storage) Add(item *Item) error {
 		item.CreatedAt.Format(time.RFC3339),
 		item.UpdatedAt.Format(time.RFC3339),
 	)
+	if err != nil {
+		return fmt.Errorf("add item %s: %w", item.ID, err)
+	}
 
-	return err
+	return nil
 }
 
 // Get retrieves an item by ID
@@ -241,7 +255,7 @@ func (s *Storage) Get(id string) (*Item, error) {
 		&item.UsefulnessScore, &item.UseCount,
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get item %s: %w", id, err)
 	}
 
 	if tagsJSON.Valid {
@@ -268,7 +282,7 @@ func (s *Storage) Get(id string) (*Item, error) {
 }
 
 // RecordFeedback records usefulness feedback for an item
-func (s *Storage) RecordFeedback(itemID, sessionID string, useful bool, context string) error {
+func (s *Storage) RecordFeedback(itemID, sessionID string, useful bool, feedbackCtx string) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
@@ -278,9 +292,9 @@ func (s *Storage) RecordFeedback(itemID, sessionID string, useful bool, context 
 	_, err = tx.Exec(`
 		INSERT INTO feedback (item_id, session_id, useful, context, created_at)
 		VALUES (?, ?, ?, ?, ?)
-	`, itemID, sessionID, useful, context, time.Now().Format(time.RFC3339))
+	`, itemID, sessionID, useful, feedbackCtx, time.Now().Format(time.RFC3339))
 	if err != nil {
-		return err
+		return fmt.Errorf("insert feedback for item %s: %w", itemID, err)
 	}
 
 	// Update usefulness score
@@ -300,10 +314,13 @@ func (s *Storage) RecordFeedback(itemID, sessionID string, useful bool, context 
 		`, itemID)
 	}
 	if err != nil {
-		return err
+		return fmt.Errorf("update usefulness score for item %s: %w", itemID, err)
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit feedback for item %s: %w", itemID, err)
+	}
+	return nil
 }
 
 // LogFlightRecorder logs an entry to the flight recorder
@@ -324,8 +341,11 @@ func (s *Storage) LogFlightRecorder(entry *FlightRecorderEntry) error {
 		entry.Rationale,
 		string(metadataJSON),
 	)
+	if err != nil {
+		return fmt.Errorf("log flight recorder entry: %w", err)
+	}
 
-	return err
+	return nil
 }
 
 // GetFlightRecorderEntries retrieves flight recorder entries for a session
@@ -337,7 +357,7 @@ func (s *Storage) GetFlightRecorderEntries(sessionID string) ([]FlightRecorderEn
 		ORDER BY timestamp ASC
 	`, sessionID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("query flight recorder entries: %w", err)
 	}
 	defer rows.Close()
 

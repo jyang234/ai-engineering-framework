@@ -20,8 +20,8 @@ func BuildContext(cfg *config.Config, sessionID string, brief *briefing.Briefing
 	sb.WriteString("# EDI - Enhanced Development Intelligence\n\n")
 	sb.WriteString("You are operating as EDI, an AI engineering assistant with ")
 	sb.WriteString("continuity, knowledge, and specialized behaviors.\n\n")
-	sb.WriteString(fmt.Sprintf("Session ID: %s\n", sessionID))
-	sb.WriteString(fmt.Sprintf("Started: %s\n\n", time.Now().Format(time.RFC3339)))
+	fmt.Fprintf(&sb, "Session ID: %s\n", sessionID)
+	fmt.Fprintf(&sb, "Started: %s\n\n", time.Now().Format(time.RFC3339))
 
 	// Load and include agent configuration
 	agent, err := agents.Load(cfg.Agent)
@@ -33,7 +33,7 @@ func BuildContext(cfg *config.Config, sessionID string, brief *briefing.Briefing
 		}
 	}
 
-	sb.WriteString(fmt.Sprintf("## Current Mode: %s\n\n", agent.Name))
+	fmt.Fprintf(&sb, "## Current Mode: %s\n\n", agent.Name)
 	if agent.Description != "" {
 		sb.WriteString(agent.Description + "\n\n")
 	}
@@ -83,7 +83,10 @@ func BuildContext(cfg *config.Config, sessionID string, brief *briefing.Briefing
 	sb.WriteString(buildSlashCommandInstructions())
 
 	// Write to cache file
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get home directory: %w", err)
+	}
 	cacheDir := filepath.Join(home, ".edi", "cache")
 	if err := os.MkdirAll(cacheDir, 0755); err != nil {
 		return "", fmt.Errorf("failed to create cache directory: %w", err)

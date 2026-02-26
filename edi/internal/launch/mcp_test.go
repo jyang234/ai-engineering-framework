@@ -183,9 +183,14 @@ func TestUpdateMCPConfig_PreservesOtherServers(t *testing.T) {
 		},
 	}
 
-	data, _ := json.MarshalIndent(existingConfig, "", "  ")
+	data, err := json.MarshalIndent(existingConfig, "", "  ")
+	if err != nil {
+		t.Fatalf("Failed to marshal existing config: %v", err)
+	}
 	mcpPath := filepath.Join(tmpDir, ".mcp.json")
-	os.WriteFile(mcpPath, data, 0644)
+	if err := os.WriteFile(mcpPath, data, 0644); err != nil {
+		t.Fatalf("Failed to write .mcp.json: %v", err)
+	}
 
 	// Update with RECALL config
 	cfg := &config.Config{
@@ -195,15 +200,20 @@ func TestUpdateMCPConfig_PreservesOtherServers(t *testing.T) {
 		},
 	}
 
-	err := UpdateMCPConfig(tmpDir, cfg, "test-session")
+	err = UpdateMCPConfig(tmpDir, cfg, "test-session")
 	if err != nil {
 		t.Fatalf("UpdateMCPConfig failed: %v", err)
 	}
 
 	// Read and verify both servers exist
-	content, _ := os.ReadFile(mcpPath)
+	content, err := os.ReadFile(mcpPath)
+	if err != nil {
+		t.Fatalf("Failed to read .mcp.json: %v", err)
+	}
 	var mcpCfg MCPConfig
-	json.Unmarshal(content, &mcpCfg)
+	if err := json.Unmarshal(content, &mcpCfg); err != nil {
+		t.Fatalf("Failed to parse .mcp.json: %v", err)
+	}
 
 	if _, exists := mcpCfg.MCPServers["other-server"]; !exists {
 		t.Error("Expected 'other-server' to be preserved")

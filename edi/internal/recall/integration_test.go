@@ -5,8 +5,8 @@ package recall
 import (
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -45,36 +45,10 @@ func createTestDatabase(t *testing.T, dir string, items []testutil.RecallItem) s
 	return dbPath
 }
 
-// getEdiBinary returns the path to the edi binary.
-// It looks for the binary in common locations. The binary should be built
-// before running integration tests (make test-integration handles this).
+// getEdiBinary returns the path to the edi binary via shared helper.
 func getEdiBinary(t *testing.T) string {
 	t.Helper()
-
-	// Get the current working directory to construct absolute paths
-	cwd, _ := os.Getwd()
-
-	// Look for binary relative to test file location
-	// Tests are in internal/recall/, binary is in bin/
-	binPaths := []string{
-		filepath.Join(cwd, "..", "..", "bin", "edi"),
-		filepath.Join(cwd, "bin", "edi"),
-	}
-
-	for _, binPath := range binPaths {
-		absPath, _ := filepath.Abs(binPath)
-		if _, err := os.Stat(absPath); err == nil {
-			return absPath
-		}
-	}
-
-	// Try to find via PATH
-	if path, err := exec.LookPath("edi"); err == nil {
-		return path
-	}
-
-	t.Fatal("edi binary not found. Run 'make build' first or ensure edi is in PATH")
-	return ""
+	return testutil.GetEdiBinary(t)
 }
 
 func TestMCPProtocolLifecycle(t *testing.T) {
@@ -82,7 +56,9 @@ func TestMCPProtocolLifecycle(t *testing.T) {
 
 	// Create a database for testing
 	dbPath := filepath.Join(env.ProjectEDI, "recall", "test.db")
-	os.MkdirAll(filepath.Dir(dbPath), 0755)
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+		t.Fatalf("Failed to create database directory: %v", err)
+	}
 
 	// Get edi binary
 	ediBinary := getEdiBinary(t)
@@ -189,7 +165,7 @@ func TestMCPProtocolLifecycle(t *testing.T) {
 		if addedID == "" {
 			t.Error("Expected non-empty ID from recall_add")
 		}
-		if !hasPrefix(addedID, "P-") {
+		if !strings.HasPrefix(addedID, "P-") {
 			t.Errorf("Expected ID to start with 'P-' for pattern, got '%s'", addedID)
 		}
 	})
@@ -296,7 +272,9 @@ func TestMCPErrorHandling(t *testing.T) {
 	env := testutil.SetupTestEnv(t)
 
 	dbPath := filepath.Join(env.ProjectEDI, "recall", "test.db")
-	os.MkdirAll(filepath.Dir(dbPath), 0755)
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+		t.Fatalf("Failed to create database directory: %v", err)
+	}
 
 	ediBinary := getEdiBinary(t)
 
@@ -421,7 +399,9 @@ func TestFTS5SearchIntegration(t *testing.T) {
 		}
 
 		var result map[string]interface{}
-		json.Unmarshal([]byte(text), &result)
+		if err := json.Unmarshal([]byte(text), &result); err != nil {
+			t.Fatalf("Failed to parse result: %v", err)
+		}
 
 		count := int(result["count"].(float64))
 		if count < 1 {
@@ -439,7 +419,9 @@ func TestFTS5SearchIntegration(t *testing.T) {
 		}
 
 		var result map[string]interface{}
-		json.Unmarshal([]byte(text), &result)
+		if err := json.Unmarshal([]byte(text), &result); err != nil {
+			t.Fatalf("Failed to parse result: %v", err)
+		}
 
 		count := int(result["count"].(float64))
 		if count < 1 {
@@ -457,7 +439,9 @@ func TestFTS5SearchIntegration(t *testing.T) {
 		}
 
 		var result map[string]interface{}
-		json.Unmarshal([]byte(text), &result)
+		if err := json.Unmarshal([]byte(text), &result); err != nil {
+			t.Fatalf("Failed to parse result: %v", err)
+		}
 
 		count := int(result["count"].(float64))
 		if count < 1 {
@@ -476,7 +460,9 @@ func TestFTS5SearchIntegration(t *testing.T) {
 		}
 
 		var result map[string]interface{}
-		json.Unmarshal([]byte(text), &result)
+		if err := json.Unmarshal([]byte(text), &result); err != nil {
+			t.Fatalf("Failed to parse result: %v", err)
+		}
 
 		results := result["results"].([]interface{})
 		for _, r := range results {
@@ -498,7 +484,9 @@ func TestFTS5SearchIntegration(t *testing.T) {
 		}
 
 		var result map[string]interface{}
-		json.Unmarshal([]byte(text), &result)
+		if err := json.Unmarshal([]byte(text), &result); err != nil {
+			t.Fatalf("Failed to parse result: %v", err)
+		}
 
 		results := result["results"].([]interface{})
 		for _, r := range results {
@@ -520,7 +508,9 @@ func TestFTS5SearchIntegration(t *testing.T) {
 		}
 
 		var result map[string]interface{}
-		json.Unmarshal([]byte(text), &result)
+		if err := json.Unmarshal([]byte(text), &result); err != nil {
+			t.Fatalf("Failed to parse result: %v", err)
+		}
 
 		results := result["results"].([]interface{})
 		if len(results) > 2 {
@@ -589,7 +579,9 @@ func TestMultiScopeSearch(t *testing.T) {
 		}
 
 		var result map[string]interface{}
-		json.Unmarshal([]byte(text), &result)
+		if err := json.Unmarshal([]byte(text), &result); err != nil {
+			t.Fatalf("Failed to parse result: %v", err)
+		}
 
 		count := int(result["count"].(float64))
 		if count < 2 {
@@ -629,7 +621,9 @@ func TestMultiScopeSearch(t *testing.T) {
 		}
 
 		var result map[string]interface{}
-		json.Unmarshal([]byte(text), &result)
+		if err := json.Unmarshal([]byte(text), &result); err != nil {
+			t.Fatalf("Failed to parse result: %v", err)
+		}
 
 		results := result["results"].([]interface{})
 		for _, r := range results {
@@ -651,7 +645,9 @@ func TestMultiScopeSearch(t *testing.T) {
 		}
 
 		var result map[string]interface{}
-		json.Unmarshal([]byte(text), &result)
+		if err := json.Unmarshal([]byte(text), &result); err != nil {
+			t.Fatalf("Failed to parse result: %v", err)
+		}
 
 		results := result["results"].([]interface{})
 		for _, r := range results {
@@ -663,7 +659,3 @@ func TestMultiScopeSearch(t *testing.T) {
 	})
 }
 
-// hasPrefix checks if string has the given prefix
-func hasPrefix(s, prefix string) bool {
-	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
-}
