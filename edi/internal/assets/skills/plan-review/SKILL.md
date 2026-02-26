@@ -18,6 +18,11 @@ recall_search({query: "[affected domain areas]", types: ["decision", "context"]}
 
 Apply retrieval-judge to filter results. Cross-reference plan changes against past failures and existing decisions.
 
+After filtering, write relevant findings to `/memories/session-cache.md` so they survive compaction:
+```
+"Plan review for [area]: found [N] relevant RECALL items — [1-line summary of key findings]"
+```
+
 ## Phase 2: Regression Risk Assessment
 
 Evaluate each change area for regression risk:
