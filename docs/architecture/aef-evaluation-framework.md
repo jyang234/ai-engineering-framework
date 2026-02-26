@@ -82,7 +82,7 @@ The `codex/eval/` directory contains:
 2. Execute a scripted sequence of Claude Code actions:
    - Write a `.go` file with formatting issues → verify PostToolUse `gofumpt` fires
    - Write to a `.env` file → verify PreToolUse `protect-files.sh` blocks it
-   - Edit MEMORY.md managed section → verify PreToolUse `protect-memory.sh` blocks it
+   - Edit `.edi/status.md` with invalid format → verify PreToolUse `protect-status.sh` blocks it
    - Run `rm -rf /` via Bash → verify PreToolUse `block-dangerous-commands.sh` blocks it
    - Complete a task → verify Stop `verify-quality.sh` runs
    - Start a session → verify SessionStart `generate-briefing.sh` produces output
@@ -361,7 +361,7 @@ Each session has a specification, test suite, and quality scoring.
    - Follow pre-flight checklist before writing tests
    - Present alternatives for significant decisions
    - Update status.md at session end
-   - Never modify EDI-managed MEMORY.md sections
+   - Never overwrite `.edi/status.md` without reading it first
    - Format Go files before committing
    - Run golangci-lint before task completion
 
@@ -492,15 +492,20 @@ This enables Experiments 2A, 2B without building new infrastructure.
 30 Go implementation tasks across 3 complexity levels. Each task is a self-contained git repository with:
 
 ```
-task-{id}/
-├── README.md           # Task specification
+corpus/tasks/task-{id}/
+├── README.md           # Task specification (given to agent)
 ├── go.mod
 ├── go.sum
-├── existing_code.go    # Code the task builds on
-├── task_test.go        # Validation test suite (hidden from agent)
-├── pitfalls.yaml       # Known pitfalls + RECALL items to seed
-└── scoring.yaml        # Weights for quality scoring
+└── existing_code.go    # Code the task builds on (given to agent)
+
+corpus/validation/task-{id}/
+└── task_test.go        # Injected by runner AFTER agent finishes
+
+corpus/pitfalls/task-{id}/
+└── pitfalls.yaml       # Known pitfalls + RECALL items to seed (used by runner)
 ```
+
+Tests are stored outside the task repo and injected at scoring time to prevent the agent from reading them (see Gap 5 resolution). `pitfalls.yaml` is consumed by the runner to seed RECALL and score pitfall avoidance — it is never given to the agent.
 
 **Task examples**:
 
@@ -686,47 +691,29 @@ CREATE TABLE eval_recall_state (
 
 ## Execution Plan
 
-### Phase 1: Validate Existing Infrastructure (Week 1)
+> **Note**: The Build Specification section below contains the authoritative component breakdown, dependency graph, and critical path. This Execution Plan describes the _run_ phases — when experiments execute and what they produce. Build activities follow the Build Specification's 3-week critical path; experiment execution follows the milestones below.
 
-**Goal**: Confirm Level 1 components work as documented.
+### Build Phase (Weeks 1–3)
+
+Build activities follow the critical path defined in the **Build Specification** section:
+
+| Week | Build Activities | Enables |
+|---|---|---|
+| 1 | Results DB + Scoring Pipeline + Strategy A extensions + Condition Configurator | Level 1–2 experiments |
+| 2 | Strategy B runner + first 5 tasks from Corpus 2 | Baseline vs AEF-minimal |
+| 3 | Synthetic agent runner (Strategy C1) | AEF-full condition |
+
+Task corpus authoring runs in parallel from week 1. First 5 tasks are prioritized for Milestone 1; remaining 25 authored during weeks 2–4.
+
+During build, run Level 1 validation as infrastructure comes online:
 
 | Task | Effort | Dependencies |
 |---|---|---|
 | Run existing EvalHarness against v0 backend, record results | 1 day | None |
 | Run existing JudgeHarness, record results | 1 day | Anthropic API key |
-| Verify hook execution (Experiment 1A) for 3 critical hooks | 1 day | Hooks configured |
 | Extend PayFlow collection with failures and decisions (Corpus 1) | 2 days | None |
 
-**Deliverable**: Level 1 baseline report with measured metrics.
-
-### Phase 2: Build Task Corpus (Week 2-3)
-
-**Goal**: Create the Go task suite needed for Level 3-4 experiments.
-
-| Task | Effort | Dependencies |
-|---|---|---|
-| Build 10 simple tasks with tests and pitfalls (Corpus 2) | 3 days | None |
-| Build 10 moderate tasks with tests and pitfalls | 3 days | None |
-| Build 10 complex tasks with tests and pitfalls | 4 days | None |
-| Build 10 task pairs for repeat-failure experiment (Corpus 3) | 2 days | None |
-| Build 5-session longitudinal project (Corpus 4) | 3 days | None |
-
-**Deliverable**: Complete task corpora with specifications, test suites, pitfall annotations, and RECALL seed items.
-
-### Phase 3: Build Evaluation Runner (Week 3-4)
-
-**Goal**: Automated infrastructure to run experiments.
-
-| Task | Effort | Dependencies |
-|---|---|---|
-| Build eval runner (task setup → Claude Code invocation → scoring) | 3 days | Corpus 2 |
-| Build LLM judge scoring pipeline | 2 days | Judge rubric |
-| Build results database and reporting | 2 days | Schema above |
-| Build condition configurator (baseline/AEF-minimal/AEF-full) | 1 day | Hook configs |
-
-**Deliverable**: `aef-eval run --experiment 3A --condition aef-full --tasks corpus-2/`
-
-### Phase 4: Run Core Experiments (Week 4-6)
+### Experiment Phase 1: Core Experiments (Weeks 4–6)
 
 **Goal**: Produce measured results for the claims that matter most.
 
@@ -734,7 +721,6 @@ CREATE TABLE eval_recall_state (
 |---|---|---|---|
 | 3A: Defect Rate Comparison (30 tasks × 3 conditions × 3 attempts) | 270 | ~$360 | **Highest** |
 | 3B: Repeat Failure Prevention (10 pairs × 2 conditions × 3 attempts) | 60 | ~$83 | High |
-| 3D: Hook Adherence Rate (20 sessions × 2 conditions) | 40 | ~$50 | High |
 | 2A: Retrieval-Judge Filtering Quality (20 queries) | 20 | <$1 | Medium |
 | 2B: RECALL + Plan Review (10 scenarios) | 10 | <$1 | Medium |
 
@@ -742,19 +728,20 @@ CREATE TABLE eval_recall_state (
 
 **Deliverable**: Measured results for each experiment with pass/fail against defined criteria.
 
-### Phase 5: Run Longitudinal and Comparative (Week 6-8)
+### Experiment Phase 2: Hook Adherence, Longitudinal & Comparative (Weeks 6–8)
 
-**Goal**: Validate the "improves with use" and "best in class" claims.
+**Goal**: Validate hook effectiveness, "improves with use", and "best in class" claims.
 
 | Experiment | Runs | Cost Estimate | Priority |
 |---|---|---|---|
+| 3D: Hook Adherence Rate (20 sessions × 2 conditions) | 40 | ~$50 | High (requires hooks — Milestone 2) |
 | 3C: Session Knowledge Accumulation (5 sessions × 2 conditions × 3 trials) | 30 | ~$41 | High |
 | 4A: AEF-bench (50 tasks × 2 conditions) | 100 | ~$138 | Medium |
 | 4B: Comparative System Analysis (20 tasks × 4 systems) | 80 | ~$100 | Lower |
 
 **Deliverable**: Final evaluation report with measured scorecard replacing self-assessed ratings.
 
-### Phase 6: Report (Week 8)
+### Report Phase (Week 8)
 
 **Goal**: Replace every unproven claim with measured evidence.
 
@@ -981,7 +968,7 @@ This section inventories what exists and what needs building. Each component is 
 | Report Generator | `codex/eval/report.go` | Text + JSON output of eval results | Strategy A |
 | PayFlow Corpus | `codex/eval/testdata_payflow.go` | 30 docs, 20 ground-truth queries across 3 categories (semantic, keyword, hybrid-advantage) | Strategy A |
 | MCP Server | `codex/internal/mcp/server.go` + `tools.go` | JSON-RPC handler, 5 tools: recall_search/get/add, recall_feedback, flight_recorder_log | Strategy A, C1 |
-| Ralph Loop | `edi/internal/assets/ralph/ralph.sh` | `claude -p` invocation with `--append-system-prompt-file` skills injection, task iteration from PRD.json | Strategy B (pattern) |
+| Ralph Loop | `edi/internal/assets/ralph/ralph.sh` | `claude -p` invocation with skills injected via stdin prompt, `--allowedTools` whitelist, task iteration from PRD.json | Strategy B (pattern) |
 | SQLite Schema | `edi/internal/recall/schema.sql` | items, vectors, flight_recorder, feedback tables with FTS5 virtual table | All |
 | SearchEngine | `codex/internal/search/engine.go` | Hybrid search: vector cosine similarity + FTS5 BM25 + RRF fusion | Strategy A, C1 |
 
@@ -1183,6 +1170,167 @@ Task corpus authoring can start in week 1 and run in parallel. The first 5 tasks
 
 Milestone 2 (190 runs) requires the full 30-task corpus (Corpus 2) plus Corpus 3 task pairs. At 3–4 tasks per day authoring rate, the corpus is the bottleneck for Milestone 2 — not the infrastructure.
 
+### Runner Operations
+
+This section specifies the operational aspects of the eval runners: how they're invoked, how they handle errors, how runs are orchestrated, and the Bash sandbox rules.
+
+#### CLI Interface
+
+The eval runner is a Go binary built from `codex/eval/cmd/aef-eval/main.go`.
+
+```
+aef-eval <command> [flags]
+
+Commands:
+  run         Execute experiment runs
+  score       Re-score completed runs (no re-execution)
+  report      Generate reports from results database
+  list        List experiments, corpora, or past runs
+
+Run flags:
+  --experiment <id>       Experiment ID (e.g., 3A, 3B, 3D)
+  --condition <name>      Condition: baseline | aef-minimal | aef-full
+  --tasks <path>          Path to task corpus directory
+  --strategy <id>         Execution strategy: A | B | C1 (default: inferred from condition)
+  --concurrency <n>       Max parallel runs (default: 1)
+  --runs <n>              Number of attempts per task (default: 1)
+  --model <id>            Model ID (default: claude-sonnet-4-6)
+  --resume <run-id>       Resume a previously interrupted batch
+  --dry-run               Validate config and print plan without executing
+  --output <format>       Output format: text | json (default: text)
+
+Score flags:
+  --run-id <id>           Re-score a specific run
+  --batch <id>            Re-score an entire batch
+
+Report flags:
+  --experiment <id>       Experiment to report on (or "all")
+  --format <type>         Output: text | json | markdown (default: markdown)
+
+Examples:
+  aef-eval run --experiment 3A --condition aef-full --tasks corpus-2/ --runs 3
+  aef-eval run --experiment 3A --condition baseline --tasks corpus-2/ --concurrency 4
+  aef-eval score --batch 2026-02-26-3A-full
+  aef-eval report --experiment 3A --format markdown
+```
+
+Output location: all results written to `eval_runs` table in the results SQLite database at `codex/eval/results.db` (created on first run). Logs written to `codex/eval/logs/<batch-id>/<task-id>.log`.
+
+#### Error Handling
+
+The runners must handle four categories of errors:
+
+**1. API rate limits (429 / 529)**
+
+| Strategy | Behavior |
+|---|---|
+| B (pipe mode) | `claude -p` handles retries internally |
+| C1 (synthetic agent) | Exponential backoff: 2s → 4s → 8s → 16s → 32s, then fail the run |
+
+On persistent rate limiting (>5 consecutive 429s), pause the entire batch for 60 seconds before resuming. Log the pause to batch metadata.
+
+**2. Infinite loop / runaway turns**
+
+| Guard | Threshold | Action |
+|---|---|---|
+| Max turns | 25 (simple), 35 (moderate), 50 (complex) | Terminate conversation, score as-is |
+| Max wall-clock time | 5 min (simple), 10 min (moderate), 20 min (complex) | Kill process/conversation, score as-is |
+| Repeated tool call | Same tool + same input 3× consecutively | Inject "You appear to be in a loop. Please finish your work." as user message |
+
+When a run is terminated by a guard, mark `eval_runs.termination_reason` with the guard that fired. Include terminated runs in results — they represent real failure modes.
+
+**3. Tool call errors**
+
+| Error | Action |
+|---|---|
+| File not found (Read/Edit/Glob) | Return error string as `tool_result` with `is_error: true` — let the model recover |
+| Bash command fails (non-zero exit) | Return stderr + exit code as `tool_result` — let the model recover |
+| Bash timeout (exceeds 60s) | Kill process, return timeout error as `tool_result` |
+| MCP server crash | Fail the run, log the crash, do not retry (likely a bug) |
+| Malformed tool input | Return validation error as `tool_result` with `is_error: true` |
+
+The synthetic agent should never swallow errors silently. Every tool call result — success or failure — goes back to the model as a `tool_result` content block.
+
+**4. Infrastructure errors**
+
+| Error | Action |
+|---|---|
+| Disk full | Abort batch, log error |
+| Results DB locked | Retry 3× with 1s backoff, then abort run |
+| Git operations fail in task setup | Skip task, log error, continue batch |
+
+#### Run Orchestration
+
+**Sequential mode** (default, `--concurrency 1`): Runs execute one at a time. Each run gets an isolated temp directory, created at start and cleaned up after scoring. Recommended for initial development and debugging.
+
+**Parallel mode** (`--concurrency N`): Up to N runs execute simultaneously. Requirements:
+- Each run operates in its own temp directory (no shared state)
+- Results DB writes are serialized (SQLite WAL mode + mutex)
+- API calls from different runs may share rate limits — the runner should distribute runs across time rather than starting all at once (stagger by 5s)
+- Logs are per-run, not interleaved
+
+**Batch structure**: Each `aef-eval run` invocation creates a batch with an ID (`<date>-<experiment>-<condition>`, e.g., `2026-02-26-3A-full`). The batch tracks:
+
+```go
+type Batch struct {
+    ID           string     `json:"id"`
+    Experiment   string     `json:"experiment"`
+    Condition    string     `json:"condition"`
+    Strategy     string     `json:"strategy"`
+    Model        string     `json:"model"`
+    TaskDir      string     `json:"task_dir"`
+    TotalRuns    int        `json:"total_runs"`
+    CompletedRuns int       `json:"completed_runs"`
+    StartedAt    time.Time  `json:"started_at"`
+    Status       string     `json:"status"` // running | completed | failed | interrupted
+}
+```
+
+**Crash resumption** (`--resume <batch-id>`): If a batch is interrupted (Ctrl+C, crash, machine restart), `--resume` picks up where it left off:
+1. Load batch metadata from results DB
+2. Identify runs with status `completed` — skip them
+3. Re-run remaining tasks from scratch (no partial run recovery — a crashed mid-conversation run is discarded and re-attempted)
+
+#### Bash Sandbox
+
+The synthetic agent (Strategy C1) executes Bash commands in a sandboxed environment. The sandbox enforces an allowlist — only commands matching the patterns below are permitted.
+
+**Allowlist:**
+
+| Pattern | Timeout | Purpose |
+|---|---|---|
+| `go test ./...` | 60s | Run task tests |
+| `go test -run <pattern> ./...` | 60s | Run specific tests |
+| `go build ./...` | 30s | Compile check |
+| `go vet ./...` | 30s | Static analysis |
+| `gofumpt -w <file>` | 10s | Format Go files |
+| `golangci-lint run ./...` | 60s | Linting |
+| `go mod tidy` | 10s | Fix module dependencies |
+
+**Blocked patterns** (reject with error, regardless of allowlist):
+
+| Pattern | Reason |
+|---|---|
+| `rm -rf /` or `rm -rf ~` | Destructive |
+| Any command containing `curl`, `wget`, `ssh`, `nc` | Network access |
+| Any command containing `sudo` | Privilege escalation |
+| `go install` | Side effects outside workspace |
+| Any command with `..` path traversal escaping the task directory | Workspace escape |
+
+**Implementation**: The sandbox receives the raw command string from the model's `Bash` tool call. It:
+1. Parses the command against the allowlist (prefix match on the executable + first arguments)
+2. Rejects commands matching blocked patterns
+3. Sets `cwd` to the task's temp directory
+4. Executes with the specified timeout via `exec.CommandContext`
+5. Returns stdout + stderr (capped at 10K characters) + exit code
+
+For Strategy B (pipe mode), sandboxing is handled by `claude -p --allowedTools` which restricts which tools the model can call. The allowlist for Strategy B:
+
+| Condition | `--allowedTools` |
+|---|---|
+| `baseline` | `Edit,Write,Bash(go build:*),Bash(go test:*),Bash(go vet:*),Read,Glob,Grep` |
+| `aef-minimal` | Same as baseline (skills via `--append-system-prompt-file`, hooks via `.claude/settings.json`) |
+
 ### Recommended Execution Path
 
 Given the goal is to **prove the design claims** (not prove production viability), here's the practical execution path:
@@ -1206,10 +1354,11 @@ Given the goal is to **prove the design claims** (not prove production viability
 
 | Experiment | Method | Runs | Proves |
 |---|---|---|---|
-| 3A-partial: Baseline vs AEF-minimal | `claude -p` with/without skills | 60 | Skills + hooks improve quality |
-| 3D: Hook adherence | `claude -p` with/without hooks | 40 | Hooks improve protocol adherence |
+| 3A-partial: Baseline vs AEF-minimal | `claude -p` with/without skills | 60 | Skills improve quality |
 
-**Deliverable**: Measured skill/hook impact without RECALL.
+**Deliverable**: Measured skill impact without RECALL.
+
+> **Note**: Experiment 3D (Hook Adherence) is deferred to Milestone 2 when hook infrastructure is implemented (Gap 12 decision).
 
 #### Week 4-5: Level 3 RECALL via Strategy C1 (Synthetic Agent)
 
