@@ -1733,25 +1733,57 @@ The eval runner needs a different tool allowlist depending on the condition and 
 
 Note: `Bash(git:*)` should probably be excluded to prevent the agent from committing/branching/pushing during eval runs. `Bash(gofumpt:*)` and `Bash(golangci-lint:*)` may be needed if hooks or skills instruct the agent to format/lint.
 
-#### Gap 10: No context window management for synthetic agent
+#### Gap 10: Context window management for synthetic agent — RESOLVED
 
-The pricing section estimates cumulative input tokens per task:
+> Resolved: Use the Anthropic API's built-in context management features (compaction + context editing) rather than building custom truncation. This aligns with the design principle of leveraging Claude Code features rather than duplicating them.
 
-| Complexity | Typical Turns | Cumulative Input Tokens |
+The pricing section estimates ~325K cumulative input tokens for complex tasks. The standard context window is 200K tokens. Without management, complex tasks hit an API error around turn 15.
+
+**Resolution: API-native context management.**
+
+The Anthropic Messages API provides three features that handle this without custom code:
+
+| Feature | API | What It Does |
 |---|---|---|
-| Complex | 15–25 | ~325K |
+| **Server-side compaction** | `compact_20260112` beta | Auto-summarizes older conversation when approaching threshold. Sonnet 4.6 + Opus 4.6. |
+| **Context editing** | `clear_tool_uses_20250919` | Clears old tool_result blocks when context grows. Can exclude specific tools. |
+| **Memory tool** | `memory_20250818` | File-based `/memories/` directory. Agent writes decisions, reads back on demand. Survives compaction. |
 
-Claude Sonnet 4.6 has a 200K context window. Claude Opus 4.6 has a 200K context window. A complex task at 325K cumulative input tokens **exceeds the context limit**.
+The synthetic agent runner enables these in its API requests:
 
-The cumulative token estimate appears to account for the growing conversation across turns (each turn adds the previous response + tool results to the context). But if the context hits the model's limit, the API will return an error.
+```go
+request := agentRequest{
+    // ...
+    ContextManagement: &contextManagement{
+        Edits: []contextEdit{
+            {
+                Type:    "compact_20260112",
+                Trigger: &trigger{Type: "input_tokens", Value: 150000},
+            },
+            {
+                Type:         "clear_tool_uses_20250919",
+                Trigger:      &trigger{Type: "input_tokens", Value: 100000},
+                Keep:         &keep{Type: "tool_uses", Value: 5},
+                ExcludeTools: []string{"memory"},
+            },
+        },
+    },
+    Tools: append(toolDefinitions, toolDefinition{
+        Type: "memory_20250818",
+        Name: "memory",
+    }),
+}
+```
 
-**Resolution required:**
+This is ~20 lines of configuration, not 2 days of custom truncation logic. Complex tasks work because compaction keeps effective context within the 200K window. The memory tool provides a session-scoped working memory that persists across compaction boundaries.
 
-- **Option A: Truncation.** When context exceeds a threshold (e.g., 180K tokens), drop earlier tool_result content blocks (keep the structure, replace content with "[truncated]"). This mirrors Claude Code's compaction behavior.
-- **Option B: Model selection.** Use only Sonnet/Opus with extended context if available, or limit complex tasks to fewer turns.
-- **Option C: Acknowledge the limit.** Cap `maxTurns` for complex tasks at a level that stays within context. If a complex task can't complete in that budget, it scores 0 on completeness. This is realistic — real Claude Code sessions also have context limits.
+**Implementation impact on Build Component 6 (Synthetic Agent Runner):**
+- Remove the "Turn management" sub-component (~50 lines) — compaction handles this
+- Add `context_management` config to API requests (~20 lines)
+- Add memory tool to the tool list + implement the client-side handler (view/create/str_replace/delete on a temp `/memories/` directory, ~100 lines)
+- Net estimate change: ~550 lines → ~520 lines, but simpler and more aligned with production behavior
 
-The synthetic agent runner spec must address this explicitly, since it's a known constraint that will be hit during the first complex task run.
+**This resolution surfaces a broader RECALL design question** — see "RECALL Design Alignment" section below.
 
 #### Gap 11: Efficiency scoring requires session data the judge doesn't receive
 
@@ -1919,7 +1951,7 @@ Note: SQLite doesn't have a built-in `MEDIAN` function. The Go code needs to com
 | 3. Strategy A Extensions | — | — | — | **Yes** (well-specified) |
 | 4. Condition Configurator | Gap 1 (skills ↔ RECALL) | Gap 9 (allowedTools), Gap 12 (hook format) | Gap 17 (concat order) | **No** — needs decision on skills-without-RECALL |
 | 5. Strategy B Runner | — | Gap 8 (Ralph inaccuracy), Gap 9 (allowedTools) | — | **Mostly** — minor clarifications |
-| 6. Synthetic Agent Runner | Gap 3 (API client), Gap 4 (tool schemas) | Gap 10 (context limits) | Gap 16 (model config) | **No** — needs API types + tool schemas |
+| 6. Synthetic Agent Runner | Gap 3 (API client), Gap 4 (tool schemas) | ~~Gap 10~~ (resolved: use compaction + context editing) | Gap 16 (model config) | **No** — needs API types + tool schemas |
 | 7. Task Corpus | Gap 5 (test hiding) | Gap 6 (detection rules), Gap 13 (3B pitfall guarantee) | — | **No** — needs test isolation + detection mechanism |
 
 **Components ready to build now**: Results Database (#1), Strategy A Extensions (#3).
@@ -1927,3 +1959,95 @@ Note: SQLite doesn't have a built-in `MEDIAN` function. The Go code needs to com
 **Components blocked on decisions**: Condition Configurator (#4, needs Gap 1 decision), Task Corpus (#7, needs Gap 5 decision).
 
 **Components blocked on specs**: Scoring Pipeline (#2, needs judge prompt), Synthetic Agent Runner (#6, needs API types + tool schemas).
+
+---
+
+## RECALL Design Alignment with Claude Code Features
+
+> Added 2026-02-24. This section captures design changes to core RECALL that emerged from the Gap 10 analysis. These are not eval-specific — they affect the production RECALL architecture.
+
+### Design Principle
+
+**Align, don't duplicate or conflict with Claude Code features.** Claude Code and the Anthropic API provide context management (compaction), working memory (memory tool), and context editing (tool result clearing). RECALL should leverage these rather than building parallel mechanisms.
+
+### Current State vs Aligned Design
+
+| Concern | Current RECALL Design | Claude Code Feature | Aligned Design |
+|---|---|---|---|
+| Session working memory | MEMORY.md (file in repo, read via `Read` tool) | Memory tool (`memory_20250818`): file-based `/memories/`, survives compaction, excluded from context editing | Adopt memory tool as session cache. Agent writes decisions/insights to `/memories/` during session. |
+| Context growth from recall_search | Results stay in context as tool_result blocks. Accumulate over turns. | Context editing (`clear_tool_uses_20250919`): clears old tool_result blocks. Compaction (`compact_20260112`): summarizes older conversation. | Enable context editing to clear old recall_search results. Agent extracts insight → writes to `/memories/` → original results cleared. |
+| Flight recorder writes | `flight_recorder_log` writes to SQLite immediately. Each call is a tool_use + tool_result turn pair (~200 tokens in context). | Context editing can clear these tool results. | Mark flight recorder as fire-and-forget in skill instructions. Agent should not reference flight recorder responses. Context editing clears these aggressively. |
+| When knowledge enters codex DB | `recall_add` callable any time during session. | Memory tool provides structured session-scoped storage. `/end` workflow curates what to promote. | Default: `recall_add` at `/end` only. Session insights live in `/memories/` until curated. Prevents noisy mid-session writes to codex DB. |
+| Cross-compaction continuity | Not addressed. If compaction summarizes a turn where recall_search returned useful results, the details are lost. | Memory tool content persists across compaction. Anthropic docs: "memory persists important information across compaction boundaries so that nothing critical is lost in the summary." | Agent writes key findings to `/memories/` immediately after extracting them from recall_search results. These survive compaction. |
+
+### Session Lifecycle (Aligned)
+
+```
+Session start:
+  1. Agent reads /memories/ (memory tool: view)
+  2. Agent reads status.md and MEMORY.md (existing behavior)
+  3. If RECALL available: recall_search for context relevant to current task
+
+During session:
+  recall_search()         → results enter context (tool_result)
+                          → agent extracts insight
+                          → agent writes insight to /memories/session-cache.md
+                          → context editing clears original tool_result later
+                          → compaction summarizes if context still grows
+
+  flight_recorder_log()   → writes to DB immediately (fire-and-forget)
+                          → context editing clears tool_result aggressively
+
+  Decisions/observations  → /memories/ (structured, survives compaction)
+
+  recall_add()            → NOT called mid-session (enforced by skill instructions,
+                             not by tooling — the tool remains available for edge cases)
+
+At /end:
+  1. Agent summarizes session
+  2. Reads /memories/ for capture candidates
+  3. Presents to user for approval
+  4. Calls recall_add() for approved items → codex DB
+  5. Updates status.md, writes session history
+  6. Cleans up /memories/
+```
+
+### What Changes in Skills
+
+**edi-core/SKILL.md** changes:
+- Replace MEMORY.md session-scoped writes with `/memories/` writes (memory tool)
+- Add instruction: "After extracting insights from recall_search results, write a concise summary to `/memories/session-cache.md`. This preserves the insight across compaction."
+- Add instruction: "flight_recorder_log calls are fire-and-forget. Do not reference the response."
+- Change `recall_add` guidance: "Save items to `/memories/` during the session. Use `recall_add` during `/end` to promote curated items to the codex."
+
+**retrieval-judge/SKILL.md** — no change (judges search results, writes judgment to flight recorder).
+
+**plan-review/SKILL.md** — minor: after reviewing RECALL results for known failures, write the relevant findings to `/memories/` rather than keeping them only in context.
+
+### What Changes in the MCP Server
+
+No changes to the MCP server. The tools (`recall_search`, `recall_add`, `recall_get`, `recall_feedback`, `flight_recorder_log`) remain unchanged. The behavioral change is in the skills (instructions to the model), not in the tooling. `recall_add` remains available for edge cases — the restriction is soft (via skill instructions) not hard (via tool removal).
+
+### What Changes in the Eval Runner
+
+The synthetic agent runner (Build Component 6) adds:
+1. `context_management` config to API requests (compaction + context editing)
+2. Memory tool in the tool list + client-side handler (~100 lines: view/create/str_replace/delete on a temp `/memories/` directory)
+3. Skills system prompt updated to reflect the aligned design
+
+This makes the eval runner test the aligned RECALL design, not the current one. Results measure the value of RECALL + memory tool + compaction together — which is the design that would ship.
+
+### Impact on Experiments
+
+| Experiment | Impact |
+|---|---|
+| 3A (defect rate) | AEF-full condition now uses memory tool + compaction. More realistic. Complex tasks can actually complete. |
+| 3B (repeat failure) | Session 1 insights written to `/memories/`. Between sessions, runner promotes relevant items to RECALL via `recall_add`. Session 2 searches RECALL normally. Cleaner than hoping the agent calls `recall_add` mid-session. |
+| 3C (longitudinal) | Memory tool provides natural cross-compaction continuity within sessions. `/end` workflow promotes to RECALL between sessions. |
+| 3D (hook adherence) | No impact — hooks are orthogonal to context management. |
+
+### Open Question
+
+**MEMORY.md coexistence.** The edi-core skill currently manages MEMORY.md as a shared file between EDI and Claude Code's auto-memory feature. If the memory tool replaces MEMORY.md for session-scoped notes, should MEMORY.md continue to exist for long-lived project context (architectural decisions, team conventions)? Or does `/memories/` subsume it entirely?
+
+Recommendation: Keep MEMORY.md for project-level context that outlives sessions (it's versioned in git, visible to humans). Use `/memories/` for session-scoped working memory (ephemeral, cleaned at `/end`). Two concerns, two mechanisms.
