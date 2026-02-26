@@ -1,6 +1,6 @@
 # Go Best Practices Review: AI Engineering Framework
 
-**Date**: 2026-02-26
+**Date**: 2026-02-26 (updated)
 **Scope**: All Go code in `edi/` (67 files, ~12K LOC) and `codex/` (69 files, ~22K LOC)
 **Reference**: Effective Go, Go Code Review Comments, Go Proverbs
 
@@ -8,30 +8,30 @@
 
 ## Executive Summary
 
-The codebase is **generally well-written Go** with clean architecture, proper use of interfaces, and good error handling practices. The project follows standard Go layout conventions and demonstrates clear understanding of idiomatic patterns. However, there are several areas where adherence to Effective Go and community best practices could be improved.
+The codebase is **generally well-written Go** with clean architecture, proper use of interfaces, and good error handling practices. The project follows standard Go layout conventions and demonstrates clear understanding of idiomatic patterns. However, a thorough file-by-file analysis uncovered one real bug, several structural issues, and widespread inconsistencies that should be addressed.
 
-**Overall Grade: B+**
+**Overall Grade: B**
 
 | Category | Grade | Notes |
 |----------|-------|-------|
 | Project Layout | A | Standard `cmd/`, `internal/`, `pkg/` structure |
-| Naming Conventions | A- | Mostly idiomatic; minor inconsistencies |
-| Error Handling | B+ | Good wrapping; missing sentinel errors |
-| Interface Design | B+ | Clean interfaces; `MetadataStorage` too fat; MCP uses concrete types |
+| Naming Conventions | B+ | Mostly idiomatic; MCP stutter; `ctx` shadowing |
+| Error Handling | B | Good wrapping; missing `errors.Is`; 20+ swallowed `os.UserHomeDir()` |
+| Interface Design | B | Clean core interfaces; MCP/Server use concrete types; `Backend` incomplete |
 | Concurrency | B | Proper mutexes; MCP context issue; slice corruption bug |
-| Testing | B+ | Good core tests; zero MCP test coverage |
-| Resource Management | B+ | Proper defer usage; temp dir leak in eval |
-| Code Organization | B | Significant type duplication across modules |
-| Documentation | B- | Many exported types lack doc comments |
-| Consistency | B- | Mixed `interface{}`/`any`, mixed logging |
+| Testing | B | Good core/eval tests; zero MCP test coverage; unsafe assertions in tests |
+| Resource Management | B+ | Proper defer usage; temp dir leak in eval; inconsistent `Close()` error handling |
+| Code Organization | B- | Significant duplication across modules (types, helpers, frontmatter parsing) |
+| Documentation | B- | Many exported types lack doc comments; stale TODOs |
+| Consistency | C+ | Mixed `interface{}`/`any`, 3 logging strategies, inconsistent error conventions |
 
 ---
 
 ## Strengths
 
-### 1. Excellent Interface Design (`codex/internal/core/interfaces.go`)
+### 1. Clean Interface Design (`codex/internal/core/interfaces.go`)
 
-The `core` package defines clean, focused interfaces following the "accept interfaces, return structs" principle:
+The `core` package defines small, focused interfaces following the "accept interfaces, return structs" principle:
 
 ```go
 type Embedder interface {
@@ -46,23 +46,16 @@ type VectorStorage interface {
 }
 ```
 
-These are small, focused interfaces (2-3 methods each), making them easy to implement and mock. The `SearchEngine` accepts these interfaces, enabling full testability via `NewSearchEngineWithDeps()`.
+2-3 methods per interface, easy to implement and mock. `NewSearchEngineWithDeps()` enables full testability.
 
 ### 2. Dependency Injection & Testability
-
-The constructor pattern with a deps struct is excellent:
 
 ```go
 // codex/internal/core/engine.go:82
 func NewSearchEngineWithDeps(deps SearchEngineDeps) *SearchEngine { ... }
 ```
 
-The `embedding.LocalClient` uses the functional options pattern cleanly:
-
-```go
-// codex/internal/embedding/local.go:47
-func NewLocalClient(opts ...LocalClientOption) *LocalClient { ... }
-```
+Functional options pattern in `embedding.LocalClient` and `web.ServerOption`. Clean constructor patterns throughout.
 
 ### 3. Consistent Error Wrapping
 
@@ -71,41 +64,40 @@ Throughout the codebase, errors are properly wrapped with `%w` and contextual me
 ```go
 return nil, fmt.Errorf("failed to open metadata store: %w", err)
 return nil, fmt.Errorf("vecstore migrate: %w", err)
-return nil, fmt.Errorf("failed to embed query: %w", err)
 ```
 
 ### 4. Proper Resource Cleanup
 
-`defer` is used correctly and consistently for database rows, files, and trees:
+`defer` used correctly and consistently:
 
 ```go
-defer rows.Close()
-defer tree.Close()
-defer indexer.Close()
-defer tx.Rollback()  // in edi/internal/recall/storage.go:276
+defer rows.Close()              // database queries (storage/metadata.go)
+defer tx.Rollback()             // transactions (edi/internal/recall/storage.go:276)
+defer tree.Close()              // tree-sitter (chunking/ast.go)
 ```
+
+Atomic file writes via temp file + rename in `edi/internal/tasks/sync.go:92-101`. Named return + deferred closure for `Close()` error capture in `edi/internal/launch/commands.go:106-125`.
 
 ### 5. Well-Structured Tests
 
-Tests follow BDD-style naming and Given/When/Then structure:
+BDD-style naming with Given/When/Then structure:
 
 ```go
-t.Run("Given items exist When List called with type filter Then returns only matching type", func(t *testing.T) {
-    // Given
-    metaStore := NewMockMetadataStorage()
-    // ...
-    // When
-    items, err := engine.List(ctx, "pattern", "", 10, 0)
-    // Then
-    if err != nil { t.Fatalf("List failed: %v", err) }
-})
+t.Run("Given items exist When List called with type filter Then returns only matching type", ...)
 ```
 
-Mock implementations are thorough with configurable failure modes (`FailOnSave`, `FailOnUpsert`, etc.).
+Proper use of `t.TempDir()`, `t.Setenv()`, `t.Helper()`, build tags (`fts5`, `evalintegration`), and configurable mock failure modes.
 
-### 6. Proper Concurrency in VecStore
+### 6. Excellent Package Documentation
 
-`codex/internal/storage/vecstore.go` correctly uses `sync.RWMutex` with `RLock` for reads and `Lock` for writes. The min-heap based top-K search is algorithmically sound.
+Outstanding `doc.go` files in `tasks`, `briefing`, `recall`, `memory` packages documenting strategy, data flow, file formats, and usage.
+
+### 7. Compile-Time Interface Checks
+
+```go
+// edi/internal/recall/backend.go:22
+var _ Backend = (*Storage)(nil)
+```
 
 ---
 
@@ -173,66 +165,60 @@ The following types are fully duplicated across both modules:
 - `ListToolsResult`, `Tool`, `CallToolParams`, `CallToolResult`, `ToolContent`
 - `generateID()` function
 
-**Impact**: Any protocol change must be updated in two places. This violates DRY and increases maintenance burden.
+**Impact**: Any protocol change must be updated in two places.
 
-**Recommendation**: Extract shared MCP protocol types into a shared package (e.g., `codex/pkg/mcp/types.go` or a new top-level `pkg/mcp/` module), or define them in only one module and import.
+**Recommendation**: Extract shared MCP protocol types into a shared package (e.g., `codex/pkg/mcp/types.go`).
 
-#### H2. Missing Sentinel Errors
+#### H2. Pervasive `errors.Is` Violations
 
-**Files**: `codex/internal/storage/metadata.go:274`, `codex/internal/core/engine.go:347`
+Direct error comparison instead of `errors.Is` in multiple files:
 
-"Not found" errors are created as formatted strings, making them impossible to check programmatically:
+| File | Line | Error |
+|------|------|-------|
+| `codex/internal/mcp/server.go` | 114 | `err == io.EOF` |
+| `codex/internal/storage/metadata.go` | 273, 418 | `err == sql.ErrNoRows` |
+| `codex/cmd/recall-mcp/main.go` | 53 | `err != context.Canceled` |
+| `edi/internal/recall/server.go` | 112 | `err == io.EOF` |
+| `edi/internal/recall/storage.go` | 185 | `err == sql.ErrNoRows` |
 
-```go
-// metadata.go:274
-return nil, fmt.Errorf("item not found: %s", id)
+**Fix**: Use `errors.Is(err, target)` in all cases. Direct comparison breaks when errors are wrapped.
 
-// engine.go:347
-return fmt.Errorf("item not found: %w", err)
-```
-
-**Recommendation**: Define sentinel errors per Effective Go:
-
-```go
-var ErrNotFound = errors.New("item not found")
-
-// Usage:
-return nil, fmt.Errorf("%w: %s", ErrNotFound, id)
-
-// Callers can check:
-if errors.Is(err, storage.ErrNotFound) { ... }
-```
-
-#### H3. Inconsistent Not-Found Return Conventions
+#### H3. Missing Sentinel Errors & Inconsistent Not-Found Convention
 
 **Files**: `codex/internal/storage/metadata.go`
 
-Two methods in the same package handle "not found" differently:
+Two methods handle "not found" differently:
 - `GetItem()` (line 274): returns `(nil, error)` — error for not found
 - `FindByTitle()` (line 419): returns `(nil, nil)` — nil for not found
 
-This is confusing for callers. Per Go conventions, pick one pattern and be consistent. The `FindByTitle` approach of `(nil, nil)` is common for "optional lookup" semantics, while `GetItem` should return a sentinel error.
+No sentinel error exists, making programmatic error checking impossible:
 
-#### H4. Zero Test Coverage for MCP Server Package
+```go
+return nil, fmt.Errorf("item not found: %s", id)  // can't check with errors.Is
+```
+
+**Recommendation**: Define `var ErrNotFound = errors.New("item not found")` and use consistently.
+
+#### H4. Zero Test Coverage for MCP Server Packages
 
 **Files**: `codex/internal/mcp/` — no `*_test.go` files exist
 
-The MCP server (`server.go`) and tool handler (`tools.go`) are the primary interface between Claude Code and the Codex backend. There are zero unit tests for this package. Also missing tests: `codex/internal/embedding/`, `codex/internal/reranking/`, `codex/internal/chunking/`, `codex/pkg/recall/`.
+The MCP server and tool handler are the primary interface between Claude Code and the Codex backend with zero unit tests. Also missing direct tests: `codex/internal/embedding/`, `codex/internal/reranking/`, `codex/internal/chunking/`, `codex/pkg/recall/`.
 
-**Recommendation**: Add unit tests for `ToolHandler.Handle()` dispatching, each tool handler method, JSON-RPC message parsing, and error responses. The `codex/internal/mcp/server.go:RunForIO` method already accepts `io.Reader`/`io.Writer` for testability — use `io.Pipe` to test the full request/response cycle.
+**Recommendation**: Add unit tests using `io.Pipe` against `RunForIO`. Requires interface fix (H6) for proper mock injection.
 
 #### H5. MCP Types Stutter Package Name
 
 **Files**: `codex/internal/mcp/server.go:30-46`, `edi/internal/recall/server.go:30-46`
 
-Per Effective Go, types should not repeat the package name. These types all stutter:
-- `mcp.MCPRequest` should be `mcp.Request`
-- `mcp.MCPResponse` should be `mcp.Response`
-- `mcp.MCPError` should be `mcp.Error`
+Per Effective Go, types should not repeat the package name:
+- `mcp.MCPRequest` → `mcp.Request`
+- `mcp.MCPResponse` → `mcp.Response`
+- `mcp.MCPError` → `mcp.Error` (or `mcp.RPCError` to avoid collision with builtin)
 
-#### H6. MCP ToolHandler/Server Depend on Concrete Types
+#### H6. MCP Server/ToolHandler Depend on Concrete Types
 
-**File**: `codex/internal/mcp/tools.go:16`, `codex/internal/mcp/server.go:16`
+**Files**: `codex/internal/mcp/tools.go:16`, `codex/internal/mcp/server.go:16`, `codex/internal/web/server.go:21`
 
 ```go
 type ToolHandler struct {
@@ -241,9 +227,30 @@ type ToolHandler struct {
 }
 ```
 
-This makes it impossible to unit test `ToolHandler` with a mock engine. Should accept an interface covering the methods used (`Search`, `Get`, `Add`, `RecordFeedback`, `LogFlightRecorder`).
+Also: `edi/internal/recall/server.go:16-19` accepts concrete `*Storage` instead of `Backend` interface.
 
-#### H7. `MetadataStorage` Interface Is Too Fat
+Makes unit testing impossible without a full SearchEngine/Storage with SQLite. The `web` package even defines `SearchEngineInterface` in its test file but never uses it in production code.
+
+**Recommendation**: Accept interfaces covering just the methods each consumer needs.
+
+#### H7. EDI `Backend` Interface Is Incomplete
+
+**File**: `edi/internal/recall/backend.go:14-19`
+
+```go
+type Backend interface {
+    Search(query string, types []string, scope string, limit int) ([]Item, error)
+    Add(item *Item) error
+    FindByTitle(title string) (*Item, error)
+    Close() error
+}
+```
+
+The `Server` calls `s.storage.Get()`, `s.storage.RecordFeedback()`, `s.storage.LogFlightRecorder()` (lines 404, 472, 502) which are **not on the `Backend` interface**. This makes `Backend` an incomplete abstraction.
+
+**Recommendation**: Add the missing methods, or create a `ServerBackend` that extends `Backend`.
+
+#### H8. `MetadataStorage` Interface Is Too Fat
 
 **File**: `codex/internal/core/interfaces.go:42-53`
 
@@ -255,133 +262,153 @@ type FeedbackRecorder interface { RecordFeedback }
 type FlightRecorder interface { LogFlightRecorder, GetFlightRecorderEntries }
 ```
 
-#### H8. Swallowed Errors in Config Helpers
+#### H9. Swallowed `os.UserHomeDir()` Errors (20+ locations)
 
-**File**: `edi/internal/config/loader.go:62-83`
-
-Four exported helper functions silently discard errors:
+**Files**: Throughout `edi/internal/cli/`, `edi/internal/config/`, `edi/internal/launch/`, `edi/internal/tasks/`
 
 ```go
-func GlobalConfigPath() string {
-    home, _ := os.UserHomeDir()  // error silently ignored
-    return filepath.Join(home, ".edi", "config.yaml")
-}
+home, _ := os.UserHomeDir()  // error silently ignored
 ```
 
-If `os.UserHomeDir()` fails, `home` is `""`, producing path `"/.edi/config.yaml"` — a valid but wrong path that could lead to confusing behavior.
+Found in 20+ locations. If `os.UserHomeDir()` fails, `home` is `""`, producing paths like `"/.edi/config.yaml"` — valid but wrong.
 
-**Recommendation**: Either return `(string, error)` or panic on truly unrecoverable errors. At minimum, document the assumption.
+Key locations:
+- `edi/internal/config/loader.go:62-83` (4 exported helper functions)
+- `edi/internal/cli/recall.go:94, 198, 221`
+- `edi/internal/cli/launch.go:70`
+- `edi/internal/launch/mcp.go:37, 53, 89, 194, 227`
+- `edi/internal/tasks/sync.go:249`
 
-#### H5. Variable Shadowing: `ctx` Shadows Package Name
+**Recommendation**: Resolve HOME once at program start and pass through, or create a `mustUserHomeDir()` helper.
+
+#### H10. Variable Shadowing: `ctx` Shadows `context.Context` Convention
 
 **Files**: `edi/internal/recall/server.go:462`, `codex/internal/mcp/tools.go:233`
 
 ```go
-func (h *ToolHandler) handleFeedback(args map[string]interface{}) (interface{}, error) {
-    // ...
-    ctx, _ := args["context"].(string)  // shadows 'context' package
+ctx, _ := args["context"].(string)  // 'ctx' universally means context.Context
 ```
 
-The variable `ctx` is idiomatically reserved for `context.Context` in Go. Using it for a string value is confusing.
-
-**Recommendation**: Rename to `feedbackCtx`, `ctxStr`, or `contextStr`.
+**Recommendation**: Rename to `feedbackCtx` or `contextStr`.
 
 ### Medium Priority
 
-#### M1. Temp Directory Leak in Eval Runner
+#### M1. Temp Directory and Engine Leak in Eval Runner
 
 **File**: `codex/eval/runner_agent.go:158-186`
 
-The `bootMCP` method creates a temp directory at line 159 but only cleans it up in error paths (lines 174, 181). On the success path, there is no `defer os.RemoveAll(tmpDir)`, causing leaked temp directories for every successful eval run.
+`bootMCP` creates a temp directory at line 159 but only cleans it up on error paths (lines 174, 181). On success, the temp directory leaks. Additionally, the `engine` created at line 170 is never closed — `MCPClient.Close()` only cancels context and closes the pipe writer.
 
-#### M2. Duplicated Retry Logic and Code Fence Stripping
+**Recommendation**: Return cleanup function or have `MCPClient` own both engine and tmpDir.
+
+#### M2. Duplicated Helper Functions Across Modules
+
+Multiple utility functions are copied rather than shared:
+
+| Function | Location 1 | Location 2 | Difference |
+|----------|-----------|-----------|------------|
+| `getEnv(key, default)` | `codex/cmd/codex-cli/config.go:46` | `codex/cmd/recall-mcp/main.go:65` | Identical |
+| `expandHome(path)` | `codex/internal/storage/metadata.go:63` | `codex/pkg/recall/client.go:292` | Subtly different (`"~"` vs `"~/"`) |
+| `loadProfile(projectPath)` | `edi/internal/briefing/generator.go:165` | `edi/internal/memory/generator.go:324` | Identical |
+| `loadStatus(projectPath)` | `edi/internal/briefing/generator.go:174` | `edi/internal/memory/generator.go:332` | Identical |
+| `copyFile(src, dst)` | `edi/internal/cli/ralph.go:182` | `edi/internal/launch/commands.go:106` | **Different error handling** for `Close()` |
+| frontmatter parsing | `edi/internal/agents/loader.go:67-116` | `edi/internal/briefing/history.go:70-119` | Nearly identical |
+| `maxContentSize`/`maxQuerySize` | `codex/internal/mcp/tools.go:46` | `codex/internal/web/handlers.go:16` | Identical constants |
+
+The `copyFile` duplication is particularly dangerous: `launch/commands.go` correctly captures `Close()` errors via named returns; `ralph.go` does not.
+
+**Recommendation**: Extract shared utilities into `internal/pathutil`, `internal/fileutil`, or similar packages.
+
+#### M3. Duplicated Row Scanning in EDI Storage
+
+**File**: `edi/internal/recall/storage.go`
+
+The same scan-and-parse pattern (scan columns, parse tags JSON, parse timestamps) appears identically in `Search` (lines 126-163), `Get` (lines 236-267), and `FindByTitle` (lines 174-201).
+
+**Recommendation**: Extract a `scanItem(scanner) (*Item, error)` helper.
+
+#### M4. Duplicated Retry Logic and Code Fence Stripping in Eval
 
 **Files**: `codex/eval/judge.go:93-144` vs `judge.go:163-206`, `judge.go:212-223` vs `scorer.go:394-403`
 
 The retry-with-exponential-backoff pattern is nearly identical in `RawJudge` and `RawHTTPPost`. The markdown code fence stripping logic is duplicated in `parseJudgment` and `judgeCodeQuality`. Both should be extracted to shared helpers.
 
-#### M3. Hand-Rolled String Functions in Eval
+#### M5. Hand-Rolled String Functions in Eval
 
 **File**: `codex/eval/runner_agent.go:507-541`
 
-`containsIgnoreCase` and `bytesContains` are hand-rolled ASCII-only implementations. Use `strings.Contains(strings.ToLower(s), strings.ToLower(substr))` for proper Unicode support.
+`containsIgnoreCase` and `bytesContains` are hand-rolled ASCII-only implementations that ignore Unicode.
+
+**Fix**: `strings.Contains(strings.ToLower(s), strings.ToLower(substr))`
 
 **File**: `codex/eval/runner_pipe.go:306-319` — `splitLines` reimplements `strings.Split(s, "\n")`.
 
-#### M4. `interface{}` vs `any` Inconsistency
+#### M6. Reinvented Stdlib Functions
 
-The project requires Go 1.22+ but inconsistently uses both `interface{}` and `any`:
+**File**: `edi/internal/recall/integration_test.go:666-669`
 
-- Uses `any`: `codex/internal/core/types.go:54`, `codex/internal/storage/metadata.go:35`
-- Uses `interface{}`: `codex/internal/mcp/server.go:34`, `edi/internal/recall/server.go:32`, most of `codex/internal/mcp/tools.go`
+```go
+func hasPrefix(s, prefix string) bool {
+    return len(s) >= len(prefix) && s[:len(prefix)] == prefix
+}
+```
 
-**Recommendation**: Use `any` consistently (it's the Go 1.18+ alias for `interface{}`). A simple find-and-replace would unify this.
+This is exactly `strings.HasPrefix`. Delete and use stdlib.
 
-#### M5. `fmt.Errorf` Without Format Arguments Should Be `errors.New`
+#### M7. `interface{}` vs `any` Inconsistency
 
-Multiple locations create errors with `fmt.Errorf` when no formatting is needed:
+The project requires Go 1.22+ but mixes both forms:
 
+- Uses `any`: `codex/internal/core/types.go`, `codex/internal/storage/metadata.go`, `codex/internal/storage/vecstore.go`
+- Uses `interface{}`: `codex/internal/mcp/server.go`, `edi/internal/recall/server.go`, `edi/internal/tasks/manifest.go`, most of `codex/internal/mcp/tools.go`
+
+**Recommendation**: Standardize on `any` throughout.
+
+#### M8. Error Message Convention Violations
+
+Multiple locations violate Go Code Review Comments ("Error strings should not be capitalized"):
+
+```go
+// codex/internal/core/index.go:65-75
+return nil, fmt.Errorf("Embedder is required")
+return nil, fmt.Errorf("VectorStore is required")
+return nil, fmt.Errorf("MetaStore is required")
+return nil, fmt.Errorf("CodeChunker is required")
+```
+
+Also: `fmt.Errorf` used without format arguments where `errors.New` is appropriate:
 ```go
 // codex/internal/mcp/tools.go:54
-return nil, fmt.Errorf("query is required")
-
-// codex/internal/mcp/tools.go:157
-return nil, fmt.Errorf("type, title, and content are required")
+return nil, fmt.Errorf("query is required")  // should be errors.New
 ```
 
-**Recommendation**: Use `errors.New("query is required")` when there are no format arguments. This is slightly more efficient and signals intent more clearly.
+#### M9. Magic Numbers Throughout
 
-#### M6. Magic Numbers Throughout
+| File | Line | Value | Meaning |
+|------|------|-------|---------|
+| `codex/internal/core/engine.go` | 116 | `50` | candidate limit |
+| `codex/internal/core/engine.go` | 161 | `60` | RRF k parameter |
+| `codex/internal/mcp/server.go` | 101 | `10<<20` | stdin buffer |
+| `edi/internal/recall/server.go` | 99 | `10<<20` | stdin buffer |
+| `edi/internal/recall/server.go` | 120,147,307,383 | `-32700,-32601,-32602,100` | JSON-RPC codes, limits |
+| `codex/eval/scorer.go` | 367 | `50000` | truncation limit |
+| `codex/eval/agent_tools.go` | 246,367 | `100000,10000` | truncation limits |
 
-**File**: `codex/internal/core/engine.go`
+**Recommendation**: Extract to named constants with documentation.
 
-```go
-candidateLimit := 50                    // line 116 - why 50?
-if candidateLimit < 20 {                // line 119 - why 20?
-    candidateLimit = 20
-}
-results := reciprocalRankFusion(..., 60)  // line 161 - RRF k=60
+#### M10. Inconsistent Logging Strategy
 
-// codex/internal/mcp/server.go:101
-reader := bufio.NewReaderSize(r, 10<<20)  // 10MB buffer - why?
+Three different logging approaches:
 
-// codex/eval/scorer.go:367
-if len(implementation) > 50000 {          // 50K chars - why?
-```
-
-**Recommendation**: Extract to named constants with documentation:
-
-```go
-const (
-    defaultCandidateLimit = 50  // Over-fetch for RRF fusion
-    minCandidateLimit     = 20  // Minimum for reasonable fusion quality
-    rrfK                  = 60  // Standard RRF smoothing constant
-)
-```
-
-#### M7. Large Functions Could Be Decomposed
-
-- `codex/internal/core/engine.go:111-225` — `Search()` is 114 lines with 9 numbered steps
-- `edi/internal/cli/launch.go:17-123` — `runLaunch()` is 106 lines of sequential operations
-- `codex/eval/scorer.go:264-307` — `checkPitfalls()` has complex nested conditionals
-
-While the numbered comments in `Search()` help readability, these functions would benefit from being broken into smaller, named helpers that each do one thing.
-
-#### M8. Inconsistent Logging Strategy
-
-Three different logging approaches are used:
-
-1. `log.Printf` (standard library) — majority of codebase
-2. `log/slog` (structured logging) — `codex/internal/web/handlers.go`
+1. `log.Printf` (standard library) — majority of codebase, `codex/internal/core/`, `edi/internal/recall/storage.go`
+2. `log/slog` (structured logging) — `codex/internal/web/handlers.go`, `codex/pkg/recall/client.go`
 3. `fmt.Fprintf(os.Stderr, ...)` — `edi/internal/cli/` package
 
-**Recommendation**: Standardize on `log/slog` (available since Go 1.21, within the 1.22+ requirement). It provides structured logging with levels, which is more appropriate for a production tool.
+**Recommendation**: Standardize on `log/slog` (available since Go 1.21, within the 1.22+ requirement).
 
-#### M9. Compensating Actions Without Transactions
+#### M11. Compensating Actions Without Transactions
 
 **File**: `codex/internal/core/engine.go:237-256`
-
-The `Add` method performs a manual compensating delete if vector storage fails:
 
 ```go
 if err := e.metadata.SaveItem(itemToRecord(item)); err != nil {
@@ -393,18 +420,33 @@ if err := e.vecStore.Upsert(ctx, item.ID, vec); err != nil {
 }
 ```
 
-This is fragile: if `DeleteItem` fails, the database is left in an inconsistent state (metadata exists without a vector). The same pattern appears in `Update()`.
+If `DeleteItem` fails, the database is in an inconsistent state. Since both stores share the same SQLite database, consider wrapping in a SQL transaction.
 
-**Recommendation**: Since both stores share the same SQLite database, wrap operations in a SQL transaction. Alternatively, document the acceptable inconsistency window.
-
-#### M10. Repeated `os.Getwd()` Calls in Same Flow
+#### M12. Repeated `os.Getwd()` Calls in Same Flow
 
 During a single launch, `os.Getwd()` is called independently in:
 - `edi/internal/cli/launch.go:25`
 - `edi/internal/briefing/generator.go:43`
 - `edi/internal/config/loader.go:22`
+- `edi/internal/agents/loader.go:30`
 
-**Recommendation**: Resolve `cwd` once at the top of the launch flow and pass it as a parameter.
+**Recommendation**: Resolve `cwd` once at the top of the launch flow and pass as a parameter. Functions that call `os.Getwd()` internally are harder to test (require `os.Chdir`).
+
+#### M13. `MCPClient` Reader Not Protected by Mutex
+
+**File**: `codex/eval/mcpclient.go:105-127`
+
+The `mu` mutex only protects writes. If multiple goroutines call `call()` concurrently, read interleaving is possible (goroutine A sends request, goroutine B sends request, goroutine A reads goroutine B's response). Currently single-threaded, but a latent issue.
+
+#### M14. `dstFile.Close()` Error Not Checked
+
+**File**: `edi/internal/codex/installer.go:101-108`
+
+```go
+defer dstFile.Close()  // error silently discarded
+```
+
+On some filesystems (NFS), `Close()` is where write errors surface. The `launch/commands.go` version of `copyFile` (lines 106-124) correctly captures the close error, but this version does not.
 
 ### Low Priority
 
@@ -412,74 +454,15 @@ During a single launch, `os.Getwd()` is called independently in:
 
 **Files**: `edi/internal/recall/server.go:30-95`, `codex/internal/mcp/server.go:30-91`
 
-Per Effective Go: "Every exported name in a program should have a doc comment." The MCP protocol types (`MCPRequest`, `MCPResponse`, `MCPError`, `Tool`, `CallToolParams`, etc.) lack doc comments.
+13+ exported types (`MCPRequest`, `MCPResponse`, `MCPError`, `Tool`, `CallToolParams`, etc.) lack doc comments. Per Effective Go: "Every exported name should have a doc comment."
 
-While these are in `internal/` packages, doc comments aid maintainability.
+#### L2. Stale TODO Comments
 
-#### L2. `Metadata` Type Alias Is Ambiguous
+**File**: `codex/internal/core/migrate.go:162-173` — Comments reference "Voyage embeddings" and "OpenAI embeddings" but the system uses local Ollama nomic-embed-text for all types.
 
-**File**: `edi/internal/tasks/manifest.go:33`
+**File**: `codex/internal/reranking/reranker.go` — Lines 11, 40, 71, 107, 124, 143 all contain `TODO: Implement with Hugot` without tracking issues.
 
-```go
-type Metadata map[string]interface{}
-```
-
-This creates a named type for `map[string]interface{}` but doesn't add methods or validation. The name `Metadata` is generic and could conflict with other packages. Consider just using `map[string]any` inline, or add meaningful methods to justify the type.
-
-#### L3. `ASTChunker.available` Field Is Always True
-
-**File**: `codex/internal/chunking/ast.go:22,27`
-
-```go
-type ASTChunker struct {
-    // ...
-    available bool
-}
-
-func NewASTChunker() *ASTChunker {
-    chunker := &ASTChunker{available: true}  // always true
-    // ...
-}
-```
-
-The `available` field is always set to `true` in the constructor and never changes. The `IsAvailable()` method always returns `true`. This appears to be dead code from a feature flag that was never needed.
-
-**Recommendation**: Remove the field and `IsAvailable()` method, or implement actual availability checking (e.g., verify tree-sitter bindings loaded successfully).
-
-#### L4. `DetectLanguage` Uses Full Path Instead of Extension
-
-**File**: `codex/internal/chunking/ast.go:388`
-
-```go
-func DetectLanguage(filePath string) string {
-    ext := strings.ToLower(filePath)  // lowercases entire path
-    switch {
-    case strings.HasSuffix(ext, ".go"):
-```
-
-This works but is wasteful — it lowercases the entire file path when only the extension matters. Use `filepath.Ext()`:
-
-```go
-func DetectLanguage(filePath string) string {
-    switch strings.ToLower(filepath.Ext(filePath)) {
-    case ".go":
-        return "go"
-    // ...
-    }
-}
-```
-
-#### L5. No `.golangci.yml` Configuration
-
-The Makefiles reference `golangci-lint` but no configuration file exists. Running with defaults may miss project-specific issues or flag irrelevant ones.
-
-**Recommendation**: Add a `.golangci.yml` with at minimum:
-- Enable `errcheck`, `govet`, `staticcheck`, `gosimple`
-- Enable `gofumpt` (since it's the project standard)
-- Enable `exhaustive` for switch completeness
-- Consider `contextcheck` for proper context propagation
-
-#### L6. `ClaudeTask.MarshalJSON` Is Redundant
+#### L3. `ClaudeTask.MarshalJSON` Is Redundant
 
 **File**: `edi/internal/tasks/manifest.go:82-85`
 
@@ -490,53 +473,120 @@ func (ct *ClaudeTask) MarshalJSON() ([]byte, error) {
 }
 ```
 
-This custom `MarshalJSON` delegates to the default behavior via an alias — it does nothing that `json.Marshal` wouldn't already do. Remove it unless there's a planned divergence.
+This custom `MarshalJSON` delegates to default behavior via alias — it does nothing `json.Marshal` wouldn't already do. Remove it.
 
-#### L7. `collectGoFiles` Reads All Files Into Memory
+#### L4. `ASTChunker.available` Field Is Always True
+
+**File**: `codex/internal/chunking/ast.go:22,27`
+
+The `available` field is always set to `true` and never changes. `IsAvailable()` always returns `true`. Dead code from a feature flag that was never needed.
+
+#### L5. `DetectLanguage` Lowercases Entire Path
+
+**File**: `codex/internal/chunking/ast.go:388`
+
+```go
+ext := strings.ToLower(filePath)  // lowercases entire path
+```
+
+Should use `strings.ToLower(filepath.Ext(filePath))` — only the extension matters.
+
+#### L6. No `.golangci.yml` Configuration
+
+The Makefiles reference `golangci-lint` but no configuration file exists. Running with defaults may miss project-specific issues.
+
+**Recommendation**: Add `.golangci.yml` with `errcheck`, `govet`, `staticcheck`, `gosimple`, `gofumpt`, `contextcheck`.
+
+#### L7. Unsafe Type Assertions in Integration Tests
+
+**File**: `edi/internal/recall/integration_test.go:163, 188, 211, 481, 503, 525, 594`
+
+```go
+count := result["count"].(float64)             // panics if missing
+results := result["results"].([]interface{})   // panics if wrong type
+```
+
+These produce confusing stack traces instead of clear test failures. Use comma-ok pattern with `t.Fatalf`.
+
+#### L8. Duplicated Extension Maps in Indexer
+
+**File**: `codex/internal/core/index.go:395-431`
+
+`detectContentType` and `isIndexable` both define maps of file extensions with significant overlap. Extract to a shared `extensionInfo` map.
+
+#### L9. `collectGoFiles` Reads All Files Into Memory
 
 **File**: `codex/eval/scorer.go:309-324`
 
+Loads all Go source files into memory simultaneously and is called twice during scoring. Should call once and pass result, and use `filepath.WalkDir` (more efficient).
+
+#### L10. Global Manifest Lock
+
+**File**: `edi/internal/tasks/sync.go:16`
+
 ```go
-func collectGoFiles(dir string) []string {
-    var contents []string
-    _ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-        // ... reads every .go file entirely into memory
-    })
-    return contents
-}
+var manifestLock sync.Mutex
 ```
 
-This loads all Go source files into memory simultaneously. For large projects being evaluated, this could be significant. Also, the function is called twice during scoring (once in `checkPitfalls`, once in `judgeCodeQuality`).
+Package-level mutex makes independent manifest operations in tests impossible and contends on same lock for different project paths.
 
-**Recommendation**: Call once and pass the result, or use `filepath.WalkDir` (more efficient than `filepath.Walk`).
+#### L11. Type Assertion Breaks Abstraction
+
+**File**: `codex/pkg/recall/client.go:222-226`
+
+```go
+ms, ok := c.engine.MetadataStore().(*storage.MetadataStore)
+```
+
+`MetadataStore()` returns `MetadataStorage` (interface), but caller immediately asserts back to concrete type. Defeats the purpose of the interface.
+
+#### L12. `Metadata` Type Alias Is Ambiguous
+
+**File**: `edi/internal/tasks/manifest.go:33`
+
+```go
+type Metadata map[string]interface{}
+```
+
+Named type for `map[string]interface{}` without methods or validation. Consider using `map[string]any` inline.
 
 ---
 
 ## Positive Patterns Worth Preserving
 
-1. **Interface segregation in `core/interfaces.go`** — keep interfaces small and focused
+1. **Interface segregation in `core/interfaces.go`** — small, focused interfaces (2-3 methods each)
 2. **Error wrapping with `%w`** — maintains error chains for debugging
-3. **Functional options pattern** in `embedding.LocalClient` — extensible configuration
-4. **Exponential backoff retry** in `embedding/local.go` and `eval/judge.go` — robust HTTP clients
+3. **Functional options pattern** in `embedding.LocalClient`, `web.ServerOption`
+4. **Compile-time interface checks** — `var _ Backend = (*Storage)(nil)`
 5. **Min-heap for top-K search** in `vecstore.go` — algorithmically optimal
 6. **BDD-style test naming** — descriptive and self-documenting
-7. **`doc.go` files** in packages — good for package-level documentation
+7. **`doc.go` files** in packages — exemplary package-level documentation
 8. **Build tag separation** (`fts5`, `evalintegration`) — clean build boundaries
+9. **Atomic file writes** via temp + rename in `tasks/sync.go`
+10. **Proper transaction pattern** — `defer tx.Rollback()` in storage (no-op after commit)
+11. **Exponential backoff retry** in `embedding/local.go` and `eval/judge.go`
+12. **Named return + deferred closure** for `Close()` error capture in `launch/commands.go`
+13. **Per-language parser mutexes** in `ASTChunker` — allows concurrent parsing of different languages
+14. **Signal handling** in CLI — proper graceful shutdown via signal channels
 
 ---
 
 ## Recommended Priority Actions
 
-1. **Fix slice corruption bug** in `eval/condition.go:124` (Critical — data corruption)
-2. **Fix MCP server context cancellation** (Critical — affects graceful shutdown)
-3. **Add MCP server unit tests** — zero coverage on the primary Claude Code interface (High)
-4. **Define sentinel errors** for not-found and other domain errors (High)
-5. **Extract shared MCP types** to eliminate duplication; fix name stuttering (High)
-6. **Fix temp directory leak** in `eval/runner_agent.go` (High)
-7. **Split `MetadataStorage` interface** — 9 methods spanning 3 concerns (High)
-8. **Make MCP ToolHandler accept interfaces** instead of concrete `*SearchEngine` (High)
-9. **Add `.golangci.yml`** with project-specific rules (Low effort, high value)
-10. **Standardize on `any` over `interface{}`** (Low effort, consistency win)
-11. **Extract duplicated retry/parsing helpers** in eval package (Medium)
-12. **Standardize on `log/slog`** across the codebase (Medium effort)
-13. **Fix swallowed errors** in config path helpers (Medium)
+| Priority | Action | Effort | Impact |
+|----------|--------|--------|--------|
+| **1** | Fix slice corruption bug in `eval/condition.go:124` | Low | Critical — data corruption |
+| **2** | Fix MCP server context cancellation (both modules) | Medium | Critical — affects shutdown |
+| **3** | Replace `err ==` with `errors.Is` (6 locations) | Low | High — correctness |
+| **4** | Add MCP server unit tests | Medium | High — zero coverage on primary interface |
+| **5** | Extract shared MCP types to eliminate duplication | Medium | High — maintenance |
+| **6** | Make MCP Server/ToolHandler accept interfaces | Medium | High — testability |
+| **7** | Complete EDI `Backend` interface | Low | High — abstraction correctness |
+| **8** | Define sentinel errors for not-found | Low | High — programmatic error handling |
+| **9** | Fix temp dir + engine leak in `eval/runner_agent.go` | Low | High — resource leak |
+| **10** | Handle `os.UserHomeDir()` errors consistently | Medium | High — 20+ silent failures |
+| **11** | Extract duplicated helpers (6 function pairs) | Medium | Medium — maintenance |
+| **12** | Standardize on `any` over `interface{}` | Low | Medium — consistency |
+| **13** | Standardize on `log/slog` | Medium | Medium — observability |
+| **14** | Add `.golangci.yml` | Low | Medium — automated enforcement |
+| **15** | Replace magic numbers with named constants | Low | Low — readability |
