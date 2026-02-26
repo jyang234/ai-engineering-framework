@@ -17,10 +17,10 @@ The codebase is **generally well-written Go** with clean architecture, proper us
 | Project Layout | A | Standard `cmd/`, `internal/`, `pkg/` structure |
 | Naming Conventions | A- | Mostly idiomatic; minor inconsistencies |
 | Error Handling | B+ | Good wrapping; missing sentinel errors |
-| Interface Design | A | Clean interface segregation in `core/interfaces.go` |
-| Concurrency | B+ | Proper mutexes; MCP server context issue |
-| Testing | A- | Table-driven tests, mocks, good coverage |
-| Resource Management | A- | Proper defer usage; minor gaps |
+| Interface Design | B+ | Clean interfaces; `MetadataStorage` too fat; MCP uses concrete types |
+| Concurrency | B | Proper mutexes; MCP context issue; slice corruption bug |
+| Testing | B+ | Good core tests; zero MCP test coverage |
+| Resource Management | B+ | Proper defer usage; temp dir leak in eval |
 | Code Organization | B | Significant type duplication across modules |
 | Documentation | B- | Many exported types lack doc comments |
 | Consistency | B- | Mixed `interface{}`/`any`, mixed logging |
@@ -113,7 +113,33 @@ Mock implementations are thorough with configurable failure modes (`FailOnSave`,
 
 ### Critical
 
-#### C1. MCP Server Context Cancellation Is Ineffective
+#### C1. Slice Corruption Bug in `eval/condition.go`
+
+**File**: `codex/eval/condition.go:124`
+
+```go
+var baseAllowedTools = []string{
+    "Edit", "Write", "Read", "Glob", "Grep",
+    "Bash(go build:*)", "Bash(go test:*)", "Bash(go vet:*)",
+    "Bash(gofumpt:*)", "Bash(golangci-lint:*)", "Bash(go mod tidy:*)",
+}
+
+// In newAEFFull():
+tools := append(baseAllowedTools, recallTools...)
+```
+
+This is a **real bug**. Since `baseAllowedTools` is a package-level `var`, if the Go runtime allocated the backing array with capacity > length, `append` will mutate the underlying array, corrupting `baseAllowedTools` for all subsequent callers. This would cause `newBaseline()` and `newAEFMinimal()` to silently include recall tools.
+
+**Fix**:
+```go
+tools := make([]string, len(baseAllowedTools), len(baseAllowedTools)+len(recallTools))
+copy(tools, baseAllowedTools)
+tools = append(tools, recallTools...)
+```
+
+Or make `baseAllowedTools` a function returning a fresh slice each time.
+
+#### C2. MCP Server Context Cancellation Is Ineffective
 
 **Files**: `edi/internal/recall/server.go:98-131`, `codex/internal/mcp/server.go:100-133`
 
@@ -187,7 +213,49 @@ Two methods in the same package handle "not found" differently:
 
 This is confusing for callers. Per Go conventions, pick one pattern and be consistent. The `FindByTitle` approach of `(nil, nil)` is common for "optional lookup" semantics, while `GetItem` should return a sentinel error.
 
-#### H4. Swallowed Errors in Config Helpers
+#### H4. Zero Test Coverage for MCP Server Package
+
+**Files**: `codex/internal/mcp/` — no `*_test.go` files exist
+
+The MCP server (`server.go`) and tool handler (`tools.go`) are the primary interface between Claude Code and the Codex backend. There are zero unit tests for this package. Also missing tests: `codex/internal/embedding/`, `codex/internal/reranking/`, `codex/internal/chunking/`, `codex/pkg/recall/`.
+
+**Recommendation**: Add unit tests for `ToolHandler.Handle()` dispatching, each tool handler method, JSON-RPC message parsing, and error responses. The `codex/internal/mcp/server.go:RunForIO` method already accepts `io.Reader`/`io.Writer` for testability — use `io.Pipe` to test the full request/response cycle.
+
+#### H5. MCP Types Stutter Package Name
+
+**Files**: `codex/internal/mcp/server.go:30-46`, `edi/internal/recall/server.go:30-46`
+
+Per Effective Go, types should not repeat the package name. These types all stutter:
+- `mcp.MCPRequest` should be `mcp.Request`
+- `mcp.MCPResponse` should be `mcp.Response`
+- `mcp.MCPError` should be `mcp.Error`
+
+#### H6. MCP ToolHandler/Server Depend on Concrete Types
+
+**File**: `codex/internal/mcp/tools.go:16`, `codex/internal/mcp/server.go:16`
+
+```go
+type ToolHandler struct {
+    engine    *core.SearchEngine  // concrete type, not interface
+    sessionID string
+}
+```
+
+This makes it impossible to unit test `ToolHandler` with a mock engine. Should accept an interface covering the methods used (`Search`, `Get`, `Add`, `RecordFeedback`, `LogFlightRecorder`).
+
+#### H7. `MetadataStorage` Interface Is Too Fat
+
+**File**: `codex/internal/core/interfaces.go:42-53`
+
+`MetadataStorage` has 9 methods spanning three concerns: item CRUD, feedback, and flight recorder. Per the Interface Segregation Principle, split into:
+
+```go
+type ItemStorage interface { SaveItem, GetItem, FindByTitle, ListItems, DeleteItem, CountItemsByType, Close }
+type FeedbackRecorder interface { RecordFeedback }
+type FlightRecorder interface { LogFlightRecorder, GetFlightRecorderEntries }
+```
+
+#### H8. Swallowed Errors in Config Helpers
 
 **File**: `edi/internal/config/loader.go:62-83`
 
@@ -220,7 +288,27 @@ The variable `ctx` is idiomatically reserved for `context.Context` in Go. Using 
 
 ### Medium Priority
 
-#### M1. `interface{}` vs `any` Inconsistency
+#### M1. Temp Directory Leak in Eval Runner
+
+**File**: `codex/eval/runner_agent.go:158-186`
+
+The `bootMCP` method creates a temp directory at line 159 but only cleans it up in error paths (lines 174, 181). On the success path, there is no `defer os.RemoveAll(tmpDir)`, causing leaked temp directories for every successful eval run.
+
+#### M2. Duplicated Retry Logic and Code Fence Stripping
+
+**Files**: `codex/eval/judge.go:93-144` vs `judge.go:163-206`, `judge.go:212-223` vs `scorer.go:394-403`
+
+The retry-with-exponential-backoff pattern is nearly identical in `RawJudge` and `RawHTTPPost`. The markdown code fence stripping logic is duplicated in `parseJudgment` and `judgeCodeQuality`. Both should be extracted to shared helpers.
+
+#### M3. Hand-Rolled String Functions in Eval
+
+**File**: `codex/eval/runner_agent.go:507-541`
+
+`containsIgnoreCase` and `bytesContains` are hand-rolled ASCII-only implementations. Use `strings.Contains(strings.ToLower(s), strings.ToLower(substr))` for proper Unicode support.
+
+**File**: `codex/eval/runner_pipe.go:306-319` — `splitLines` reimplements `strings.Split(s, "\n")`.
+
+#### M4. `interface{}` vs `any` Inconsistency
 
 The project requires Go 1.22+ but inconsistently uses both `interface{}` and `any`:
 
@@ -229,7 +317,7 @@ The project requires Go 1.22+ but inconsistently uses both `interface{}` and `an
 
 **Recommendation**: Use `any` consistently (it's the Go 1.18+ alias for `interface{}`). A simple find-and-replace would unify this.
 
-#### M2. `fmt.Errorf` Without Format Arguments Should Be `errors.New`
+#### M5. `fmt.Errorf` Without Format Arguments Should Be `errors.New`
 
 Multiple locations create errors with `fmt.Errorf` when no formatting is needed:
 
@@ -243,7 +331,7 @@ return nil, fmt.Errorf("type, title, and content are required")
 
 **Recommendation**: Use `errors.New("query is required")` when there are no format arguments. This is slightly more efficient and signals intent more clearly.
 
-#### M3. Magic Numbers Throughout
+#### M6. Magic Numbers Throughout
 
 **File**: `codex/internal/core/engine.go`
 
@@ -271,7 +359,7 @@ const (
 )
 ```
 
-#### M4. Large Functions Could Be Decomposed
+#### M7. Large Functions Could Be Decomposed
 
 - `codex/internal/core/engine.go:111-225` — `Search()` is 114 lines with 9 numbered steps
 - `edi/internal/cli/launch.go:17-123` — `runLaunch()` is 106 lines of sequential operations
@@ -279,7 +367,7 @@ const (
 
 While the numbered comments in `Search()` help readability, these functions would benefit from being broken into smaller, named helpers that each do one thing.
 
-#### M5. Inconsistent Logging Strategy
+#### M8. Inconsistent Logging Strategy
 
 Three different logging approaches are used:
 
@@ -289,7 +377,7 @@ Three different logging approaches are used:
 
 **Recommendation**: Standardize on `log/slog` (available since Go 1.21, within the 1.22+ requirement). It provides structured logging with levels, which is more appropriate for a production tool.
 
-#### M6. Compensating Actions Without Transactions
+#### M9. Compensating Actions Without Transactions
 
 **File**: `codex/internal/core/engine.go:237-256`
 
@@ -309,7 +397,7 @@ This is fragile: if `DeleteItem` fails, the database is left in an inconsistent 
 
 **Recommendation**: Since both stores share the same SQLite database, wrap operations in a SQL transaction. Alternatively, document the acceptable inconsistency window.
 
-#### M7. Repeated `os.Getwd()` Calls in Same Flow
+#### M10. Repeated `os.Getwd()` Calls in Same Flow
 
 During a single launch, `os.Getwd()` is called independently in:
 - `edi/internal/cli/launch.go:25`
@@ -439,10 +527,16 @@ This loads all Go source files into memory simultaneously. For large projects be
 
 ## Recommended Priority Actions
 
-1. **Fix MCP server context cancellation** (Critical — affects graceful shutdown)
-2. **Define sentinel errors** for not-found and other domain errors (High)
-3. **Extract shared MCP types** to eliminate duplication (High)
-4. **Add `.golangci.yml`** with project-specific rules (Low effort, high value)
-5. **Standardize on `any` over `interface{}`** (Low effort, consistency win)
-6. **Standardize on `log/slog`** across the codebase (Medium effort)
-7. **Fix swallowed errors** in config path helpers (Medium)
+1. **Fix slice corruption bug** in `eval/condition.go:124` (Critical — data corruption)
+2. **Fix MCP server context cancellation** (Critical — affects graceful shutdown)
+3. **Add MCP server unit tests** — zero coverage on the primary Claude Code interface (High)
+4. **Define sentinel errors** for not-found and other domain errors (High)
+5. **Extract shared MCP types** to eliminate duplication; fix name stuttering (High)
+6. **Fix temp directory leak** in `eval/runner_agent.go` (High)
+7. **Split `MetadataStorage` interface** — 9 methods spanning 3 concerns (High)
+8. **Make MCP ToolHandler accept interfaces** instead of concrete `*SearchEngine` (High)
+9. **Add `.golangci.yml`** with project-specific rules (Low effort, high value)
+10. **Standardize on `any` over `interface{}`** (Low effort, consistency win)
+11. **Extract duplicated retry/parsing helpers** in eval package (Medium)
+12. **Standardize on `log/slog`** across the codebase (Medium effort)
+13. **Fix swallowed errors** in config path helpers (Medium)
