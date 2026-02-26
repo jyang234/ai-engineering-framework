@@ -1942,23 +1942,153 @@ GROUP BY er.condition;
 
 Note: SQLite doesn't have a built-in `MEDIAN` function. The Go code needs to compute medians in-application or use a SQLite extension.
 
-### Summary: Gap Severity by Build Component
+### Summary: Gap Resolution Status
 
-| Build Component | Critical Gaps | Significant Gaps | Minor Gaps | Build-Ready? |
-|---|---|---|---|---|
-| 1. Results Database | — | — | Gap 18 (queries) | **Yes** (schema defined) |
-| 2. Scoring Pipeline | Gap 2 (judge prompt) | Gap 6 (pitfall detection), Gap 7 (scoring.yaml), Gap 11 (efficiency) | — | **No** — needs prompt template + detection rules |
-| 3. Strategy A Extensions | — | — | — | **Yes** (well-specified) |
-| 4. Condition Configurator | Gap 1 (skills ↔ RECALL) | Gap 9 (allowedTools), Gap 12 (hook format) | Gap 17 (concat order) | **No** — needs decision on skills-without-RECALL |
-| 5. Strategy B Runner | — | Gap 8 (Ralph inaccuracy), Gap 9 (allowedTools) | — | **Mostly** — minor clarifications |
-| 6. Synthetic Agent Runner | Gap 3 (API client), Gap 4 (tool schemas) | ~~Gap 10~~ (resolved: use compaction + context editing) | Gap 16 (model config) | **No** — needs API types + tool schemas |
-| 7. Task Corpus | Gap 5 (test hiding) | Gap 6 (detection rules), Gap 13 (3B pitfall guarantee) | — | **No** — needs test isolation + detection mechanism |
+> Updated 2026-02-24 after resolving all decision gaps and drafting specs for remaining items.
 
-**Components ready to build now**: Results Database (#1), Strategy A Extensions (#3).
+#### Gap Decisions
 
-**Components blocked on decisions**: Condition Configurator (#4, needs Gap 1 decision), Task Corpus (#7, needs Gap 5 decision).
+| # | Gap | Resolution | Status |
+|---|---|---|---|
+| 1 | Skills reference RECALL in AEF-minimal | **Option B**: Preamble override ("RECALL tools not available — ignore instructions to use them") | Decided |
+| 2 | No LLM judge prompt template | Template drafted in this doc (system prompt + user template + JSON response schema) | Spec drafted |
+| 3 | AnthropicClient is single-turn | New client required (~350 lines including API types). Not an extension. | Documented |
+| 4 | No tool schemas for synthetic agent | RECALL schemas extracted from `codex/internal/mcp/tools.go`. File-op schemas need authoring. | **Open — see below** |
+| 5 | `task_test.go` hiding | **Option B**: Inject at scoring time. Store in `validation/task-{id}/`. | Decided |
+| 6 | `pitfalls.yaml` detection rules | Three-method schema: grep (pattern), test (specific test name), judge (LLM query) | Spec drafted |
+| 7 | `scoring.yaml` undefined | **Dropped.** Use rubric defaults for all tasks. | Decided |
+| 8 | Ralph loop inaccuracy | Strategy B departs from Ralph by adding `--append-system-prompt-file`. | Documented |
+| 9 | `--allowedTools` per condition | Per-condition allowlist table drafted in this doc. | Spec drafted |
+| 10 | Context window management | **Resolved.** Use API-native compaction + context editing + memory tool. | Resolved |
+| 11 | Efficiency scoring | Pass turn count + action summary to judge. Dimension redefined. | Spec drafted |
+| 12 | Hook config + scripts | **Deferred** to Milestone 2. Skills-only for Milestone 1. | Decided |
+| 13 | 3B pitfall guarantee | **Option B**: Seed RECALL artificially. Don't depend on Session A failing. | Decided |
+| 14 | 3C `recall_add` trigger | Agent-driven capture. Runner verifies items added per session. | Decided |
+| 15 | Statistical tests | Mann-Whitney U, Wilcoxon signed-rank, Bootstrap CIs. | Decided |
+| 16 | Model version | Add `--model` flag. Default Sonnet 4.6. | Decided |
+| 17 | Skill concatenation order | edi-core → coding → testing → plan-review → retrieval-judge. | Decided |
+| 18 | Results reporting queries | Concrete SQL queries drafted in this doc. Median in Go. | Spec drafted |
 
-**Components blocked on specs**: Scoring Pipeline (#2, needs judge prompt), Synthetic Agent Runner (#6, needs API types + tool schemas).
+#### Build Component Readiness
+
+| Component | Status | Remaining Work |
+|---|---|---|
+| 1. Results Database (1–2 days) | **Ready to build** | — |
+| 2. Scoring Pipeline (2–3 days) | **Ready to build** | Judge prompt template drafted. Detection schema drafted. |
+| 3. Strategy A Extensions (2–3 days) | **Ready to build** | — |
+| 4. Condition Configurator (1 day) | **Ready to build** | Gap 1 decided (preamble). Gap 12 deferred. |
+| 5. Strategy B Runner (3–4 days) | **Ready to build** | Gap 8 documented. Gap 9 specified. |
+| 6. Synthetic Agent Runner (5–8 days) | **Needs file-op tool schemas** | RECALL schemas exist in code. 6 file-op tool schemas (Read, Edit, Write, Glob, Grep, Bash) need authoring. See Gap 4 addendum below. |
+| 7. Task Corpus (10–15 days) | **Ready to author** | Gap 5 decided (inject tests). Gap 6 detection schema drafted. |
+
+**6 of 7 components are build-ready.** Component 6 needs the file-op tool schemas authored — that's the only remaining spec work.
+
+#### Gap 4 Addendum: File-Op Tool Schemas for Synthetic Agent
+
+The synthetic agent sends Anthropic Messages API `tools` definitions so the model knows what tools are available. RECALL tool schemas already exist in `codex/internal/mcp/tools.go` (lines 304–427) and can be extracted directly. Six file-operation tool schemas must be authored to match Claude Code's tool interface:
+
+**Read**
+```json
+{
+  "name": "Read",
+  "description": "Read a file from the filesystem.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "file_path": {"type": "string", "description": "Absolute path to the file to read"},
+      "offset": {"type": "integer", "description": "Line number to start reading from (1-indexed)"},
+      "limit": {"type": "integer", "description": "Maximum number of lines to read"}
+    },
+    "required": ["file_path"]
+  }
+}
+```
+
+**Write**
+```json
+{
+  "name": "Write",
+  "description": "Write content to a file, creating it if it doesn't exist or overwriting if it does.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "file_path": {"type": "string", "description": "Absolute path to the file to write"},
+      "content": {"type": "string", "description": "The content to write to the file"}
+    },
+    "required": ["file_path", "content"]
+  }
+}
+```
+
+**Edit**
+```json
+{
+  "name": "Edit",
+  "description": "Replace an exact string in a file with new content.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "file_path": {"type": "string", "description": "Absolute path to the file to modify"},
+      "old_string": {"type": "string", "description": "The exact text to find and replace (must be unique in file)"},
+      "new_string": {"type": "string", "description": "The replacement text"}
+    },
+    "required": ["file_path", "old_string", "new_string"]
+  }
+}
+```
+
+**Glob**
+```json
+{
+  "name": "Glob",
+  "description": "Find files matching a glob pattern.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "pattern": {"type": "string", "description": "Glob pattern to match (e.g., '**/*.go')"},
+      "path": {"type": "string", "description": "Directory to search in (defaults to working directory)"}
+    },
+    "required": ["pattern"]
+  }
+}
+```
+
+**Grep**
+```json
+{
+  "name": "Grep",
+  "description": "Search file contents using a regular expression pattern.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "pattern": {"type": "string", "description": "Regular expression pattern to search for"},
+      "path": {"type": "string", "description": "File or directory to search in"},
+      "glob": {"type": "string", "description": "Glob pattern to filter files (e.g., '*.go')"}
+    },
+    "required": ["pattern"]
+  }
+}
+```
+
+**Bash**
+```json
+{
+  "name": "Bash",
+  "description": "Execute a bash command. Only allowlisted commands are permitted.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "command": {"type": "string", "description": "The command to execute"},
+      "timeout": {"type": "integer", "description": "Timeout in milliseconds (default 120000)"}
+    },
+    "required": ["command"]
+  }
+}
+```
+
+These are intentionally minimal — matching the core interface the model needs without replicating every optional parameter from Claude Code's full tool definitions. The synthetic agent's tool dispatcher handles the actual implementation (file I/O, ripgrep, sandboxed exec).
+
+With these schemas, **all 7 components are build-ready.**
 
 ---
 
