@@ -1974,19 +1974,34 @@ Note: SQLite doesn't have a built-in `MEDIAN` function. The Go code needs to com
 
 | Concern | Current RECALL Design | Claude Code Feature | Aligned Design |
 |---|---|---|---|
-| Session working memory | MEMORY.md (file in repo, read via `Read` tool) | Memory tool (`memory_20250818`): file-based `/memories/`, survives compaction, excluded from context editing | Adopt memory tool as session cache. Agent writes decisions/insights to `/memories/` during session. |
+| Project instructions | CLAUDE.md (Claude Code native) + MEMORY.md (EDI sections: architecture, conventions) | **CLAUDE.md**: read natively at session start, no tool call needed | Consolidate to **CLAUDE.md** only. Move project-level content from MEMORY.md into CLAUDE.md. |
+| Session working memory | MEMORY.md (EDI observations, in-progress notes, read via `Read` tool) | Memory tool (`memory_20250818`): file-based `/memories/`, survives compaction, excluded from context editing | Adopt memory tool as session cache. Agent writes decisions/insights to `/memories/` during session. |
+| Promoted RECALL summaries | MEMORY.md ("These patterns were captured to codex" section) | **Codex DB** via `recall_search` — agent should search the source, not read a stale summary | Remove promoted items section from MEMORY.md. Agent searches codex directly. |
+| Human-readable project status | MEMORY.md (mixed with agent notes) + `.edi/status.md` | `status.md` already exists in `/end` workflow (step 6) | **`status.md`** only. Git-versioned, human-facing, updated at `/end`. |
 | Context growth from recall_search | Results stay in context as tool_result blocks. Accumulate over turns. | Context editing (`clear_tool_uses_20250919`): clears old tool_result blocks. Compaction (`compact_20260112`): summarizes older conversation. | Enable context editing to clear old recall_search results. Agent extracts insight → writes to `/memories/` → original results cleared. |
 | Flight recorder writes | `flight_recorder_log` writes to SQLite immediately. Each call is a tool_use + tool_result turn pair (~200 tokens in context). | Context editing can clear these tool results. | Mark flight recorder as fire-and-forget in skill instructions. Agent should not reference flight recorder responses. Context editing clears these aggressively. |
 | When knowledge enters codex DB | `recall_add` callable any time during session. | Memory tool provides structured session-scoped storage. `/end` workflow curates what to promote. | Default: `recall_add` at `/end` only. Session insights live in `/memories/` until curated. Prevents noisy mid-session writes to codex DB. |
 | Cross-compaction continuity | Not addressed. If compaction summarizes a turn where recall_search returned useful results, the details are lost. | Memory tool content persists across compaction. Anthropic docs: "memory persists important information across compaction boundaries so that nothing critical is lost in the summary." | Agent writes key findings to `/memories/` immediately after extracting them from recall_search results. These survive compaction. |
 
+**MEMORY.md subsumption.** MEMORY.md was created before the memory tool existed. It served four roles — project instructions, session working memory, promoted RECALL summaries, and human-readable status. Each role now has a canonical home:
+
+| MEMORY.md Role | New Home | Why |
+|---|---|---|
+| Project instructions (architecture, conventions) | **CLAUDE.md** | Claude Code reads natively at session start. No tool call. Industry standard. |
+| Session working memory (observations, in-progress notes) | **`/memories/`** | Purpose-built. Survives compaction. Excluded from context editing. No `Read` tool call needed. |
+| Promoted RECALL summaries | **Codex DB** (via `recall_search`) | Agent searches the source of truth. Summaries in a file drift from the actual items. |
+| Human-readable project status | **`status.md`** | Already exists in `/end` workflow. Git-versioned. Human-facing. |
+
+Four concerns, four mechanisms, zero overlap. MEMORY.md is retired.
+
 ### Session Lifecycle (Aligned)
 
 ```
 Session start:
-  1. Agent reads /memories/ (memory tool: view)
-  2. Agent reads status.md and MEMORY.md (existing behavior)
-  3. If RECALL available: recall_search for context relevant to current task
+  1. Agent reads /memories/ (memory tool: view) — recovers session state if resuming
+  2. Agent reads CLAUDE.md (native, no tool call) — project instructions
+  3. Agent reads status.md (Read tool) — current project state
+  4. If RECALL available: recall_search for context relevant to current task
 
 During session:
   recall_search()         → results enter context (tool_result)
@@ -2008,21 +2023,49 @@ At /end:
   2. Reads /memories/ for capture candidates
   3. Presents to user for approval
   4. Calls recall_add() for approved items → codex DB
-  5. Updates status.md, writes session history
-  6. Cleans up /memories/
+  5. Updates status.md with current project state (git-versioned, human-facing)
+  6. Writes session history to .edi/history/
+  7. Cleans up ephemeral /memories/ files
 ```
 
 ### What Changes in Skills
 
-**edi-core/SKILL.md** changes:
-- Replace MEMORY.md session-scoped writes with `/memories/` writes (memory tool)
-- Add instruction: "After extracting insights from recall_search results, write a concise summary to `/memories/session-cache.md`. This preserves the insight across compaction."
+**edi-core/SKILL.md** — significant rewrite of the memory/context sections:
+- Remove all MEMORY.md references (reading, writing, section management, co-ownership model)
+- Remove the "Writing During Sessions" and "Writing at Session End" MEMORY.md subsections
+- Add memory tool usage: "After extracting insights from recall_search results, write a concise summary to `/memories/session-cache.md`. This preserves the insight across compaction."
 - Add instruction: "flight_recorder_log calls are fire-and-forget. Do not reference the response."
 - Change `recall_add` guidance: "Save items to `/memories/` during the session. Use `recall_add` during `/end` to promote curated items to the codex."
+- Update session start: read `/memories/` (memory tool), CLAUDE.md (native), status.md (`Read` tool). No MEMORY.md.
 
 **retrieval-judge/SKILL.md** — no change (judges search results, writes judgment to flight recorder).
 
 **plan-review/SKILL.md** — minor: after reviewing RECALL results for known failures, write the relevant findings to `/memories/` rather than keeping them only in context.
+
+### What Changes in `/end` Command
+
+**`.claude/commands/end.md`** — update the session end workflow:
+- Remove step that updates MEMORY.md sections
+- Keep step 5 (update `status.md`) — this is now the sole human-facing project state artifact
+- Keep step 6 (write session history to `.edi/history/`)
+- Add step: clean up ephemeral `/memories/` files (session cache, scratch notes)
+- Capture candidates are read from `/memories/` instead of being inferred from the conversation
+
+### What Changes in CLAUDE.md
+
+**`CLAUDE.md`** — absorb project-level content currently in MEMORY.md:
+- Architecture overview, conventions, and team practices move here
+- This content is maintained by humans (with occasional agent suggestions at `/end`)
+- Agent reads this natively at session start — no tool call, no context cost beyond the content itself
+
+### MEMORY.md Migration Path
+
+For existing projects with MEMORY.md:
+1. Move project instructions/conventions to CLAUDE.md
+2. Delete the "promoted RECALL items" section (agent searches codex directly)
+3. Move current status content to `status.md` (if not already there)
+4. Delete MEMORY.md
+5. Update `.gitignore` if needed
 
 ### What Changes in the MCP Server
 
@@ -2046,8 +2089,17 @@ This makes the eval runner test the aligned RECALL design, not the current one. 
 | 3C (longitudinal) | Memory tool provides natural cross-compaction continuity within sessions. `/end` workflow promotes to RECALL between sessions. |
 | 3D (hook adherence) | No impact — hooks are orthogonal to context management. |
 
-### Open Question
+### Decision: MEMORY.md Retired
 
-**MEMORY.md coexistence.** The edi-core skill currently manages MEMORY.md as a shared file between EDI and Claude Code's auto-memory feature. If the memory tool replaces MEMORY.md for session-scoped notes, should MEMORY.md continue to exist for long-lived project context (architectural decisions, team conventions)? Or does `/memories/` subsume it entirely?
+> Resolved 2026-02-24. MEMORY.md is retired in favor of existing mechanisms.
 
-Recommendation: Keep MEMORY.md for project-level context that outlives sessions (it's versioned in git, visible to humans). Use `/memories/` for session-scoped working memory (ephemeral, cleaned at `/end`). Two concerns, two mechanisms.
+MEMORY.md was created before the memory tool existed. It served four roles (project instructions, session working memory, promoted RECALL summaries, human-readable status). Each role now has a canonical home that follows the "single source of truth" principle and aligns with Claude Code's native features:
+
+```
+CLAUDE.md       → project instructions (Claude Code native, human-maintained)
+/memories/      → agent working memory (memory tool, session-scoped, agent-managed)
+codex DB        → organizational knowledge (RECALL, cross-project, curated at /end)
+status.md       → human-readable project state (git-versioned, updated at /end)
+```
+
+Four concerns, four mechanisms, zero overlap. No promotion path between `/memories/` and CLAUDE.md — they serve categorically different purposes (working memory vs documentation).
