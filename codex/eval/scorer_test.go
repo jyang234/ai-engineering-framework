@@ -5,6 +5,7 @@ package eval
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -425,5 +426,353 @@ func TestCollectGoFiles_GivenNestedDirectory_ThenAllGoFilesCollected(t *testing.
 	// Then: 2 files collected (test files excluded)
 	if len(files) != 2 {
 		t.Errorf("collected %d files, want 2 (excluding test files)", len(files))
+	}
+}
+
+// =============================================================================
+// Detection Method Tests — Given-When-Then (spec Gap 6)
+// =============================================================================
+
+// --- checkPitfallByGrep ---
+
+func TestCheckPitfallByGrep_GivenDetectionFilesPattern_ThenOnlyMatchingFilesScanned(t *testing.T) {
+	// Given: a workspace with .go and .yaml files, pitfall only in .yaml
+	workDir := t.TempDir()
+	os.WriteFile(filepath.Join(workDir, "main.go"), []byte("package main\nfunc hello() {}"), 0644)
+	os.WriteFile(filepath.Join(workDir, "config.yaml"), []byte("retry_without_jitter: true"), 0644)
+
+	scorer := &Scorer{taskDir: workDir}
+	pitfall := PitfallSpec{
+		ID:          "p-files",
+		Description: "Check specific files",
+		Detection: PitfallDetection{
+			Method:  DetectionGrep,
+			Pattern: `jitter`,
+			Files:   []string{"*.yaml"},
+		},
+	}
+
+	// When: we check using grep detection with file filter
+	result := scorer.checkPitfallByGrep(pitfall)
+
+	// Then: anti-pattern found in yaml file
+	if !result.Avoided {
+		t.Error("expected pitfall avoided (anti-pattern 'jitter' found in .yaml)")
+	}
+}
+
+func TestCheckPitfallByGrep_GivenDetectionPatternOverridesAntiPattern_ThenDetectionPatternUsed(t *testing.T) {
+	// Given: a pitfall with both Detection.Pattern and AntiPattern set
+	workDir := t.TempDir()
+	os.WriteFile(filepath.Join(workDir, "main.go"), []byte("package main\nfunc retry() { addJitter() }"), 0644)
+
+	scorer := &Scorer{taskDir: workDir}
+	pitfall := PitfallSpec{
+		ID:          "p-override",
+		Description: "Detection pattern overrides anti-pattern",
+		AntiPattern: "nonexistent_pattern",
+		Detection: PitfallDetection{
+			Method:  DetectionGrep,
+			Pattern: `addJitter`,
+		},
+	}
+
+	// When: we check — Detection.Pattern should be used as anti-pattern
+	result := scorer.checkPitfallByGrep(pitfall)
+
+	// Then: avoided because Detection.Pattern matched
+	if !result.Avoided {
+		t.Errorf("expected avoided (Detection.Pattern should override), evidence: %s", result.Evidence)
+	}
+}
+
+func TestCheckPitfallByGrep_GivenFallbackToTopLevelPatterns_ThenBothWork(t *testing.T) {
+	// Given: pitfall with only top-level Pattern/AntiPattern (no Detection)
+	workDir := t.TempDir()
+	os.WriteFile(filepath.Join(workDir, "main.go"), []byte("package main\nimport \"time\"\nfunc f() { time.Sleep(backoff) }"), 0644)
+
+	scorer := &Scorer{taskDir: workDir}
+	pitfall := PitfallSpec{
+		ID:      "p-fallback",
+		Pattern: `time\.Sleep\(backoff\)`,
+	}
+
+	// When: we check using default grep detection
+	result := scorer.checkPitfallByGrep(pitfall)
+
+	// Then: pitfall NOT avoided (bad pattern matched)
+	if result.Avoided {
+		t.Error("expected pitfall NOT avoided (bad pattern matched)")
+	}
+}
+
+// --- checkPitfallByTest ---
+
+func TestCheckPitfallByTest_GivenEmptyTestName_ThenEvidenceExplainsNoTestName(t *testing.T) {
+	// Given: a pitfall with test detection but empty pattern
+	workDir := t.TempDir()
+	scorer := &Scorer{taskDir: workDir}
+	pitfall := PitfallSpec{
+		ID:        "p-no-test",
+		Detection: PitfallDetection{Method: DetectionTest, Pattern: ""},
+	}
+
+	// When: we check
+	result := scorer.checkPitfallByTest(pitfall)
+
+	// Then: evidence mentions no test name specified
+	if result.Evidence != "test detection: no test name specified" {
+		t.Errorf("evidence = %q", result.Evidence)
+	}
+}
+
+// --- checkPitfallByJudge ---
+
+func TestCheckPitfallByJudge_GivenNoAPIKey_WhenCheckingPitfall_ThenGracefulDegradation(t *testing.T) {
+	// Given: a scorer with no API key
+	workDir := t.TempDir()
+	os.WriteFile(filepath.Join(workDir, "main.go"), []byte("package main"), 0644)
+	scorer := &Scorer{
+		anthropic: NewAnthropicClient(""),
+		taskDir:   workDir,
+	}
+
+	pitfalls := []PitfallSpec{
+		{
+			ID:        "p-judge",
+			Detection: PitfallDetection{Method: DetectionJudge, Pattern: "Is jitter used?"},
+		},
+	}
+
+	// When: we check pitfalls
+	results := scorer.checkPitfalls(pitfalls)
+
+	// Then: judge detection is skipped gracefully
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Evidence != "judge detection skipped: no API key" {
+		t.Errorf("evidence = %q, expected graceful skip message", results[0].Evidence)
+	}
+}
+
+// --- Detection method dispatch ---
+
+func TestCheckPitfalls_GivenGrepMethod_ThenDispatchesToGrep(t *testing.T) {
+	// Given: a pitfall with explicit grep detection
+	workDir := t.TempDir()
+	os.WriteFile(filepath.Join(workDir, "main.go"), []byte("package main\nfunc f() { jitter := 100 }"), 0644)
+
+	scorer := &Scorer{taskDir: workDir}
+	pitfalls := []PitfallSpec{
+		{
+			ID:        "p-grep",
+			Detection: PitfallDetection{Method: DetectionGrep, Pattern: `jitter`},
+		},
+	}
+
+	// When: we check pitfalls
+	results := scorer.checkPitfalls(pitfalls)
+
+	// Then: detected via grep
+	if !results[0].Avoided {
+		t.Error("expected pitfall avoided via grep detection")
+	}
+}
+
+func TestCheckPitfalls_GivenDefaultMethod_ThenFallsBackToGrep(t *testing.T) {
+	// Given: a pitfall with no detection method set (empty string)
+	workDir := t.TempDir()
+	os.WriteFile(filepath.Join(workDir, "main.go"), []byte("package main\nfunc f() { addJitter() }"), 0644)
+
+	scorer := &Scorer{taskDir: workDir}
+	pitfalls := []PitfallSpec{
+		{
+			ID:          "p-default",
+			AntiPattern: `addJitter`,
+		},
+	}
+
+	// When: we check pitfalls
+	results := scorer.checkPitfalls(pitfalls)
+
+	// Then: falls back to grep detection
+	if !results[0].Avoided {
+		t.Error("expected pitfall avoided via default grep detection")
+	}
+}
+
+// =============================================================================
+// YAML Pitfall Parsing Tests — Given-When-Then
+// =============================================================================
+
+func TestParsePitfallsYAML_GivenValidYAML_ThenParsedCorrectly(t *testing.T) {
+	// Given: valid YAML pitfalls (spec canonical format)
+	yaml := `
+- id: p-jitter
+  type: failure
+  title: "Thundering herd from retry without jitter"
+  description: "Missing jitter in retry backoff"
+  tags: ["retry", "backoff", "jitter"]
+  detection:
+    method: grep
+    pattern: "rand|jitter|Jitter|randomize"
+    files: ["*.go"]
+- id: p-idempotency
+  description: "No idempotency key"
+  pattern: "db\\.Insert\\(payment\\)"
+  anti_pattern: "idempotencyKey"
+`
+
+	// When: we parse
+	pitfalls, err := ParsePitfallsYAML([]byte(yaml))
+
+	// Then: 2 pitfalls with correct fields
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(pitfalls) != 2 {
+		t.Fatalf("got %d pitfalls, want 2", len(pitfalls))
+	}
+
+	p1 := pitfalls[0]
+	if p1.ID != "p-jitter" {
+		t.Errorf("p1 ID = %q", p1.ID)
+	}
+	if p1.Type != "failure" {
+		t.Errorf("p1 Type = %q, want failure", p1.Type)
+	}
+	if p1.Detection.Method != DetectionGrep {
+		t.Errorf("p1 Detection.Method = %q, want grep", p1.Detection.Method)
+	}
+	if len(p1.Tags) != 3 {
+		t.Errorf("p1 Tags = %d, want 3", len(p1.Tags))
+	}
+	if len(p1.Detection.Files) != 1 || p1.Detection.Files[0] != "*.go" {
+		t.Errorf("p1 Detection.Files = %v, want [*.go]", p1.Detection.Files)
+	}
+
+	p2 := pitfalls[1]
+	if p2.Pattern != `db\.Insert\(payment\)` {
+		t.Errorf("p2 Pattern = %q", p2.Pattern)
+	}
+	if p2.AntiPattern != "idempotencyKey" {
+		t.Errorf("p2 AntiPattern = %q", p2.AntiPattern)
+	}
+}
+
+func TestParsePitfallsYAML_GivenInvalidYAML_ThenErrorReturned(t *testing.T) {
+	// Given: invalid YAML
+	_, err := ParsePitfallsYAML([]byte("{{invalid yaml"))
+
+	// Then: error returned
+	if err == nil {
+		t.Error("expected error for invalid YAML")
+	}
+}
+
+func TestParsePitfallsYAML_GivenEmptyYAML_ThenEmptySlice(t *testing.T) {
+	// Given: empty YAML
+	pitfalls, err := ParsePitfallsYAML([]byte(""))
+
+	// Then: empty slice, no error
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(pitfalls) != 0 {
+		t.Errorf("got %d pitfalls, want 0", len(pitfalls))
+	}
+}
+
+func TestParsePitfallsYAML_GivenSeedsInYAML_ThenSeedsParsed(t *testing.T) {
+	// Given: YAML with RECALL seeds
+	yaml := `
+- id: p-seeds
+  description: "Test seeds"
+  seeds:
+    - type: failure
+      title: "Missing jitter"
+      content: "Always add jitter to retry backoff"
+      tags: ["retry"]
+`
+
+	// When: we parse
+	pitfalls, err := ParsePitfallsYAML([]byte(yaml))
+
+	// Then: seeds parsed correctly
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pitfalls[0].Seeds) != 1 {
+		t.Fatalf("seeds = %d, want 1", len(pitfalls[0].Seeds))
+	}
+	seed := pitfalls[0].Seeds[0]
+	if seed.Type != "failure" {
+		t.Errorf("seed type = %q", seed.Type)
+	}
+	if seed.Title != "Missing jitter" {
+		t.Errorf("seed title = %q", seed.Title)
+	}
+}
+
+// =============================================================================
+// ProcessData Tests — Given-When-Then (spec Gap 7)
+// =============================================================================
+
+func TestProcessData_GivenInitialized_ThenFieldsAccessible(t *testing.T) {
+	// Given: process data with known values
+	pd := &ProcessData{
+		TurnCount:     15,
+		ActionSummary: "3 Edit calls, 2 failed test runs, 1 approach change",
+	}
+
+	// Then: fields are accessible
+	if pd.TurnCount != 15 {
+		t.Errorf("TurnCount = %d, want 15", pd.TurnCount)
+	}
+	if pd.ActionSummary != "3 Edit calls, 2 failed test runs, 1 approach change" {
+		t.Errorf("ActionSummary = %q", pd.ActionSummary)
+	}
+}
+
+// =============================================================================
+// collectFilesByGlob Tests — Given-When-Then
+// =============================================================================
+
+func TestCollectFilesByGlob_GivenGoPattern_ThenOnlyGoFilesReturned(t *testing.T) {
+	// Given: a directory with mixed file types
+	workDir := t.TempDir()
+	os.WriteFile(filepath.Join(workDir, "main.go"), []byte("package main"), 0644)
+	os.WriteFile(filepath.Join(workDir, "config.yaml"), []byte("key: value"), 0644)
+	os.WriteFile(filepath.Join(workDir, "main_test.go"), []byte("package main"), 0644)
+
+	scorer := &Scorer{taskDir: workDir}
+
+	// When: we collect with *.go pattern
+	content := scorer.collectFilesByGlob([]string{"*.go"})
+
+	// Then: only main.go content (test files excluded)
+	if content != "package main" {
+		t.Errorf("content = %q, want 'package main'", content)
+	}
+}
+
+func TestCollectFilesByGlob_GivenMultiplePatterns_ThenAllMatched(t *testing.T) {
+	// Given: a directory with .go and .yaml files
+	workDir := t.TempDir()
+	os.WriteFile(filepath.Join(workDir, "main.go"), []byte("package main"), 0644)
+	os.WriteFile(filepath.Join(workDir, "config.yaml"), []byte("key: value"), 0644)
+
+	scorer := &Scorer{taskDir: workDir}
+
+	// When: we collect with multiple patterns
+	content := scorer.collectFilesByGlob([]string{"*.go", "*.yaml"})
+
+	// Then: both files' contents are included
+	if !strings.Contains(content, "package main") {
+		t.Error("missing .go content")
+	}
+	if !strings.Contains(content, "key: value") {
+		t.Error("missing .yaml content")
 	}
 }

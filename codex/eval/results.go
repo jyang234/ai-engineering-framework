@@ -14,7 +14,8 @@ import (
 
 // ResultsDB provides access to the eval results database.
 type ResultsDB struct {
-	db *sql.DB
+	db     *sql.DB
+	dbPath string
 }
 
 // EvalRun represents a single evaluation run stored in the results database.
@@ -96,12 +97,42 @@ func OpenResultsDB(dbPath string) (*ResultsDB, error) {
 		return nil, fmt.Errorf("migrate results db: %w", err)
 	}
 
-	return &ResultsDB{db: db}, nil
+	return &ResultsDB{db: db, dbPath: dbPath}, nil
+}
+
+// Path returns the filesystem path of the database.
+func (r *ResultsDB) Path() string {
+	return r.dbPath
 }
 
 // Close closes the database connection.
 func (r *ResultsDB) Close() error {
 	return r.db.Close()
+}
+
+// ExperimentStat holds summary info for a listed experiment.
+type ExperimentStat struct {
+	Experiment string `json:"experiment"`
+	RunCount   int    `json:"run_count"`
+}
+
+// ListExperiments returns a summary of all experiments in the database.
+func (r *ResultsDB) ListExperiments() ([]ExperimentStat, error) {
+	rows, err := r.db.Query(`SELECT experiment, COUNT(*) FROM eval_runs GROUP BY experiment ORDER BY experiment`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var stats []ExperimentStat
+	for rows.Next() {
+		var s ExperimentStat
+		if err := rows.Scan(&s.Experiment, &s.RunCount); err != nil {
+			return nil, err
+		}
+		stats = append(stats, s)
+	}
+	return stats, rows.Err()
 }
 
 func migrateResultsDB(db *sql.DB) error {

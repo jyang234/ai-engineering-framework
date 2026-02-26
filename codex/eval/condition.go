@@ -35,19 +35,43 @@ type HookConfig struct {
 
 // RECALLSeed represents an item to pre-seed in RECALL before a run.
 type RECALLSeed struct {
-	Type    string   `json:"type"`
-	Title   string   `json:"title"`
-	Content string   `json:"content"`
-	Tags    []string `json:"tags"`
+	Type    string   `json:"type" yaml:"type"`
+	Title   string   `json:"title" yaml:"title"`
+	Content string   `json:"content" yaml:"content"`
+	Tags    []string `json:"tags" yaml:"tags"`
+}
+
+// DetectionMethod specifies how a pitfall is detected during scoring.
+type DetectionMethod string
+
+const (
+	// DetectionGrep checks for regex patterns in source files (default).
+	DetectionGrep DetectionMethod = "grep"
+	// DetectionTest checks if a specific test name passes.
+	DetectionTest DetectionMethod = "test"
+	// DetectionJudge asks an LLM judge whether the pitfall was avoided.
+	DetectionJudge DetectionMethod = "judge"
+)
+
+// PitfallDetection configures how a pitfall is detected.
+type PitfallDetection struct {
+	Method  DetectionMethod `json:"method" yaml:"method"`   // grep, test, or judge
+	Pattern string          `json:"pattern" yaml:"pattern"` // regex (grep), test name (test), or query (judge)
+	Files   []string        `json:"files" yaml:"files"`     // file glob patterns to check (grep only)
 }
 
 // PitfallSpec defines a known pitfall for a task, loaded from pitfalls.yaml.
 type PitfallSpec struct {
-	ID          string       `json:"id"`
-	Description string       `json:"description"`
-	Pattern     string       `json:"pattern"`      // Regex to detect if pitfall was hit
-	AntiPattern string       `json:"anti_pattern"` // Regex for code that avoids the pitfall
-	Seeds       []RECALLSeed `json:"seeds"`        // RECALL items that would help avoid this pitfall
+	ID          string           `json:"id" yaml:"id"`
+	Type        string           `json:"type,omitempty" yaml:"type,omitempty"`
+	Title       string           `json:"title,omitempty" yaml:"title,omitempty"`
+	Description string           `json:"description" yaml:"description"`
+	Content     string           `json:"content,omitempty" yaml:"content,omitempty"`
+	Tags        []string         `json:"tags,omitempty" yaml:"tags,omitempty"`
+	Pattern     string           `json:"pattern" yaml:"pattern"`           // Regex to detect if pitfall was hit
+	AntiPattern string           `json:"anti_pattern" yaml:"anti_pattern"` // Regex for code that avoids the pitfall
+	Detection   PitfallDetection `json:"detection" yaml:"detection"`       // Structured detection config
+	Seeds       []RECALLSeed     `json:"seeds" yaml:"seeds"`               // RECALL items that would help avoid this pitfall
 }
 
 // baseAllowedTools is the tool set shared across all conditions.
@@ -96,6 +120,16 @@ func newBaseline() *Condition {
 	}
 }
 
+// recallUnavailablePreamble is prepended to AEF-minimal system prompts to prevent
+// the model from attempting to use RECALL tools referenced in skill files.
+// This resolves spec Gap 1: skills reference recall_search and flight_recorder_log
+// but these tools are not available in the AEF-minimal condition.
+const recallUnavailablePreamble = `IMPORTANT: RECALL tools (recall_search, recall_get, recall_add, recall_feedback, flight_recorder_log) are NOT available in this session. Any instructions in the skills below that reference these tools should be skipped. Focus on using the file and code tools provided.
+
+---
+
+`
+
 func newAEFMinimal(skillDir string) (*Condition, error) {
 	prompt, err := loadSkills(skillDir, aefSkills)
 	if err != nil {
@@ -103,7 +137,7 @@ func newAEFMinimal(skillDir string) (*Condition, error) {
 	}
 	return &Condition{
 		Name:         ConditionAEFMinimal,
-		SystemPrompt: prompt,
+		SystemPrompt: recallUnavailablePreamble + prompt,
 		Skills:       aefSkills,
 		Hooks:        aefHooks,
 		AllowedTools: baseAllowedTools,

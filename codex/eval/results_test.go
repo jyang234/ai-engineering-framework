@@ -5,7 +5,6 @@ package eval
 import (
 	"fmt"
 	"math"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"

@@ -23,7 +23,17 @@ type PipeRunner struct {
 }
 
 // PipeRunConfig configures a single pipe-mode evaluation run.
+// TaskInfo holds metadata about a discovered task in the corpus.
+type TaskInfo struct {
+	ID         string
+	Complexity string
+	Spec       string
+	Pitfalls   []PitfallSpec
+}
+
+// PipeRunConfig configures a single pipe-mode evaluation run.
 type PipeRunConfig struct {
+	RunID      string // Optional: caller-assigned run ID (auto-generated if empty)
 	Experiment string
 	Condition  *Condition
 	TaskID     string
@@ -249,6 +259,24 @@ type taskInfo struct {
 	pitfalls   []PitfallSpec
 }
 
+// DiscoverTasks returns the exported task list for use by the CLI.
+func (r *PipeRunner) DiscoverTasks() ([]TaskInfo, error) {
+	internal, err := r.discoverTasks()
+	if err != nil {
+		return nil, err
+	}
+	result := make([]TaskInfo, len(internal))
+	for i, t := range internal {
+		result[i] = TaskInfo{
+			ID:         t.id,
+			Complexity: t.complexity,
+			Spec:       t.spec,
+			Pitfalls:   t.pitfalls,
+		}
+	}
+	return result, nil
+}
+
 func (r *PipeRunner) discoverTasks() ([]taskInfo, error) {
 	entries, err := os.ReadDir(r.taskDir)
 	if err != nil {
@@ -318,11 +346,16 @@ func splitLines(s string) []string {
 	return lines
 }
 
-// parsePitfalls parses pitfalls from JSON (simple format for now).
+// parsePitfalls parses pitfalls from YAML or JSON format.
+// Tries YAML first (the spec's canonical format), then falls back to JSON.
 func parsePitfalls(data []byte) []PitfallSpec {
-	var pitfalls []PitfallSpec
-	_ = json.Unmarshal(data, &pitfalls)
-	return pitfalls
+	pitfalls, err := ParsePitfallsYAML(data)
+	if err == nil && len(pitfalls) > 0 {
+		return pitfalls
+	}
+	var jsonPitfalls []PitfallSpec
+	_ = json.Unmarshal(data, &jsonPitfalls)
+	return jsonPitfalls
 }
 
 func complexityTimeout(complexity string) time.Duration {

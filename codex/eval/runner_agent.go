@@ -23,7 +23,9 @@ type AgentRunner struct {
 }
 
 // AgentRunConfig configures a single synthetic agent run.
+// AgentRunConfig configures a single agent-mode evaluation run.
 type AgentRunConfig struct {
+	RunID      string // Optional: caller-assigned run ID (auto-generated if empty)
 	Experiment string
 	Condition  *Condition
 	TaskID     string
@@ -48,6 +50,48 @@ func NewAgentRunner(resultsDB *ResultsDB, taskDir, logDir string) *AgentRunner {
 		taskDir:   taskDir,
 		logDir:    logDir,
 	}
+}
+
+// DiscoverTasks returns the exported task list for use by the CLI.
+func (r *AgentRunner) DiscoverTasks() ([]TaskInfo, error) {
+	entries, err := os.ReadDir(r.taskDir)
+	if err != nil {
+		return nil, err
+	}
+	var tasks []TaskInfo
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		taskID := entry.Name()
+		readmePath := filepath.Join(r.taskDir, taskID, "README.md")
+		specData, err := os.ReadFile(readmePath)
+		if err != nil {
+			continue
+		}
+		info := TaskInfo{
+			ID:   taskID,
+			Spec: string(specData),
+		}
+		scoringPath := filepath.Join(r.taskDir, taskID, "scoring.yaml")
+		if data, err := os.ReadFile(scoringPath); err == nil {
+			info.Complexity = parseScoringComplexity(string(data))
+		} else {
+			info.Complexity = "moderate"
+		}
+		pitfallPath := filepath.Join(r.taskDir, taskID, "pitfalls.yaml")
+		if data, err := os.ReadFile(pitfallPath); err == nil {
+			info.Pitfalls = parsePitfalls(data)
+		}
+		tasks = append(tasks, info)
+	}
+	return tasks, nil
+}
+
+// RunAgent executes a single task using the synthetic agent loop.
+// This is the CLI-facing method that delegates to RunTask.
+func (r *AgentRunner) RunAgent(ctx context.Context, config *AgentRunConfig) (*EvalRun, error) {
+	return r.RunTask(ctx, config)
 }
 
 // RunTask executes a single task using the synthetic agent loop.
