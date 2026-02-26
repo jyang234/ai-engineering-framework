@@ -4,11 +4,12 @@ AEF gives Claude Code persistent memory, specialized agents, and session continu
 
 ## What You Get
 
-- **Session continuity (briefings)** — Each session starts with project profile, recent history, and open tasks. Helps with multi-day work so you do not re-explain context. Limited by summarization quality — history entries are only as good as the /end summaries you write.
+- **Session continuity (briefings)** — Each session starts with project profile, recent history, and open tasks. Helps with multi-day work so you do not re-explain context. Limited by summarization quality — history entries are only as good as the `/end` summaries you write.
 - **Organizational memory (RECALL)** — Stores patterns, decisions, and failures. Searchable across sessions. Only as good as what you capture — EDI prompts you but does not capture automatically. Keyword search works out of the box; semantic search requires Ollama.
 - **Specialized agents** — Four modes (coder, architect, reviewer, incident) with different system prompts and priorities. They guide behavior through prompting but do not enforce constraints — Claude can still do whatever it wants.
 - **Hybrid search (Codex backend)** — Combines vector similarity with FTS5 keyword matching via RRF fusion. Requires Ollama running locally with nomic-embed-text. Without Ollama, falls back to keyword-only (v0 backend), which still works fine for exact queries.
 - **Session memory** — Uses Claude Code's memory tool (`/memories/`) as a session cache for decisions and insights. Important items are promoted to RECALL at session end via `/end`. Project instructions live in `CLAUDE.md` (loaded natively by Claude Code).
+- **Evaluation framework** — Measure whether RECALL and skills actually help. The `aef-eval` CLI runs controlled experiments comparing baseline Claude Code against AEF-enhanced sessions. Includes LLM-as-judge scoring, statistical tests, and retrieval quality metrics.
 - **Local-first** — Single SQLite file, local embeddings, no API keys for core features. Privacy and offline-capable. Tradeoff: local embedding model (nomic-embed-text) is good but not as strong as cloud embedding APIs.
 
 ## How It Works
@@ -101,6 +102,78 @@ EDI ships with 7 skills that provide specialized guidance to agents:
 
 Skills are installed to `~/.claude/skills/` by `edi init --global` and loaded into the system prompt based on each agent's `skills` list. See [edi/README.md](edi/README.md#skills) for detailed usage and examples.
 
+## Evaluation Framework
+
+AEF includes a structured evaluation system for measuring whether RECALL retrieval, skills, and agents actually improve code generation outcomes. The framework is designed to produce evidence, not assumptions.
+
+### What It Measures
+
+| Dimension | How | Tool |
+|-----------|-----|------|
+| **Retrieval quality** | Precision@K, Recall@K, MRR, NDCG against ground truth | `EvalHarness` |
+| **Retrieval filtering** | LLM-as-judge relevance assessment of search results | `JudgeHarness` |
+| **Code generation quality** | Correctness, code quality, pitfall avoidance, completeness, efficiency | `Scorer` (LLM judge + tests + lint) |
+| **AEF vs. baseline** | Controlled A/B: baseline Claude Code vs. AEF-minimal vs. AEF-full | `aef-eval` CLI |
+| **Statistical rigor** | Mann-Whitney U, bootstrap CIs, Wilcoxon signed-rank, Spearman correlation | `stats` module |
+
+### Evaluation Levels
+
+- **Level 1 (Component)** — Implemented. Tests individual components: MCP protocol, indexing, search quality, feedback, flight recorder, audit trail. Run via `EvalHarness`.
+- **Level 2 (Integration)** — Implemented. Tests RECALL + skills together in multi-turn agent loops. Uses `AgentRunner` (synthetic Claude agent with tool-use loop) or `PipeRunner` (Claude pipe mode).
+- **Level 3 (System)** — Implemented. Compares three conditions (baseline, aef-minimal, aef-full) across experiments. Generates condition comparison tables, claim validation, and scorecards.
+- **Level 4 (Comparative)** — Infrastructure ready. Cross-experiment trend analysis using Spearman correlation. Requires experiment data to produce results.
+
+### Running Evaluations
+
+```bash
+# Build the eval CLI
+cd codex && CGO_ENABLED=1 go build -tags fts5 ./cmd/aef-eval
+
+# Run a retrieval quality evaluation (requires Ollama)
+cd codex && go test -tags fts5 -run TestEvalHarness ./eval/
+
+# Run a controlled experiment (pipe mode)
+aef-eval run --experiment 3A --condition baseline --task-dir ./tasks --strategy pipe
+
+# Run with AEF skills enabled
+aef-eval run --experiment 3A --condition aef-full --task-dir ./tasks --skill-dir ~/.claude/skills/ --strategy pipe
+
+# Run with synthetic agent (multi-turn tool-use loop)
+aef-eval run --experiment 3A --condition aef-full --task-dir ./tasks --strategy agent
+
+# Score a completed run
+aef-eval score --run-id <id> --task-dir ./tasks
+
+# Generate reports
+aef-eval report --experiment 3A --format text
+aef-eval report --all --format json
+
+# List available tasks and runs
+aef-eval list --tasks --task-dir ./tasks
+aef-eval list --runs
+aef-eval list --experiments
+```
+
+### Task Corpus Format
+
+Evaluation tasks are YAML files in a task directory:
+
+```yaml
+id: "error-handler-001"
+complexity: "moderate"    # simple, moderate, complex
+spec: |
+  Implement an HTTP error handler middleware...
+pitfalls:
+  - id: "swallowed-errors"
+    description: "Errors logged but not propagated"
+    detection:
+      method: grep          # grep, test, or judge
+      pattern: "return err"
+      files: ["*.go"]
+```
+
+See [AEF Evaluation Framework](docs/architecture/aef-evaluation-framework.md) for the full specification, experiment designs, and claim validation methodology.
+
 ## Ralph Loop
 
 Ralph is an autonomous execution mode for batch coding tasks. Each iteration starts with a fresh context window, reads the next task from `PRD.json`, implements it, commits, and moves on. State lives in files and git, not in the LLM's memory.
@@ -140,12 +213,20 @@ See [edi/README.md](edi/README.md#ralph-loop) for usage details and [Ralph Loop 
 | **EDI** | Claude Code harness — agents, briefings, history, session management | [edi/README.md](edi/README.md) |
 | **Codex** | Knowledge engine — hybrid search, local embeddings, single-file storage | [codex/README.md](codex/README.md) |
 
+## Project Status
+
+**EDI v0**: Complete. CLI harness with 11 commands, 4 agents, 7 skills, 9 slash commands, session briefings, stale session recovery, auto memory integration, and Ralph autonomous loop.
+
+**Codex v1**: Substantially complete. Hybrid search (vector KNN + FTS5 + RRF fusion), MCP server with 5 tools, AST chunking (7 languages via Tree-sitter), markdown chunking, web UI, admin CLI, and v0-to-v1 migration. Reranking and contextual chunking are stubbed — search works without them.
+
+**Evaluation**: Infrastructure complete across all 4 levels. `aef-eval` CLI supports run, score, report, and list commands. Statistical analysis (Mann-Whitney U, bootstrap CIs, Wilcoxon, Spearman) is implemented. Experiment data collection is the next step.
+
 ## Further Reading
 
-- [EDI + Codex Technical Deep-Dive](docs/edi-codex-deep-dive.md) — full system architecture, data flows, and operational guide
+- [EDI + Codex Technical Deep-Dive](docs/edi-codex-deep-dive.md) — full system architecture, data flows, eval framework, and operational guide
+- [AEF Evaluation Framework](docs/architecture/aef-evaluation-framework.md) — experiment designs, claim validation, statistical methods
 - [AEF Components Overview](docs/aef-components.md)
 - [RECALL MCP Server Spec](docs/architecture/recall-mcp-server-spec.md)
-- [Auto Memory Alignment Spec](docs/architecture/auto-memory-alignment-spec.md) — legacy; MEMORY.md retired in favor of CLAUDE.md + `/memories/` + codex DB + status.md (see `docs/architecture/aef-evaluation-framework.md` § RECALL Design Alignment)
 - [EDI Session Lifecycle](docs/architecture/edi-session-lifecycle-spec.md)
 - [EDI CLI Commands](docs/architecture/edi-cli-commands-spec.md)
 
