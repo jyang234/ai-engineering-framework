@@ -155,7 +155,8 @@ func newAEFFull(skillDir string, pitfalls []PitfallSpec) (*Condition, error) {
 		seeds = append(seeds, p.Seeds...)
 	}
 
-	tools := append(baseAllowedTools, recallTools...)
+	tools := append([]string(nil), baseAllowedTools...)
+	tools = append(tools, recallTools...)
 
 	return &Condition{
 		Name:         ConditionAEFFull,

@@ -22,7 +22,6 @@ type PipeRunner struct {
 	logDir    string // Path to log output directory
 }
 
-// PipeRunConfig configures a single pipe-mode evaluation run.
 // TaskInfo holds metadata about a discovered task in the corpus.
 type TaskInfo struct {
 	ID         string

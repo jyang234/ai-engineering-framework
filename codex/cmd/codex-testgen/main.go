@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"github.com/anthropics/aef/codex/eval"
@@ -51,9 +52,15 @@ func main() {
 	})
 
 	r.GET("/export", func(c *gin.Context) {
-		data, _ := json.MarshalIndent(collection, "", "  ")
+		data, err := json.MarshalIndent(collection, "", "  ")
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
 		c.Data(http.StatusOK, "application/json", data)
 	})
 
-	r.Run(":8088")
+	if err := r.Run(":8088"); err != nil {
+		log.Fatal(err)
+	}
 }

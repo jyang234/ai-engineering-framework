@@ -54,8 +54,8 @@ type callToolResult struct {
 
 // NewMCPClient creates an MCP client connected to a real server via io.Pipe.
 func NewMCPClient(engine *core.SearchEngine, sessionID string) *MCPClient {
-	serverIn_r, serverIn_w := io.Pipe()   // client writes -> server reads
-	serverOut_r, serverOut_w := io.Pipe() // server writes -> client reads
+	serverInR, serverInW := io.Pipe()   // client writes -> server reads
+	serverOutR, serverOutW := io.Pipe() // server writes -> client reads
 
 	server := mcp.NewServer(engine, sessionID)
 
@@ -63,15 +63,15 @@ func NewMCPClient(engine *core.SearchEngine, sessionID string) *MCPClient {
 	errCh := make(chan error, 1)
 
 	go func() {
-		err := server.RunForIO(ctx, serverIn_r, serverOut_w)
-		serverOut_w.Close()
+		err := server.RunForIO(ctx, serverInR, serverOutW)
+		serverOutW.Close()
 		errCh <- err
 	}()
 
 	return &MCPClient{
 		server:    server,
-		writer:    serverIn_w,
-		reader:    bufio.NewReader(serverOut_r),
+		writer:    serverInW,
+		reader:    bufio.NewReader(serverOutR),
 		cancel:    cancel,
 		serverErr: errCh,
 	}
@@ -148,11 +148,17 @@ func (c *MCPClient) Initialize(ctx context.Context) error {
 		ID:      0,
 		Method:  "notifications/initialized",
 	}
-	data, _ := json.Marshal(notif)
+	data, err := json.Marshal(notif)
+	if err != nil {
+		return fmt.Errorf("marshal notification: %w", err)
+	}
 	data = append(data, '\n')
 	c.mu.Lock()
-	c.writer.Write(data)
+	_, err = c.writer.Write(data)
 	c.mu.Unlock()
+	if err != nil {
+		return fmt.Errorf("write notification: %w", err)
+	}
 
 	return nil
 }

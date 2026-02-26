@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/anthropics/aef/codex/internal/core"
@@ -22,7 +23,6 @@ type AgentRunner struct {
 	logDir    string
 }
 
-// AgentRunConfig configures a single synthetic agent run.
 // AgentRunConfig configures a single agent-mode evaluation run.
 type AgentRunConfig struct {
 	RunID      string // Optional: caller-assigned run ID (auto-generated if empty)
@@ -549,37 +549,5 @@ func (l *conversationLoop) callMessagesAPI(ctx context.Context, body []byte) (st
 }
 
 func containsIgnoreCase(s, substr string) bool {
-	sLower := make([]byte, len(s))
-	subLower := make([]byte, len(substr))
-	for i := 0; i < len(s); i++ {
-		if s[i] >= 'A' && s[i] <= 'Z' {
-			sLower[i] = s[i] + 32
-		} else {
-			sLower[i] = s[i]
-		}
-	}
-	for i := 0; i < len(substr); i++ {
-		if substr[i] >= 'A' && substr[i] <= 'Z' {
-			subLower[i] = substr[i] + 32
-		} else {
-			subLower[i] = substr[i]
-		}
-	}
-	return len(subLower) > 0 && bytesContains(sLower, subLower)
-}
-
-func bytesContains(s, sub []byte) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		match := true
-		for j := 0; j < len(sub); j++ {
-			if s[i+j] != sub[j] {
-				match = false
-				break
-			}
-		}
-		if match {
-			return true
-		}
-	}
-	return false
+	return len(substr) > 0 && strings.Contains(strings.ToLower(s), strings.ToLower(substr))
 }

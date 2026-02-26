@@ -272,46 +272,6 @@ func TestContainsIgnoreCase_GivenMixedCaseInMiddle_ThenTrue(t *testing.T) {
 	}
 }
 
-// --- bytesContains ---
-
-func TestBytesContains_GivenSubPresent_ThenTrue(t *testing.T) {
-	if !bytesContains([]byte("hello world"), []byte("world")) {
-		t.Error("expected true")
-	}
-}
-
-func TestBytesContains_GivenSubAbsent_ThenFalse(t *testing.T) {
-	if bytesContains([]byte("hello world"), []byte("xyz")) {
-		t.Error("expected false")
-	}
-}
-
-func TestBytesContains_GivenSubAtStart_ThenTrue(t *testing.T) {
-	if !bytesContains([]byte("hello"), []byte("hel")) {
-		t.Error("expected true for prefix match")
-	}
-}
-
-func TestBytesContains_GivenSubAtEnd_ThenTrue(t *testing.T) {
-	if !bytesContains([]byte("hello"), []byte("llo")) {
-		t.Error("expected true for suffix match")
-	}
-}
-
-func TestBytesContains_GivenEmptySub_ThenTrue(t *testing.T) {
-	// Given: empty sub (bytesContains loop starts with i <= len(s)-len(sub))
-	// When len(sub)=0, i <= len(s) and the inner loop never runs, so match=true
-	if !bytesContains([]byte("hello"), []byte("")) {
-		t.Error("expected true for empty sub")
-	}
-}
-
-func TestBytesContains_GivenBothEmpty_ThenTrue(t *testing.T) {
-	if !bytesContains([]byte(""), []byte("")) {
-		t.Error("expected true for both empty")
-	}
-}
-
 // --- NewAgentRunner ---
 
 func TestNewAgentRunner_GivenParameters_ThenFieldsSet(t *testing.T) {

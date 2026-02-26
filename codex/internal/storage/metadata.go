@@ -3,6 +3,7 @@ package storage
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -110,8 +111,10 @@ func (s *MetadataStore) ensureSchemaVersion() error {
 		return fmt.Errorf("count schema_version: %w", err)
 	}
 	if count == 0 {
-		_, err := s.db.Exec("INSERT INTO schema_version (version) VALUES (?)", currentSchemaVersion)
-		return err
+		if _, err := s.db.Exec("INSERT INTO schema_version (version) VALUES (?)", currentSchemaVersion); err != nil {
+			return fmt.Errorf("insert schema_version: %w", err)
+		}
+		return nil
 	}
 
 	var version int
@@ -270,7 +273,7 @@ func (s *MetadataStore) GetItem(id string) (*ItemRecord, error) {
 
 	err := row.Scan(&item.ID, &item.Type, &item.Title, &item.Content, &tagsJSON, &item.Scope, &item.Source, &metaJSON, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("item not found: %s", id)
 		}
 		return nil, err
@@ -415,7 +418,7 @@ func (s *MetadataStore) FindByTitle(title string) (*ItemRecord, error) {
 
 	err := row.Scan(&item.ID, &item.Type, &item.Title, &item.Content, &tagsJSON, &item.Scope, &item.Source, &metaJSON, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
