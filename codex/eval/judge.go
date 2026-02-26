@@ -69,10 +69,10 @@ func NewAnthropicClient(apiKey string) *AnthropicClient {
 	}
 }
 
-// Judge sends a system+user prompt to the Anthropic API and parses the JSON response.
-func (c *AnthropicClient) Judge(ctx context.Context, systemPrompt, userPrompt string) (*JudgmentResult, error) {
+// RawJudge sends a system+user prompt and returns the raw text response.
+func (c *AnthropicClient) RawJudge(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
 	if c.apiKey == "" {
-		return nil, fmt.Errorf("ANTHROPIC_API_KEY not set")
+		return "", fmt.Errorf("ANTHROPIC_API_KEY not set")
 	}
 
 	req := anthropicRequest{
@@ -86,7 +86,7 @@ func (c *AnthropicClient) Judge(ctx context.Context, systemPrompt, userPrompt st
 
 	body, err := json.Marshal(req)
 	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
+		return "", fmt.Errorf("marshal request: %w", err)
 	}
 
 	var lastErr error
@@ -96,13 +96,13 @@ func (c *AnthropicClient) Judge(ctx context.Context, systemPrompt, userPrompt st
 			select {
 			case <-time.After(delay):
 			case <-ctx.Done():
-				return nil, ctx.Err()
+				return "", ctx.Err()
 			}
 		}
 
 		httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL, bytes.NewReader(body))
 		if err != nil {
-			return nil, fmt.Errorf("create request: %w", err)
+			return "", fmt.Errorf("create request: %w", err)
 		}
 		httpReq.Header.Set("x-api-key", c.apiKey)
 		httpReq.Header.Set("anthropic-version", anthropicVersion)
@@ -126,23 +126,84 @@ func (c *AnthropicClient) Judge(ctx context.Context, systemPrompt, userPrompt st
 			if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
 				continue
 			}
-			return nil, lastErr
+			return "", lastErr
 		}
 
 		var apiResp anthropicResponse
 		if err := json.Unmarshal(respBody, &apiResp); err != nil {
-			return nil, fmt.Errorf("decode response: %w", err)
+			return "", fmt.Errorf("decode response: %w", err)
 		}
 
 		if len(apiResp.Content) == 0 {
-			return nil, fmt.Errorf("empty response content")
+			return "", fmt.Errorf("empty response content")
 		}
 
-		text := apiResp.Content[0].Text
-		return parseJudgment(text)
+		return apiResp.Content[0].Text, nil
 	}
 
-	return nil, fmt.Errorf("max retries (%d) exceeded: %w", anthropicMaxRetries, lastErr)
+	return "", fmt.Errorf("max retries (%d) exceeded: %w", anthropicMaxRetries, lastErr)
+}
+
+// Judge sends a system+user prompt to the Anthropic API and parses the JSON response.
+func (c *AnthropicClient) Judge(ctx context.Context, systemPrompt, userPrompt string) (*JudgmentResult, error) {
+	text, err := c.RawJudge(ctx, systemPrompt, userPrompt)
+	if err != nil {
+		return nil, err
+	}
+	return parseJudgment(text)
+}
+
+// RawHTTPPost sends a pre-built JSON body to the Messages API and returns the raw response body.
+// Used by the synthetic agent runner for multi-turn tool-use conversations.
+func (c *AnthropicClient) RawHTTPPost(ctx context.Context, body []byte) (string, error) {
+	if c.apiKey == "" {
+		return "", fmt.Errorf("ANTHROPIC_API_KEY not set")
+	}
+
+	var lastErr error
+	for attempt := 0; attempt < anthropicMaxRetries; attempt++ {
+		if attempt > 0 {
+			delay := time.Duration(math.Pow(2, float64(attempt))) * anthropicInitDelay
+			select {
+			case <-time.After(delay):
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
+		}
+
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL, bytes.NewReader(body))
+		if err != nil {
+			return "", fmt.Errorf("create request: %w", err)
+		}
+		httpReq.Header.Set("x-api-key", c.apiKey)
+		httpReq.Header.Set("anthropic-version", anthropicVersion)
+		httpReq.Header.Set("Content-Type", "application/json")
+
+		resp, err := c.client.Do(httpReq)
+		if err != nil {
+			lastErr = fmt.Errorf("HTTP request failed: %w", err)
+			continue
+		}
+
+		respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+		resp.Body.Close()
+		if err != nil {
+			lastErr = fmt.Errorf("read response: %w", err)
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf("Anthropic API error (%d): %s", resp.StatusCode, string(respBody))
+			if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+				continue
+			}
+			return "", lastErr
+		}
+
+		return string(respBody), nil
+	}
+
+	return "", fmt.Errorf("max retries (%d) exceeded: %w", anthropicMaxRetries, lastErr)
 }
 
 // parseJudgment extracts JSON from the judge response, handling markdown code fences.
@@ -240,17 +301,19 @@ func (jh *JudgeHarness) RunJudgeEval(ctx context.Context) (*JudgeSummary, error)
 		// Compute metrics
 		rawP5 := PrecisionAtK(retrievedIDs, q.RelevantIDs, 5)
 		prec, rec, f1, filterRate := computeJudgeMetrics(judgedIDs, retrievedIDs, q.RelevantIDs)
+		ffr := computeFalseFilteringRate(judgedIDs, retrievedIDs, q.RelevantIDs)
 
 		m := JudgeMetrics{
-			QueryID:         q.ID,
-			Query:           q.Query,
-			Category:        q.Category,
-			JudgePrecision:  prec,
-			JudgeRecall:     rec,
-			JudgeF1:         f1,
-			FilteringRate:   filterRate,
-			RawPrecisionAt5: rawP5,
-			Improvement:     prec - rawP5,
+			QueryID:            q.ID,
+			Query:              q.Query,
+			Category:           q.Category,
+			JudgePrecision:     prec,
+			JudgeRecall:        rec,
+			JudgeF1:            f1,
+			FilteringRate:      filterRate,
+			FalseFilteringRate: ffr,
+			RawPrecisionAt5:    rawP5,
+			Improvement:        prec - rawP5,
 		}
 		perQuery = append(perQuery, m)
 
