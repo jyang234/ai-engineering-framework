@@ -1170,6 +1170,120 @@ Task corpus authoring can start in week 1 and run in parallel. The first 5 tasks
 
 Milestone 2 (190 runs) requires the full 30-task corpus (Corpus 2) plus Corpus 3 task pairs. At 3–4 tasks per day authoring rate, the corpus is the bottleneck for Milestone 2 — not the infrastructure.
 
+### Implementation Map: How the Code Fits Together
+
+> Added 2026-02-27. The Build Specification above describes what to build. This section describes what was actually built, where the code lives, and how the pieces relate at runtime.
+
+The eval system has two distinct halves: **infrastructure** (the eval engine) and **corpus** (the eval data). Neither works without the other, and confusing them is the most common source of misunderstanding.
+
+```
+codex/
+├── cmd/aef-eval/main.go        ← CLI entry point (run, score, report, list)
+├── eval/
+│   ├── runner_pipe.go          ┐
+│   ├── runner_agent.go         │  The eval engine — runs tasks, grades results,
+│   ├── condition.go            │  stores scores, computes statistics, and
+│   ├── scorer.go               │  generates evidence reports.
+│   ├── results.go              │
+│   ├── stats.go                │  This code does NOT implement circuit breakers,
+│   ├── report_l3.go            │  LRU caches, etc. It orchestrates AI agents
+│   ├── agent_tools.go          │  that implement them, then measures the quality
+│   ├── mcpclient.go            ┘  of what those agents produce.
+│   │
+│   └── corpus/
+│       ├── run-eval.sh         ← Turn-key runner script
+│       ├── pairs.yaml          ← Experiment 3B pair definitions
+│       └── tasks/
+│           ├── retry-backoff/  ┐
+│           ├── json-validator/ │  The eval data — 15 standalone coding challenges.
+│           ├── circuit-breaker/│  Each is a self-contained Go module with:
+│           ├── lru-cache/      │    README.md      — task specification
+│           ├── worker-pool/    │    *.go           — skeleton with TODO stubs
+│           ├── pipeline/       │    *_test.go      — comprehensive tests (mostly fail against skeleton)
+│           ├── ...             │    scoring.yaml   — complexity level
+│           └── (15 total)      ┘    pitfalls.yaml  — known failure patterns + RECALL seeds
+```
+
+#### The Skeleton Pattern
+
+Each task's `.go` file (e.g., `breaker.go`) is a **skeleton, not a solution**. It defines the types, function signatures, and trivial stubs (`// TODO: implement`) so the package compiles. The accompanying `_test.go` file contains tests that define the correct behavior — most tests fail against the skeleton.
+
+During an eval run, the AI agent receives the README + skeleton + tests and must fill in the real implementation. The skeleton exists because Go requires a compilable package to run `go test` at all — without it, the test file can't reference the types and functions it needs to test.
+
+#### Runtime Flow
+
+```
+aef-eval run --experiment 3A --condition aef-full --tasks corpus/tasks/
+        │
+        ▼
+   ┌─ condition.go ──────────────────────────────────────┐
+   │  Reads condition name → produces config:            │
+   │    baseline:    no skills, no hooks, no RECALL       │
+   │    aef-minimal: skills + hooks, no RECALL            │
+   │    aef-full:    skills + hooks + RECALL seeds        │
+   └──────────────┬──────────────────────────────────────┘
+                  │
+                  ▼
+   ┌─ runner_pipe.go or runner_agent.go ─────────────────┐
+   │  For each task in corpus/tasks/:                    │
+   │    1. Copy task to temp dir (isolated workspace)     │
+   │    2. Inject condition config (system prompt, hooks)  │
+   │    3. Give agent the README + skeleton + tests       │
+   │    4. Agent writes implementation (fills in TODOs)    │
+   │    5. Collect the agent's code output                │
+   └──────────────┬──────────────────────────────────────┘
+                  │
+                  ▼
+   ┌─ scorer.go ─────────────────────────────────────────┐
+   │  Grade the agent's work:                            │
+   │    go test -race    → pass/fail counts              │
+   │    golangci-lint    → lint violations               │
+   │    pitfall check    → grep + LLM judge on pitfalls  │
+   │    LLM judge        → 5-dimension quality rubric    │
+   │  Compute weighted combined score → results.db        │
+   └──────────────┬──────────────────────────────────────┘
+                  │
+                  ▼
+   ┌─ report_l3.go + stats.go ───────────────────────────┐
+   │  Compare scores across conditions:                   │
+   │    Mann-Whitney U, Bootstrap CI, Wilcoxon            │
+   │  Validate claims C1-C7 against thresholds            │
+   │  Generate evidence report                            │
+   └─────────────────────────────────────────────────────┘
+```
+
+#### What Each Infrastructure File Does
+
+| File | Spec Component | What It Does |
+|---|---|---|
+| `cmd/aef-eval/main.go` | CLI Interface | Cobra commands: `run`, `score`, `report`, `list` |
+| `runner_pipe.go` | Strategy B Runner | Feeds tasks to Claude via `claude -p`, captures output |
+| `runner_agent.go` | Strategy C1 Runner | Multi-turn tool-use loop via Anthropic Messages API + MCP proxy |
+| `condition.go` | Condition Configurator | Factory for baseline / aef-minimal / aef-full configs |
+| `scorer.go` | Scoring Pipeline | Runs tests, lint, pitfall detection, LLM judge; computes combined score |
+| `results.go` | Results Database | SQLite storage for eval runs, batch management, cross-run queries |
+| `stats.go` | Statistical Analysis | Mann-Whitney U, Bootstrap CI, Wilcoxon signed-rank, Spearman correlation |
+| `report_l3.go` | Report Generator | Validates claims C1-C7, generates markdown/JSON evidence reports |
+| `agent_tools.go` | Tool Dispatcher | Routes agent tool calls (Read/Write/Edit/Bash/Glob/Grep/RECALL) |
+| `mcpclient.go` | MCPClient | JSON-RPC client boots RECALL MCP server in-process, seeds knowledge |
+
+#### What Each Corpus File Does
+
+| File | Purpose |
+|---|---|
+| `README.md` | Task specification the agent sees — requirements, constraints, API contract |
+| `*.go` (e.g., `breaker.go`) | Skeleton with types + function signatures + `// TODO` stubs. Compiles but doesn't work. |
+| `*_test.go` | Comprehensive test suite defining correct behavior. Most tests fail against the skeleton. |
+| `scoring.yaml` | Declares complexity level (`simple`, `moderate`, `complex`) for scoring thresholds |
+| `pitfalls.yaml` | Known failure patterns with detection rules, anti-patterns, and RECALL seed content |
+| `go.mod` | Standalone module so each task compiles independently (no cross-task dependencies) |
+
+#### Key Distinction: The Corpus Tests Are Not Testing AEF
+
+The test files in the corpus (e.g., `breaker_test.go`) test the **agent's implementation** of a circuit breaker — they are not testing AEF's own code. AEF's own unit tests live in `codex/internal/` and `edi/internal/` as normal Go tests.
+
+The eval answers: "Given a coding task with known pitfalls, does an AI agent equipped with AEF produce higher-quality code than one without?" It does this by comparing scores across the three conditions on the same tasks.
+
 ### Runner Operations
 
 This section specifies the operational aspects of the eval runners: how they're invoked, how they handle errors, how runs are orchestrated, and the Bash sandbox rules.
