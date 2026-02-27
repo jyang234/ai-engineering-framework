@@ -307,11 +307,24 @@ func (c *ASTChunker) extractTypeChunk(node *sitter.Node, content []byte, filePat
 
 // extractName extracts the name from a node
 func (c *ASTChunker) extractName(node *sitter.Node, content []byte) string {
-	// Look for identifier or name child node
+	nameTypes := map[string]bool{
+		"identifier":          true,
+		"name":                true,
+		"type_identifier":     true,
+		"field_identifier":    true,
+		"property_identifier": true,
+	}
 	for i := 0; i < int(node.ChildCount()); i++ {
 		child := node.Child(i)
-		if child.Type() == "identifier" || child.Type() == "name" {
+		if nameTypes[child.Type()] {
 			return string(content[child.StartByte():child.EndByte()])
+		}
+		// One level deeper (handles Go type_spec → type_identifier)
+		for j := 0; j < int(child.ChildCount()); j++ {
+			gc := child.Child(j)
+			if nameTypes[gc.Type()] {
+				return string(content[gc.StartByte():gc.EndByte()])
+			}
 		}
 	}
 	return ""

@@ -107,9 +107,9 @@ func (s *Server) Start() error {
 	if typeChunk == nil {
 		t.Fatal("missing type chunk")
 	}
-	// BUG: extractName only checks for "identifier"/"name" children but Go's
-	// type_declaration has a "type_spec" child containing a "type_identifier".
-	// Name extraction returns "" for Go types. Content is still correct.
+	if typeChunk.Name != "Server" {
+		t.Errorf("type chunk name = %q, want %q", typeChunk.Name, "Server")
+	}
 	if !strings.Contains(typeChunk.Content, "port int") {
 		t.Error("type chunk missing struct fields")
 	}
@@ -117,10 +117,8 @@ func (s *Server) Start() error {
 	if methodChunk == nil {
 		t.Fatal("missing method chunk")
 	}
-	// BUG: extractName returns "" for Go methods because the method name
-	// is a "field_identifier" node, not "identifier". Content is still correct.
-	if !strings.Contains(methodChunk.Content, "Start") {
-		t.Error("method chunk content missing 'Start'")
+	if methodChunk.Name != "Start" {
+		t.Errorf("method chunk name = %q, want %q", methodChunk.Name, "Start")
 	}
 }
 
@@ -194,10 +192,8 @@ class App {
 		t.Fatalf("ChunkFile: %v", err)
 	}
 
-	chunkTypes := map[string]bool{}
 	names := map[string]bool{}
 	for _, ch := range chunks {
-		chunkTypes[ch.Type] = true
 		if ch.Name != "" {
 			names[ch.Name] = true
 		}
@@ -205,17 +201,14 @@ class App {
 
 	// We expect at least: interface (type), function, class
 	// Note: method "start" inside class might also be extracted
-	if !chunkTypes["type"] {
-		t.Error("missing type chunk (interface)")
+	if !names["Config"] {
+		t.Error("missing Config interface chunk")
 	}
 	if !names["createServer"] {
 		t.Error("missing createServer function chunk")
 	}
-	// BUG: extractName returns "" for TS interface_declaration and class_declaration
-	// because they use "type_identifier" not "identifier". The function chunk works
-	// because function_declaration has an "identifier" child.
-	if !chunkTypes["class"] {
-		t.Error("missing class chunk")
+	if !names["App"] {
+		t.Error("missing App class chunk")
 	}
 }
 
