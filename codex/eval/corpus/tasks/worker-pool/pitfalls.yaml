@@ -1,0 +1,73 @@
+- id: goroutine-leak
+  type: failure
+  title: "Worker goroutines not cleaned up on shutdown"
+  description: "Workers are launched as goroutines but there is no mechanism to signal them to exit when Shutdown is called, causing goroutine leaks."
+  content: |
+    Symptom: runtime.NumGoroutine() increases each time a pool is created and shut down.
+    Over time this exhausts memory and may cause the program to hang.
+    Root cause: Worker goroutines are blocked on receiving from the task channel. If the
+    task channel is never closed, workers block forever even after Shutdown returns.
+    Fix: Close the task channel in Shutdown() to signal workers to exit:
+      close(p.tasks) // Workers' for-range loops will exit
+    Then use sync.WaitGroup to wait for all workers to finish:
+      p.wg.Wait()
+    Prevention: Every goroutine you launch must have a clear termination path. Use
+    channel close + WaitGroup as the standard pattern for worker pools.
+  tags: ["goroutine-leak", "worker-pool", "shutdown", "concurrency"]
+  pattern: "go func|go p\\."
+  anti_pattern: "(sync\\.WaitGroup|close\\(.*tasks|close\\(.*jobs|<-.*done|<-.*quit)"
+  detection:
+    method: grep
+    pattern: "(sync\\.WaitGroup|wg\\.Wait|close\\(.*task|close\\(.*job)"
+    files: ["*.go"]
+  seeds:
+    - type: failure
+      title: "Worker pool goroutine leak on shutdown"
+      content: |
+        Our worker pool leaked goroutines because Shutdown() returned without
+        ensuring all workers exited. Workers were blocked on receiving from the
+        task channel, which was never closed.
+        Fix: In Shutdown():
+        1. Close the task channel so workers' for-range loops exit
+        2. Use sync.WaitGroup to track running workers
+        3. Call wg.Wait() to block until all workers have returned
+        4. Only then close the results channel
+      tags: ["goroutine-leak", "worker-pool", "shutdown"]
+
+- id: send-on-closed-channel
+  type: failure
+  title: "Panic from sending on closed results channel"
+  description: "If the results channel is closed before all workers finish writing to it, a worker sending a result will panic with 'send on closed channel'."
+  content: |
+    Symptom: Runtime panic during shutdown: "send on closed channel".
+    Root cause: The results channel is closed too early — before all workers have
+    finished. A worker that completes its last task tries to send the result to
+    the already-closed channel, causing a panic.
+    Fix: Only close the results channel AFTER all workers have exited:
+      go func() {
+          p.wg.Wait()       // Wait for all workers to finish
+          close(p.results)   // Only then close the results channel
+      }()
+    The WaitGroup ensures no worker can send after the channel is closed.
+    Prevention: The goroutine that closes a channel must be certain no other
+    goroutine will send to it. Use WaitGroup or a separate done channel to
+    coordinate.
+  tags: ["panic", "channel", "worker-pool", "shutdown", "concurrency"]
+  pattern: "close\\(.*result"
+  anti_pattern: "(wg\\.Wait.*close.*result|Wait.*close)"
+  detection:
+    method: grep
+    pattern: "wg\\.Wait"
+    files: ["*.go"]
+  seeds:
+    - type: failure
+      title: "Panic from closing results channel too early"
+      content: |
+        Our worker pool panicked during shutdown with "send on closed channel".
+        The Shutdown() method closed the results channel immediately, but workers
+        were still running and tried to send their final results.
+        Fix: Launch a goroutine that waits for all workers to finish (via WaitGroup)
+        and THEN closes the results channel. This guarantees no sends happen after close.
+        Pattern:
+          go func() { p.wg.Wait(); close(p.results) }()
+      tags: ["panic", "channel", "worker-pool"]

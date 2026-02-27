@@ -1,0 +1,73 @@
+- id: race-on-tokens
+  type: failure
+  title: "Data race on token bucket state"
+  description: "Not synchronizing access to the token count and last-refill timestamp causes data races when multiple goroutines call Allow() concurrently."
+  content: |
+    Symptom: The -race detector reports concurrent read/write on the token count field.
+    Under high concurrency, more tokens are consumed than the burst capacity allows.
+    Root cause: The Allow() method reads the token count, checks if it's positive, and
+    decrements it — all without holding a lock. Two goroutines can both read the same
+    count, both decide a token is available, and both decrement, consuming two tokens
+    when only one was available.
+    Fix: Use sync.Mutex to protect the entire check-and-consume operation:
+      l.mu.Lock()
+      defer l.mu.Unlock()
+      l.refill()
+      if l.tokens >= 1 {
+          l.tokens--
+          return true
+      }
+      return false
+    Prevention: Any check-then-act pattern on shared state must be atomic.
+  tags: ["concurrency", "race-condition", "rate-limiter", "token-bucket"]
+  pattern: "func.*Allow.*bool"
+  anti_pattern: "(sync\\.Mutex|sync\\.RWMutex|atomic\\.|sync/atomic)"
+  detection:
+    method: grep
+    pattern: "(sync\\.Mutex|sync\\.RWMutex|atomic\\.|sync/atomic)"
+    files: ["*.go"]
+  seeds:
+    - type: failure
+      title: "Race condition in token bucket rate limiter"
+      content: |
+        Our rate limiter had a TOCTOU race in Allow(). Two goroutines could simultaneously
+        read tokens=1, both return true, and both decrement — resulting in tokens=-1.
+        This allowed more requests through than the rate limit permitted.
+        Fix: Protect the entire refill-check-consume sequence with sync.Mutex.
+        The lock must be held from the time you read the token count through the
+        decrement operation.
+      tags: ["concurrency", "race-condition", "rate-limiter"]
+
+- id: tokens-exceed-burst
+  type: failure
+  title: "Token count exceeds burst capacity after refill"
+  description: "The lazy refill logic adds tokens based on elapsed time but does not cap the result at the burst capacity, allowing unlimited token accumulation."
+  content: |
+    Symptom: After an idle period, the limiter allows far more requests than the burst
+    capacity. For example, with burst=10 and rate=100/s, after 1 second of idle time
+    the limiter has 100 tokens instead of being capped at 10.
+    Root cause: The refill formula `tokens += rate * elapsed` doesn't apply min(tokens, burst).
+    Fix: After computing the new token count, cap it:
+      l.tokens += l.rate * elapsed.Seconds()
+      if l.tokens > float64(l.burst) {
+          l.tokens = float64(l.burst)
+      }
+    Prevention: Always clamp the token count to the burst capacity after any refill operation.
+  tags: ["rate-limiter", "token-bucket", "burst", "overflow"]
+  pattern: "tokens.*\\+.*rate.*elapsed"
+  anti_pattern: "(tokens.*burst|math\\.Min|min\\(.*burst|> float64\\(.*burst)"
+  detection:
+    method: grep
+    pattern: "(tokens.*burst|math\\.Min.*burst|>.*float64.*burst|cap.*burst)"
+    files: ["*.go"]
+  seeds:
+    - type: failure
+      title: "Rate limiter allowed burst beyond capacity"
+      content: |
+        After a quiet period, our rate limiter allowed a massive burst of requests that
+        far exceeded the configured burst capacity. The refill logic was adding
+        rate * elapsed_seconds tokens without capping at the burst limit.
+        After 10 seconds idle with rate=1000/s and burst=50, there were 10000 tokens.
+        Fix: Always cap tokens at burst capacity after refill:
+        if l.tokens > float64(l.burst) { l.tokens = float64(l.burst) }
+      tags: ["rate-limiter", "burst", "overflow"]
