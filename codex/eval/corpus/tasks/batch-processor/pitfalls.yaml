@@ -1,0 +1,74 @@
+- id: data-loss-on-shutdown
+  type: failure
+  title: "Shutdown does not flush remaining items"
+  description: "Shutdown returns without flushing items that haven't reached MaxSize yet, causing silent data loss."
+  content: |
+    Symptom: The last few items added before shutdown are never processed.
+    Root cause: Shutdown stops the timer and returns without checking if there are
+    unflushed items in the current batch.
+    Fix: In Shutdown(), after stopping the timer, check if there are pending items
+    and flush them:
+      p.mu.Lock()
+      remaining := p.batch
+      p.batch = nil
+      p.mu.Unlock()
+      if len(remaining) > 0 {
+          return p.config.FlushFunc(remaining)
+      }
+    Prevention: Any buffering system must flush on shutdown. Treat this as a
+    mandatory part of the shutdown sequence.
+  tags: ["data-loss", "shutdown", "flush", "batch"]
+  pattern: "func.*Shutdown"
+  anti_pattern: "(Flush|flush|FlushFunc).*(Shutdown|shutdown|close)"
+  detection:
+    method: grep
+    pattern: "(Flush|flush|FlushFunc)"
+    files: ["*.go"]
+  seeds:
+    - type: failure
+      title: "Batch processor lost data on shutdown"
+      content: |
+        Our batch processor silently dropped the last batch of events on shutdown.
+        With MaxSize=100, the final 47 events were never flushed because Shutdown()
+        only stopped the timer without flushing remaining items.
+        Fix: Shutdown must always flush the current batch before returning.
+        Check for pending items after stopping the timer and call FlushFunc
+        with any remaining items.
+      tags: ["data-loss", "shutdown", "batch"]
+
+- id: race-timer-vs-add
+  type: failure
+  title: "Race between timer flush and size-triggered flush"
+  description: "The timer goroutine and Add() can both try to flush simultaneously, causing the same batch to be flushed twice or a batch to be modified while being flushed."
+  content: |
+    Symptom: Duplicate items in output, or panic from concurrent slice access.
+    Root cause: The timer goroutine reads and resets the batch slice while Add()
+    is appending to it and possibly triggering a size-based flush.
+    Fix: Use a mutex to protect the batch slice. Both the timer flush and
+    size-triggered flush must acquire the lock, swap out the batch, and release
+    the lock before calling FlushFunc:
+      p.mu.Lock()
+      batch := p.batch
+      p.batch = nil
+      p.mu.Unlock()
+      if len(batch) > 0 { p.config.FlushFunc(batch) }
+    Prevention: When a background goroutine and foreground methods share state,
+    every access must be synchronized.
+  tags: ["race-condition", "timer", "batch", "concurrency"]
+  pattern: "func.*Add.*interface"
+  anti_pattern: "(sync\\.Mutex|sync\\.RWMutex)"
+  detection:
+    method: grep
+    pattern: "(sync\\.Mutex|sync\\.RWMutex)"
+    files: ["*.go"]
+  seeds:
+    - type: failure
+      title: "Race condition between timer and manual flush in batch processor"
+      content: |
+        Our batch processor had a race between the background timer flush and
+        the size-triggered flush in Add(). Both could read the batch slice
+        simultaneously, causing duplicate processing and occasional panics.
+        Fix: Protect the batch slice with sync.Mutex. Under the lock: copy the
+        batch, set it to nil, then release the lock before calling FlushFunc.
+        This ensures only one flush operates on a given batch.
+      tags: ["race-condition", "timer", "batch"]

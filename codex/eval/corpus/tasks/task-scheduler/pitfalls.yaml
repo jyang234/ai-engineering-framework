@@ -1,0 +1,93 @@
+- id: timer-goroutine-leak
+  type: failure
+  title: "Job goroutines not stopped on scheduler shutdown"
+  description: "Each job launches a goroutine with time.Ticker but Stop() doesn't signal them to exit via a done channel or close the ticker, causing goroutine leaks."
+  content: |
+    Symptom: runtime.NumGoroutine() grows every time a scheduler is created, started,
+    and stopped. Over time this exhausts memory and can hang the program.
+    Root cause: Each job goroutine loops on ticker.C forever. Stop() sets a flag or
+    returns, but there is no done channel to break the goroutine out of its select loop.
+    The ticker continues firing and the goroutine remains blocked.
+    Fix: Give each job a done channel. In Stop(), close the done channel for every job
+    and call ticker.Stop(). The job goroutine must select on both ticker.C and done:
+      select {
+      case <-ticker.C:
+          // execute job
+      case <-entry.done:
+          ticker.Stop()
+          return
+      }
+    Use sync.WaitGroup to track all job goroutines and call wg.Wait() in Stop()
+    so the caller blocks until every goroutine has exited.
+    Prevention: Every goroutine you launch must have a clear termination signal.
+    Use done channel + WaitGroup as the standard pattern for managed goroutines.
+  tags: ["goroutine-leak", "ticker", "shutdown", "concurrency", "scheduler"]
+  pattern: "go func|time\\.NewTicker"
+  anti_pattern: "(close\\(.*done|<-.*done|ticker\\.Stop|sync\\.WaitGroup)"
+  detection:
+    method: grep
+    pattern: "(close\\(.*done|<-.*done|ticker\\.Stop|wg\\.Wait)"
+    files: ["*.go"]
+  seeds:
+    - type: failure
+      title: "Task scheduler leaked goroutines on Stop"
+      content: |
+        Our periodic task scheduler leaked goroutines because Stop() returned without
+        signaling job goroutines to exit. Each job had a time.Ticker loop but no done
+        channel, so goroutines blocked on ticker.C forever after Stop.
+        Fix: In the scheduler:
+        1. Give each job entry a done channel (chan struct{})
+        2. In Stop(), close every job's done channel to signal exit
+        3. In the job goroutine, select on both ticker.C and done — return on done
+        4. Defer ticker.Stop() in each job goroutine to release timer resources
+        5. Use sync.WaitGroup to wait for all goroutines to exit before Stop returns
+        Pattern: select { case <-ticker.C: run() case <-done: return }
+      tags: ["goroutine-leak", "ticker", "scheduler", "shutdown"]
+
+- id: no-overlap-protection
+  type: failure
+  title: "Job executions overlap when function takes longer than interval"
+  description: "Jobs can overlap if execution takes longer than the tick interval because there is no guard preventing re-entry, causing resource exhaustion and potential data corruption."
+  content: |
+    Symptom: A job with a 1-second interval that takes 3 seconds to execute runs
+    3 concurrent instances. Under load, dozens of overlapping executions accumulate,
+    exhausting database connections, file descriptors, or memory.
+    Root cause: The job goroutine fires the function on every ticker tick without
+    checking whether the previous execution is still in progress. When execution
+    time exceeds the interval, executions pile up.
+    Fix: Use an atomic flag or sync.Mutex per job to prevent re-entry:
+      var running int32  // or sync.Mutex
+      select {
+      case <-ticker.C:
+          if !atomic.CompareAndSwapInt32(&running, 0, 1) {
+              continue // skip this tick, previous execution still running
+          }
+          go func() {
+              defer atomic.StoreInt32(&running, 0)
+              entry.job.Fn(ctx)
+          }()
+      }
+    Alternative: Use a non-blocking select on a semaphore channel of capacity 1.
+    Prevention: Any periodic execution system must handle the case where execution
+    time exceeds the scheduling interval. Guard with mutex or atomic CAS.
+  tags: ["overlap", "re-entry", "scheduler", "resource-exhaustion", "concurrency"]
+  pattern: "ticker\\.C|time\\.Tick"
+  anti_pattern: "(atomic\\.CompareAndSwap|sync\\.Mutex|sync\\.TryLock|running|overlap|semaphore)"
+  detection:
+    method: grep
+    pattern: "(atomic\\.CompareAndSwap|atomic\\.Store|sync\\.Mutex|mu\\.Lock|mu\\.TryLock|running)"
+    files: ["*.go"]
+  seeds:
+    - type: failure
+      title: "Periodic scheduler caused resource exhaustion from overlapping jobs"
+      content: |
+        Our task scheduler ran a database cleanup job every 30 seconds, but the job
+        sometimes took 2 minutes. Without overlap protection, multiple instances of
+        the cleanup ran concurrently, each holding database connections and locks.
+        After 10 minutes we had 20+ concurrent cleanups and the database pool was exhausted.
+        Fix: Add an atomic flag per job to prevent re-entry:
+        - Before executing: atomic.CompareAndSwapInt32(&running, 0, 1) — skip if false
+        - After executing: atomic.StoreInt32(&running, 0)
+        This ensures at most one instance of each job runs at a time. Skipped ticks
+        are harmless; the next tick will fire the job if it has finished.
+      tags: ["overlap", "scheduler", "resource-exhaustion", "concurrency"]

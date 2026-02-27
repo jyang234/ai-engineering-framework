@@ -197,6 +197,74 @@ generate_report() {
 }
 
 # =============================================================================
+# Experiment 3B: Paired tasks for repeat failure prevention
+# =============================================================================
+
+run_3b_pair() {
+    local source="$1"
+    local target="$2"
+    local pair_id="$3"
+    local attempt="$4"
+
+    echo "  Pair: $source → $target ($pair_id)"
+
+    local model_flag=""
+    if [[ -n "$MODEL" ]]; then
+        model_flag="--model $MODEL"
+    fi
+
+    # Run target under baseline (no RECALL)
+    local run_id_base="3B-baseline-${target}-${attempt}"
+    "$LOG_DIR/aef-eval" run \
+        --experiment "3B" \
+        --condition "baseline" \
+        --strategy "$STRATEGY" \
+        --task-dir "$TASK_DIR" \
+        --log-dir "$LOG_DIR" \
+        --db "$DB_PATH" \
+        --attempt "$attempt" \
+        $model_flag \
+        || echo "    Warning: baseline run failed for $target"
+
+    # Run target under aef-full (RECALL seeded with source's pitfall knowledge)
+    "$LOG_DIR/aef-eval" run \
+        --experiment "3B" \
+        --condition "aef-full" \
+        --strategy "${3B_STRATEGY:-agent}" \
+        --task-dir "$TASK_DIR" \
+        --log-dir "$LOG_DIR" \
+        --db "$DB_PATH" \
+        --attempt "$attempt" \
+        --skill-dir "$SKILL_DIR" \
+        $model_flag \
+        || echo "    Warning: aef-full run failed for $target"
+}
+
+run_experiment_3b() {
+    echo ""
+    echo "==> Running Experiment 3B: Repeat Failure Prevention"
+    echo "    $ATTEMPTS attempt(s) per pair"
+    echo ""
+
+    # 5 pairs from pairs.yaml (hardcoded for reliability)
+    local -a PAIRS=(
+        "worker-pool:pipeline:goroutine-lifecycle"
+        "batch-processor:stream-aggregator:flush-on-shutdown"
+        "lru-cache:request-coalescer:concurrent-map-access"
+        "circuit-breaker:task-scheduler:state-machine-sync"
+        "retry-backoff:rate-limiter:context-aware-wait"
+    )
+
+    for attempt in $(seq 1 "$ATTEMPTS"); do
+        echo "--- 3B Attempt $attempt/$ATTEMPTS ---"
+        for pair in "${PAIRS[@]}"; do
+            IFS=':' read -r source target pair_id <<< "$pair"
+            run_3b_pair "$source" "$target" "$pair_id" "$attempt"
+        done
+    done
+}
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -225,29 +293,66 @@ main() {
     echo "==> Discovered tasks:"
     "$LOG_DIR/aef-eval" list --tasks --task-dir "$TASK_DIR"
 
-    # Run conditions
-    if [[ -n "$CONDITION" ]]; then
-        # Run single condition
-        run_condition "$CONDITION"
-    else
-        # Run all three conditions for a complete comparison
-        run_condition "baseline"
-        run_condition "aef-minimal"
-        run_condition "aef-full"
-    fi
+    case "$EXPERIMENT" in
+        3A)
+            # Run conditions
+            if [[ -n "$CONDITION" ]]; then
+                run_condition "$CONDITION"
+            else
+                run_condition "baseline"
+                run_condition "aef-minimal"
+                run_condition "aef-full"
+            fi
+            ;;
+        3B)
+            run_experiment_3b
+            ;;
+        all)
+            # Run both experiments
+            EXPERIMENT="3A"
+            if [[ -n "$CONDITION" ]]; then
+                run_condition "$CONDITION"
+            else
+                run_condition "baseline"
+                run_condition "aef-minimal"
+                run_condition "aef-full"
+            fi
+            EXPERIMENT="3B"
+            run_experiment_3b
+            ;;
+        *)
+            # Default: run as 3A
+            if [[ -n "$CONDITION" ]]; then
+                run_condition "$CONDITION"
+            else
+                run_condition "baseline"
+                run_condition "aef-minimal"
+                run_condition "aef-full"
+            fi
+            ;;
+    esac
 
     # Generate report
     generate_report
+
+    # If we ran both, also generate the 3B report
+    if [[ "$EXPERIMENT" == "all" ]]; then
+        EXPERIMENT="3B"
+        generate_report
+    fi
 
     echo ""
     echo "============================================================"
     echo "  Evaluation complete!"
     echo ""
+    echo "  Experiments available:"
+    echo "    ./run-eval.sh --experiment 3A              # Defect rate comparison (15 tasks x 3 conditions)"
+    echo "    ./run-eval.sh --experiment 3B              # Repeat failure prevention (5 pairs x 2 conditions)"
+    echo "    ./run-eval.sh --experiment all             # Both experiments"
+    echo "    ./run-eval.sh --experiment 3A --quick      # Quick smoke test (1 attempt)"
+    echo ""
     echo "  To re-generate reports:"
     echo "    $0 --report-only"
-    echo ""
-    echo "  To run additional attempts:"
-    echo "    $0 --condition baseline --attempts 2"
     echo ""
     echo "  To view all runs:"
     echo "    $LOG_DIR/aef-eval list --runs --db $DB_PATH"

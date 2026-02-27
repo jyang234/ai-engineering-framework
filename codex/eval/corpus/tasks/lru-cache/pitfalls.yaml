@@ -1,0 +1,67 @@
+- id: race-on-cache
+  type: failure
+  title: "Data race on concurrent cache access"
+  description: "Not using a mutex to protect the map and linked list causes data races when multiple goroutines call Get/Put concurrently."
+  content: |
+    Symptom: Race detector fires on concurrent Get/Put. Under high concurrency,
+    map entries and list pointers become corrupted, causing panics or silent data loss.
+    Root cause: Go maps are not safe for concurrent read/write. The LRU linked list
+    pointers are also modified on every Get (to move the node to front).
+    Fix: Use sync.Mutex (or sync.RWMutex for read-heavy workloads) to protect all
+    map and list operations.
+    Prevention: Any shared mutable state accessed from multiple goroutines needs synchronization.
+  tags: ["concurrency", "race-condition", "cache", "mutex"]
+  pattern: "func.*Get.*interface"
+  anti_pattern: "(sync\\.Mutex|sync\\.RWMutex)"
+  detection:
+    method: grep
+    pattern: "(sync\\.Mutex|sync\\.RWMutex)"
+    files: ["*.go"]
+  seeds:
+    - type: failure
+      title: "Race condition in LRU cache"
+      content: |
+        Our LRU cache crashed under load with concurrent map writes. The cache
+        used a plain map and doubly-linked list without synchronization. Every Get()
+        call moves a node in the list, which is a write operation even though it
+        looks like a read.
+        Fix: Protect all cache operations with sync.Mutex. Even Get() mutates the
+        list order, so a simple RWMutex with read-locks on Get won't work — use
+        a full Mutex.
+      tags: ["concurrency", "race-condition", "cache"]
+
+- id: no-eviction-on-capacity
+  type: failure
+  title: "Cache grows beyond capacity without eviction"
+  description: "Not checking capacity in Put() allows the cache to grow unboundedly, defeating the purpose of an LRU cache and causing memory exhaustion."
+  content: |
+    Symptom: Memory usage grows linearly with the number of Put calls instead
+    of being bounded by the cache capacity.
+    Root cause: Put() adds entries to the map and list but never checks if
+    len(map) > capacity to trigger eviction.
+    Fix: In Put(), after inserting the new entry, check if len exceeds capacity
+    and remove the tail of the linked list (the LRU entry):
+      if c.list.Len() > c.capacity {
+          oldest := c.list.Back()
+          c.list.Remove(oldest)
+          delete(c.items, oldest.Value.(*entry).key)
+      }
+    Prevention: Always enforce bounds in any bounded data structure.
+  tags: ["cache", "memory-leak", "eviction", "lru"]
+  pattern: "func.*Put"
+  anti_pattern: "(capacity|Len\\(\\).*>|Remove.*Back|evict)"
+  detection:
+    method: grep
+    pattern: "(capacity|Len\\(\\).*>|Remove.*Back|evict)"
+    files: ["*.go"]
+  seeds:
+    - type: failure
+      title: "LRU cache grew without bound"
+      content: |
+        Our LRU cache had a capacity parameter but never actually evicted entries.
+        Put() always inserted without checking size, so the cache grew to millions
+        of entries and consumed all available memory.
+        Fix: After every Put(), check if the cache size exceeds capacity. If so,
+        remove the least recently used entry (the tail of the linked list) and
+        delete its map entry.
+      tags: ["cache", "memory-leak", "eviction"]

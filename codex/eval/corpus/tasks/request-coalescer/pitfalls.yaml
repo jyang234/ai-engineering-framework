@@ -1,0 +1,100 @@
+- id: race-on-inflight-map
+  type: failure
+  title: "Data race on in-flight map access"
+  description: "Not synchronizing access to the in-flight map causes races between Do (check + insert) and cleanup (delete). The check-then-act on the map must be atomic."
+  content: |
+    Symptom: Race detector fires on concurrent Do() calls. Under high concurrency,
+    the in-flight map may be read and written simultaneously, causing panics
+    (concurrent map read and map write) or silently corrupted state where duplicate
+    executions occur for the same key.
+    Root cause: Go maps are not safe for concurrent access. The Do() method reads
+    the map to check for an in-flight entry, then writes to insert one — this
+    check-then-act sequence must be protected. Similarly, cleanup after fn completes
+    deletes from the map, which races with concurrent reads in Do().
+    Fix: Use sync.Mutex to protect all map operations:
+      g.mu.Lock()
+      if call, ok := g.calls[key]; ok {
+          g.mu.Unlock()
+          // wait for existing call
+      } else {
+          // insert new in-flight entry
+          g.mu.Unlock()
+          // execute fn
+      }
+    Prevention: Any shared mutable state accessed from multiple goroutines needs
+    synchronization. Maps require a mutex even for read-only access when concurrent
+    writes are possible.
+  tags: ["concurrency", "race-condition", "mutex", "singleflight", "map"]
+  pattern: "func.*Do.*func.*interface"
+  anti_pattern: "(sync\\.Mutex|sync\\.RWMutex)"
+  detection:
+    method: grep
+    pattern: "(sync\\.Mutex|sync\\.RWMutex)"
+    files: ["*.go"]
+  seeds:
+    - type: failure
+      title: "Race condition in request coalescer in-flight map"
+      content: |
+        Our request coalescer (singleflight-style) crashed under load with
+        "concurrent map read and map write". The Do() method checked the in-flight
+        map for an existing call, then inserted a new entry — without holding a lock.
+        Meanwhile, cleanup code deleted completed entries from the same map.
+        Fix: Protect all access to the in-flight map with sync.Mutex. Lock before
+        checking the map, and hold the lock through the insert. Cleanup must also
+        acquire the lock before deleting the entry.
+      tags: ["concurrency", "race-condition", "singleflight"]
+
+- id: cleanup-not-deferred
+  type: failure
+  title: "In-flight entry not removed if fn panics"
+  description: "If fn panics, the in-flight entry is never removed from the map, causing all future callers for that key to block forever waiting for a result that will never arrive."
+  content: |
+    Symptom: After a panic in fn (even if recovered upstream), all subsequent calls
+    to Do() with the same key hang indefinitely. The program appears deadlocked for
+    that key while other keys work fine.
+    Root cause: The cleanup code that removes the in-flight entry from the map runs
+    after fn returns normally, but a panic unwinds the stack and skips the cleanup.
+    The entry stays in the map with waiters blocked on a WaitGroup or channel that
+    will never be signaled.
+    Fix: Use defer to remove the in-flight entry immediately after starting fn:
+      func (g *Group) Do(key string, fn func() (interface{}, error)) Result {
+          // ... check/insert in-flight entry ...
+          defer func() {
+              g.mu.Lock()
+              delete(g.calls, key)
+              g.mu.Unlock()
+              // signal all waiters
+          }()
+          val, err := fn()
+          // ...
+      }
+    The deferred cleanup runs even if fn panics, ensuring the map is cleaned up
+    and waiters are unblocked.
+    Prevention: Always use defer for cleanup of shared resources. If a function
+    must release a resource regardless of how it exits (normal return, error, or
+    panic), defer is the only safe mechanism.
+  tags: ["panic", "defer", "cleanup", "singleflight", "deadlock"]
+  pattern: "func.*Do.*func.*interface"
+  anti_pattern: "defer.*func.*delete|defer.*cleanup|defer.*remove"
+  detection:
+    method: grep
+    pattern: "defer"
+    files: ["*.go"]
+  seeds:
+    - type: failure
+      title: "Request coalescer deadlocked after panic in fn"
+      content: |
+        Our singleflight-style coalescer permanently blocked on a key after the
+        user-provided function panicked. The panic was recovered by middleware, but
+        the in-flight entry was never cleaned up because the delete(map, key) code
+        was placed after the fn() call instead of in a defer.
+        Fix: Always use defer for removing the in-flight entry from the map and
+        signaling waiters. Defer runs on panic, ensuring the entry is cleaned up:
+          defer func() {
+              g.mu.Lock()
+              delete(g.calls, key)
+              g.mu.Unlock()
+              call.wg.Done() // or close(call.done)
+          }()
+        This prevents permanent deadlock for any key whose fn panics.
+      tags: ["panic", "defer", "deadlock", "singleflight"]

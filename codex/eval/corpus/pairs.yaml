@@ -1,0 +1,44 @@
+# Experiment 3B: Repeat Failure Prevention
+#
+# Each pair shares a pitfall pattern. The "source" task's failure
+# knowledge is seeded into RECALL for the "target" task.
+#
+# Protocol:
+#   1. Run target task under baseline (no RECALL) → observe pitfall rate
+#   2. Run target task under aef-full (RECALL seeded with source failure) → observe pitfall rate
+#   3. Delta = aef-full pitfall rate - baseline pitfall rate
+#
+# The source task's pitfalls.yaml seeds ARE the RECALL content for the target.
+# No separate seed file is needed — the existing seeds in each task's pitfalls.yaml
+# describe failures in the source domain that transfer to the target domain.
+
+pairs:
+  - id: goroutine-lifecycle
+    source: worker-pool
+    target: pipeline
+    shared_pitfall: "goroutine leak on shutdown / cancellation"
+    description: "Both tasks require proper goroutine lifecycle management with WaitGroup and channel close patterns."
+
+  - id: flush-on-shutdown
+    source: batch-processor
+    target: stream-aggregator
+    shared_pitfall: "data loss from not flushing on shutdown"
+    description: "Both tasks buffer data and must flush remaining items when Stop/Shutdown is called."
+
+  - id: concurrent-map-access
+    source: lru-cache
+    target: request-coalescer
+    shared_pitfall: "race condition on shared map without synchronization"
+    description: "Both tasks use a map as the core data structure and must synchronize concurrent access."
+
+  - id: state-machine-sync
+    source: circuit-breaker
+    target: task-scheduler
+    shared_pitfall: "race on state transitions in concurrent state machine"
+    description: "Both tasks implement state machines (breaker states / job running flags) that must be synchronized."
+
+  - id: context-aware-wait
+    source: retry-backoff
+    target: rate-limiter
+    shared_pitfall: "blocking operation ignores context cancellation"
+    description: "Both tasks have blocking wait operations that must use select with ctx.Done() instead of plain time.Sleep."

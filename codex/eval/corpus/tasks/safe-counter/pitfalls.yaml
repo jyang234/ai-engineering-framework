@@ -1,0 +1,69 @@
+- id: non-atomic-operations
+  type: failure
+  title: "Counter uses mutex instead of atomic operations"
+  description: "Using sync.Mutex for simple counter operations adds unnecessary overhead. Counter operations should use sync/atomic for lock-free performance."
+  content: |
+    Symptom: Counter operations are 5-10x slower than necessary. Under high contention,
+    goroutines spend most of their time waiting for the mutex.
+    Root cause: Individual counter increment/decrement uses sync.Mutex instead of
+    atomic operations. For simple integer operations, atomic is both faster and simpler.
+    Fix: Use sync/atomic for all Counter methods:
+      func (c *Counter) Inc() int64 { return atomic.AddInt64(&c.value, 1) }
+      func (c *Counter) Value() int64 { return atomic.LoadInt64(&c.value) }
+    Prevention: Use atomic operations for single-variable synchronization. Reserve
+    mutexes for operations that need to protect multiple variables together.
+  tags: ["atomic", "performance", "counter", "lock-free"]
+  pattern: "func.*Inc.*int64"
+  anti_pattern: "(atomic\\.AddInt64|atomic\\.LoadInt64|atomic\\.Int64)"
+  detection:
+    method: grep
+    pattern: "(atomic\\.Add|atomic\\.Load|atomic\\.Store|atomic\\.CompareAndSwap|atomic\\.Int64)"
+    files: ["*.go"]
+  seeds:
+    - type: failure
+      title: "Counter bottleneck from using mutex instead of atomic"
+      content: |
+        Our metrics counter used sync.Mutex for Inc/Dec/Value. Under high request
+        rates (100K/s), the mutex contention became a bottleneck. CPU profiling
+        showed 40% of time spent in mutex lock/unlock.
+        Fix: Replace mutex-protected operations with sync/atomic:
+          atomic.AddInt64(&c.value, 1) for Inc
+          atomic.LoadInt64(&c.value) for Value
+          atomic.CompareAndSwapInt64(&c.value, old, new) for CAS
+        Atomic operations are lock-free and orders of magnitude faster for single
+        variable synchronization.
+      tags: ["atomic", "performance", "counter"]
+
+- id: snapshot-returns-reference
+  type: failure
+  title: "CounterGroup.Snapshot returns internal map reference"
+  description: "Returning the internal map directly instead of a copy allows callers to modify the group's internal state, causing data corruption."
+  content: |
+    Symptom: Counter values change unexpectedly because external code is modifying
+    the map returned by Snapshot().
+    Root cause: Snapshot() returns a reference to the internal map instead of
+    creating a new map with copied values.
+    Fix: Always create a new map in Snapshot():
+      result := make(map[string]int64, len(g.counters))
+      for name, counter := range g.counters {
+          result[name] = counter.Value()
+      }
+      return result
+    Prevention: Any method that exposes internal state should return a copy.
+  tags: ["encapsulation", "snapshot", "copy", "data-integrity"]
+  pattern: "func.*Snapshot.*map"
+  anti_pattern: "(make\\(map\\[string\\]int64|for.*range.*counter)"
+  detection:
+    method: grep
+    pattern: "make\\(map\\[string\\]int64"
+    files: ["*.go"]
+  seeds:
+    - type: failure
+      title: "Snapshot leaked internal map reference"
+      content: |
+        Our CounterGroup.Snapshot() returned the internal map directly. A monitoring
+        goroutine that called Snapshot() and then modified the returned map was
+        corrupting the counter group's internal state.
+        Fix: Snapshot() must create a new map and copy values into it. Never return
+        references to internal mutable state.
+      tags: ["encapsulation", "snapshot", "copy"]
