@@ -103,6 +103,8 @@ var _ Backend = (*Storage)(nil)
 
 ## Issues Found
 
+> **Note (2026-02-28):** Issues C1, H4, H5, H6, H7, and H9 reference files in the L3 eval infrastructure (`condition.go`, `runner_agent.go`, `runner_pipe.go`, `scorer.go`) that were removed in commit `32e6b58`. These findings are no longer actionable but are retained for reference.
+
 ### Critical
 
 #### C1. Slice Corruption Bug in `eval/condition.go`

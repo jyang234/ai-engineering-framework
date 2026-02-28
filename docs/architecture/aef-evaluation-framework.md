@@ -4,7 +4,7 @@
 > Last updated: 2026-02-28
 > Purpose: Definitively evaluate AEF's viability and performance, replacing self-assessed claims with measured evidence
 >
-> **Current status**: Level 1 component evaluation is implemented and runnable (retrieval quality, judge filtering, MCP protocol, audit trail). Level 3 infrastructure (runners, scorers, corpus, CLI) was built and intentionally removed — see "Implementation History" section.
+> **Current status**: Level 1 component evaluation is implemented and runnable. Three integration tests exercise the full stack: `TestE2E` (8-phase retrieval pipeline), `TestJudge` (LLM-as-judge filtering quality), and `TestRoundTrip` (MCP add→search→feedback round-trip). Level 3 infrastructure was built and intentionally removed — see "Implementation History" section. See `codex/eval/README.md` for quick-start guide.
 
 ---
 
@@ -50,7 +50,7 @@ Level 2: Integration       Do RECALL + retrieval-judge + plan-review work togeth
 Level 1: Component         Does RECALL retrieve well? Do hooks fire? Do skills load?
 ```
 
-Level 1 is implemented via the EvalHarness and JudgeHarness in `codex/eval/`. Level 2 partial support exists (false filtering rate in `judge_metrics.go`). Levels 3-4 infrastructure was built and intentionally removed — see Implementation History.
+Level 1 is implemented via the EvalHarness, JudgeHarness, and RoundTrip tests in `codex/eval/`. Level 2 partial support exists (false filtering rate in `judge_metrics.go`). Levels 3-4 infrastructure was built and intentionally removed — see Implementation History.
 
 ---
 
@@ -70,16 +70,32 @@ The `codex/eval/` directory contains the Level 1 evaluation infrastructure:
 | `mcpclient.go` | JSON-RPC client for RECALL MCP server via io.Pipe (in-process, no subprocess) | Implemented |
 | `testdata_payflow.go` | PayFlow domain corpus: 30 docs, 20 ground-truth queries across 3 categories | Implemented |
 | `testdata.go` | Test collection types (`TestDoc`, `TestQuery`, `TestCollection`) | Implemented |
-| `roundtrip_test.go` | End-to-end MCP add→search roundtrip via JSON-RPC, proves the core value loop | Implemented |
+| `roundtrip_test.go` | End-to-end MCP add→search→feedback roundtrip via JSON-RPC (5 subtests: add-then-search, semantic match, scope isolation, flight recorder audit, feedback) | Implemented |
 | `groundtruth.go` | Ground truth annotation types for eval queries | Implemented |
+| `harness_test.go` | `TestE2E`: full 8-phase pipeline integration test (6 subtests) | Implemented |
+| `judge_test.go` | `TestJudge`: LLM judge quality and audit trail (2 subtests) | Implemented |
+| `metrics_test.go` | Unit tests for all 4 IR metrics | Implemented |
+| `judge_metrics_test.go` | 18 unit tests for judge precision/recall/F1/filtering math | Implemented |
+| `benchmarks_local_nomic.txt` | nomic-embed-text benchmark results (2 runs) | Reference |
+| `benchmarks_voyage.txt` | Voyage Code-3 benchmark results (2 runs) | Reference |
 
-**Existing benchmark results** (from `codex/eval/benchmarks_local_nomic.txt`):
+**Existing benchmark results** (from `benchmarks_local_nomic.txt` and `benchmarks_voyage.txt`):
+
+nomic-embed-text (local):
 - Recall@5: 0.829–0.830
 - Recall@10: 0.908–0.910
 - nDCG@10: 0.762–0.784
 - MRR: 0.782–0.842
 
+Voyage Code-3 (API):
+- Recall@5: 0.850–0.863
+- Recall@10: 0.908–0.910
+- nDCG@10: 0.776–0.800
+- MRR: 0.792–0.850
+
 ### What's Missing at Level 1
+
+> **Update 2026-02-28**: The add→search round-trip gap (previously the most critical missing test) has been filled by `roundtrip_test.go` — see the "What Exists" table above. The MCP server, embedding client, and chunking gaps remain open; see `docs/architecture/eval-test-spec.md` for detailed implementation specs.
 
 #### 1A. Hook Execution Verification
 
@@ -1233,21 +1249,22 @@ The Level 1 component evaluation infrastructure remains and directly answers whe
 
 ```
 codex/eval/
-├── harness.go              ← 8-phase evaluation pipeline
-├── harness_test.go         ← TestE2E integration test
-├── judge.go                ← LLM-as-judge via Anthropic API (single-turn)
-├── judge_test.go           ← TestJudge integration test
-├── judge_metrics.go        ← Judge precision/recall/F1/filtering/false-filtering
-├── judge_metrics_test.go   ← Judge metrics unit tests
-├── mcpclient.go            ← JSON-RPC client for MCP server (in-process via io.Pipe)
-├── metrics.go              ← Recall@K, Precision@K, nDCG, MRR
-├── metrics_test.go         ← Metrics unit tests
-├── report.go               ← Text + JSON report formatting
-├── testdata.go             ← TestDoc/TestQuery/TestCollection types
-├── testdata_payflow.go     ← 30 PayFlow docs + 20 ground-truth queries
-├── roundtrip_test.go       ← End-to-end MCP add→search roundtrip
-├── groundtruth.go          ← Ground truth annotation types
-├── benchmarks_local_nomic.txt  ← Nomic-embed-text benchmark results
+├── README.md                   ← Quick-start guide, component overview, benchmark results
+├── harness.go                  ← 8-phase evaluation pipeline
+├── harness_test.go             ← TestE2E: full pipeline integration test (6 subtests)
+├── judge.go                    ← LLM-as-judge via Anthropic API (single-turn)
+├── judge_test.go               ← TestJudge: judge quality + audit trail (2 subtests)
+├── judge_metrics.go            ← Judge precision/recall/F1/filtering/false-filtering
+├── judge_metrics_test.go       ← 18 unit tests for judge metrics math
+├── mcpclient.go                ← JSON-RPC client for MCP server (in-process via io.Pipe)
+├── metrics.go                  ← Recall@K, Precision@K, nDCG, MRR
+├── metrics_test.go             ← Unit tests for all 4 IR metrics
+├── report.go                   ← Text + JSON report formatting
+├── testdata.go                 ← TestDoc/TestQuery/TestCollection types
+├── testdata_payflow.go         ← 30 PayFlow docs + 20 ground-truth queries
+├── roundtrip_test.go           ← TestRoundTrip: MCP add→search→feedback (5 subtests)
+├── groundtruth.go              ← Ground truth annotation types
+├── benchmarks_local_nomic.txt  ← nomic-embed-text benchmark results
 └── benchmarks_voyage.txt       ← Voyage Code-3 benchmark results
 ```
 
