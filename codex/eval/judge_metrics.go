@@ -2,39 +2,42 @@ package eval
 
 // JudgeMetrics holds per-query metrics for the LLM judge evaluation.
 type JudgeMetrics struct {
-	QueryID         string  `json:"query_id"`
-	Query           string  `json:"query"`
-	Category        string  `json:"category"`
-	JudgePrecision  float64 `json:"judge_precision"`  // |judged ∩ true| / |judged|
-	JudgeRecall     float64 `json:"judge_recall"`      // |judged ∩ true ∩ retrieved| / |true ∩ retrieved|
-	JudgeF1         float64 `json:"judge_f1"`
-	FilteringRate   float64 `json:"filtering_rate"`    // 1 - |judged| / |retrieved|
-	RawPrecisionAt5 float64 `json:"raw_precision_at5"` // baseline from raw retrieval
-	Improvement     float64 `json:"improvement"`       // judge precision - raw precision
+	QueryID            string  `json:"query_id"`
+	Query              string  `json:"query"`
+	Category           string  `json:"category"`
+	JudgePrecision     float64 `json:"judge_precision"` // |judged ∩ true| / |judged|
+	JudgeRecall        float64 `json:"judge_recall"`    // |judged ∩ true ∩ retrieved| / |true ∩ retrieved|
+	JudgeF1            float64 `json:"judge_f1"`
+	FilteringRate      float64 `json:"filtering_rate"`       // 1 - |judged| / |retrieved|
+	FalseFilteringRate float64 `json:"false_filtering_rate"` // |true ∩ retrieved \ judged| / |true ∩ retrieved|
+	RawPrecisionAt5    float64 `json:"raw_precision_at5"`    // baseline from raw retrieval
+	Improvement        float64 `json:"improvement"`          // judge precision - raw precision
 }
 
 // JudgeCategoryMetrics holds aggregated metrics for a query category.
 type JudgeCategoryMetrics struct {
-	AvgJudgePrecision float64 `json:"avg_judge_precision"`
-	AvgJudgeRecall    float64 `json:"avg_judge_recall"`
-	AvgJudgeF1        float64 `json:"avg_judge_f1"`
-	AvgFilteringRate  float64 `json:"avg_filtering_rate"`
-	AvgImprovement    float64 `json:"avg_improvement"`
-	Count             int     `json:"count"`
+	AvgJudgePrecision     float64 `json:"avg_judge_precision"`
+	AvgJudgeRecall        float64 `json:"avg_judge_recall"`
+	AvgJudgeF1            float64 `json:"avg_judge_f1"`
+	AvgFilteringRate      float64 `json:"avg_filtering_rate"`
+	AvgFalseFilteringRate float64 `json:"avg_false_filtering_rate"`
+	AvgImprovement        float64 `json:"avg_improvement"`
+	Count                 int     `json:"count"`
 }
 
 // JudgeSummary holds aggregated judge evaluation results.
 type JudgeSummary struct {
-	AvgJudgePrecision float64                       `json:"avg_judge_precision"`
-	AvgJudgeRecall    float64                       `json:"avg_judge_recall"`
-	AvgJudgeF1        float64                       `json:"avg_judge_f1"`
-	AvgFilteringRate  float64                       `json:"avg_filtering_rate"`
-	AvgImprovement    float64                       `json:"avg_improvement"`
-	ByCategory        map[string]*JudgeCategoryMetrics `json:"by_category"`
-	PerQuery          []JudgeMetrics                `json:"per_query"`
+	AvgJudgePrecision     float64                          `json:"avg_judge_precision"`
+	AvgJudgeRecall        float64                          `json:"avg_judge_recall"`
+	AvgJudgeF1            float64                          `json:"avg_judge_f1"`
+	AvgFilteringRate      float64                          `json:"avg_filtering_rate"`
+	AvgFalseFilteringRate float64                          `json:"avg_false_filtering_rate"`
+	AvgImprovement        float64                          `json:"avg_improvement"`
+	ByCategory            map[string]*JudgeCategoryMetrics `json:"by_category"`
+	PerQuery              []JudgeMetrics                   `json:"per_query"`
 }
 
-// computeJudgeMetrics computes judge precision, recall, F1 for a single query.
+// computeJudgeMetrics computes judge precision, recall, F1, filtering rate, and false filtering rate.
 func computeJudgeMetrics(judgedIDs, retrievedIDs, relevantIDs []string) (precision, recall, f1, filteringRate float64) {
 	relSet := toSet(relevantIDs)
 	retSet := toSet(retrievedIDs)
@@ -86,6 +89,30 @@ func computeJudgeMetrics(judgedIDs, retrievedIDs, relevantIDs []string) (precisi
 	return
 }
 
+// computeFalseFilteringRate computes the fraction of ground-truth relevant results
+// that were retrieved but incorrectly dropped by the judge.
+// false_filtering_rate = |relevant ∩ retrieved \ judged| / |relevant ∩ retrieved|
+func computeFalseFilteringRate(judgedIDs, retrievedIDs, relevantIDs []string) float64 {
+	retSet := toSet(retrievedIDs)
+	judgedSet := toSet(judgedIDs)
+
+	relevantRetrieved := 0
+	falselyDropped := 0
+	for _, id := range relevantIDs {
+		if retSet[id] {
+			relevantRetrieved++
+			if !judgedSet[id] {
+				falselyDropped++
+			}
+		}
+	}
+
+	if relevantRetrieved == 0 {
+		return 0
+	}
+	return float64(falselyDropped) / float64(relevantRetrieved)
+}
+
 // aggregateJudgeMetrics computes a JudgeSummary from per-query metrics.
 func aggregateJudgeMetrics(perQuery []JudgeMetrics) *JudgeSummary {
 	s := &JudgeSummary{
@@ -102,6 +129,7 @@ func aggregateJudgeMetrics(perQuery []JudgeMetrics) *JudgeSummary {
 		s.AvgJudgeRecall += m.JudgeRecall
 		s.AvgJudgeF1 += m.JudgeF1
 		s.AvgFilteringRate += m.FilteringRate
+		s.AvgFalseFilteringRate += m.FalseFilteringRate
 		s.AvgImprovement += m.Improvement
 
 		cat := m.Category
@@ -113,6 +141,7 @@ func aggregateJudgeMetrics(perQuery []JudgeMetrics) *JudgeSummary {
 		c.AvgJudgeRecall += m.JudgeRecall
 		c.AvgJudgeF1 += m.JudgeF1
 		c.AvgFilteringRate += m.FilteringRate
+		c.AvgFalseFilteringRate += m.FalseFilteringRate
 		c.AvgImprovement += m.Improvement
 		c.Count++
 	}
@@ -122,6 +151,7 @@ func aggregateJudgeMetrics(perQuery []JudgeMetrics) *JudgeSummary {
 	s.AvgJudgeRecall /= n
 	s.AvgJudgeF1 /= n
 	s.AvgFilteringRate /= n
+	s.AvgFalseFilteringRate /= n
 	s.AvgImprovement /= n
 
 	for _, c := range s.ByCategory {
@@ -130,6 +160,7 @@ func aggregateJudgeMetrics(perQuery []JudgeMetrics) *JudgeSummary {
 		c.AvgJudgeRecall /= cn
 		c.AvgJudgeF1 /= cn
 		c.AvgFilteringRate /= cn
+		c.AvgFalseFilteringRate /= cn
 		c.AvgImprovement /= cn
 	}
 

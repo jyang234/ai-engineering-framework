@@ -18,6 +18,7 @@ skills:
   - coding
   - testing
   - scaffolding-tests
+  - golang-idioms
 ---
 
 # Coder Agent

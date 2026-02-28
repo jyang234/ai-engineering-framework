@@ -16,10 +16,13 @@ Generate a session summary and save it to history.
 
 2. **List** key decisions made with their rationale
 
-3. **Identify** capture candidates - things worth saving to RECALL:
-   - New patterns discovered
-   - Failures encountered and fixed
-   - Important decisions with rationale
+3. **Read** `/memories/` for capture candidates:
+   - Use memory tool (`view`) to read session cache and scratch notes
+   - Identify items worth promoting to RECALL:
+     - New patterns discovered
+     - Failures encountered and fixed
+     - Important decisions with rationale
+   - `/memories/` entries are the primary source — they represent insights the agent deemed important enough to persist during the session
 
 4. **Present** capture candidates to user:
    ```
@@ -105,7 +108,12 @@ Generate a session summary and save it to history.
    - [work remaining, blockers]
    ```
 
-8. **Confirm** session ended:
+8. **Clean up** ephemeral `/memories/` files:
+   - Delete session cache (`/memories/session-cache.md`) and scratch notes
+   - These have been either promoted to RECALL (step 5) or discarded
+   - Do not delete user-created memory files unless the user approves
+
+9. **Confirm** session ended:
    ```
    Session saved to .edi/history/2026-01-25-abc12345.md
    Captured 2 items to RECALL.

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -27,21 +28,21 @@ func NewServer(engine *core.SearchEngine, sessionID string) *Server {
 
 // MCP Protocol Types
 
-type MCPRequest struct {
+type Request struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      interface{}     `json:"id"`
 	Method  string          `json:"method"`
 	Params  json.RawMessage `json:"params,omitempty"`
 }
 
-type MCPResponse struct {
+type Response struct {
 	JSONRPC string      `json:"jsonrpc"`
 	ID      interface{} `json:"id"`
 	Result  interface{} `json:"result,omitempty"`
-	Error   *MCPError   `json:"error,omitempty"`
+	Error   *Error      `json:"error,omitempty"`
 }
 
-type MCPError struct {
+type Error struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 }
@@ -111,13 +112,13 @@ func (s *Server) RunForIO(ctx context.Context, r io.Reader, w io.Writer) error {
 		// Read line (JSON-RPC message)
 		line, err := reader.ReadBytes('\n')
 		if err != nil {
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				return nil
 			}
 			return err
 		}
 
-		var req MCPRequest
+		var req Request
 		if err := json.Unmarshal(line, &req); err != nil {
 			s.sendError(writer, nil, -32700, "Parse error")
 			continue
@@ -132,7 +133,7 @@ func (s *Server) RunForIO(ctx context.Context, r io.Reader, w io.Writer) error {
 	}
 }
 
-func (s *Server) handleRequest(ctx context.Context, req *MCPRequest) *MCPResponse {
+func (s *Server) handleRequest(ctx context.Context, req *Request) *Response {
 	switch req.Method {
 	case "initialize":
 		return s.handleInitialize(req)
@@ -143,16 +144,16 @@ func (s *Server) handleRequest(ctx context.Context, req *MCPRequest) *MCPRespons
 	case "notifications/initialized":
 		return nil // Notification, no response
 	default:
-		return &MCPResponse{
+		return &Response{
 			JSONRPC: "2.0",
 			ID:      req.ID,
-			Error:   &MCPError{Code: -32601, Message: "Method not found"},
+			Error:   &Error{Code: -32601, Message: "Method not found"},
 		}
 	}
 }
 
-func (s *Server) handleInitialize(req *MCPRequest) *MCPResponse {
-	return &MCPResponse{
+func (s *Server) handleInitialize(req *Request) *Response {
+	return &Response{
 		JSONRPC: "2.0",
 		ID:      req.ID,
 		Result: InitializeResult{
@@ -168,21 +169,21 @@ func (s *Server) handleInitialize(req *MCPRequest) *MCPResponse {
 	}
 }
 
-func (s *Server) handleListTools(req *MCPRequest) *MCPResponse {
-	return &MCPResponse{
+func (s *Server) handleListTools(req *Request) *Response {
+	return &Response{
 		JSONRPC: "2.0",
 		ID:      req.ID,
 		Result:  ListToolsResult{Tools: getToolDefinitions()},
 	}
 }
 
-func (s *Server) handleCallTool(ctx context.Context, req *MCPRequest) *MCPResponse {
+func (s *Server) handleCallTool(ctx context.Context, req *Request) *Response {
 	var params CallToolParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return &MCPResponse{
+		return &Response{
 			JSONRPC: "2.0",
 			ID:      req.ID,
-			Error:   &MCPError{Code: -32602, Message: "Invalid params"},
+			Error:   &Error{Code: -32602, Message: "Invalid params"},
 		}
 	}
 
@@ -190,7 +191,7 @@ func (s *Server) handleCallTool(ctx context.Context, req *MCPRequest) *MCPRespon
 	result, err := handler.Handle(ctx, params.Name, params.Arguments)
 
 	if err != nil {
-		return &MCPResponse{
+		return &Response{
 			JSONRPC: "2.0",
 			ID:      req.ID,
 			Result: CallToolResult{
@@ -202,13 +203,13 @@ func (s *Server) handleCallTool(ctx context.Context, req *MCPRequest) *MCPRespon
 
 	resultJSON, err := json.Marshal(result)
 	if err != nil {
-		return &MCPResponse{
+		return &Response{
 			JSONRPC: "2.0",
 			ID:      req.ID,
-			Error:   &MCPError{Code: -32603, Message: fmt.Sprintf("Internal error: %v", err)},
+			Error:   &Error{Code: -32603, Message: fmt.Sprintf("Internal error: %v", err)},
 		}
 	}
-	return &MCPResponse{
+	return &Response{
 		JSONRPC: "2.0",
 		ID:      req.ID,
 		Result: CallToolResult{
@@ -217,7 +218,7 @@ func (s *Server) handleCallTool(ctx context.Context, req *MCPRequest) *MCPRespon
 	}
 }
 
-func (s *Server) sendResponse(w io.Writer, resp *MCPResponse) error {
+func (s *Server) sendResponse(w io.Writer, resp *Response) error {
 	data, err := json.Marshal(resp)
 	if err != nil {
 		return err
@@ -227,10 +228,10 @@ func (s *Server) sendResponse(w io.Writer, resp *MCPResponse) error {
 }
 
 func (s *Server) sendError(w io.Writer, id interface{}, code int, message string) error {
-	resp := &MCPResponse{
+	resp := &Response{
 		JSONRPC: "2.0",
 		ID:      id,
-		Error:   &MCPError{Code: code, Message: message},
+		Error:   &Error{Code: code, Message: message},
 	}
 	return s.sendResponse(w, resp)
 }

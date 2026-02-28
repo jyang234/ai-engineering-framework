@@ -34,7 +34,10 @@ func GetRecallMCPConfig(cfg *config.Config, sessionID string) MCPServerConfig {
 
 // getV0MCPConfig returns the configuration for RECALL v0 (SQLite FTS)
 func getV0MCPConfig(cfg *config.Config, sessionID string) MCPServerConfig {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = os.Getenv("HOME")
+	}
 	ediBinary := findEdiBinary()
 
 	return MCPServerConfig{
@@ -50,7 +53,10 @@ func getV0MCPConfig(cfg *config.Config, sessionID string) MCPServerConfig {
 
 // getCodexMCPConfig returns the configuration for Codex v1 (hybrid vector search)
 func getCodexMCPConfig(cfg *config.Config, sessionID string) MCPServerConfig {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = os.Getenv("HOME")
+	}
 
 	// Determine binary path
 	binaryPath := config.ResolvePath(cfg.Codex.BinaryPath)
@@ -191,7 +197,10 @@ func UpdateMCPConfig(projectDir string, cfg *config.Config, sessionID string) er
 // findEdiBinary returns the path to the edi binary
 func findEdiBinary() string {
 	// Check if running from installed location
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = os.Getenv("HOME")
+	}
 	installed := filepath.Join(home, ".edi", "bin", "edi")
 	if _, err := os.Stat(installed); err == nil {
 		return installed
@@ -224,7 +233,10 @@ func ValidateCodexRequirements(cfg *config.Config) error {
 	}
 
 	// Check for binary
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = os.Getenv("HOME")
+	}
 	binaryPath := cfg.Codex.BinaryPath
 	if binaryPath == "" {
 		binaryPath = filepath.Join(home, ".edi", "bin", "recall-mcp")

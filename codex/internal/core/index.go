@@ -62,16 +62,16 @@ func NewIndexer(engine *SearchEngine) (*Indexer, error) {
 // NewIndexerWithConfig creates an Indexer with explicit dependencies (for testing)
 func NewIndexerWithConfig(cfg IndexerConfig) (*Indexer, error) {
 	if cfg.Embedder == nil {
-		return nil, fmt.Errorf("Embedder is required")
+		return nil, fmt.Errorf("embedder is required")
 	}
 	if cfg.VectorStore == nil {
-		return nil, fmt.Errorf("VectorStore is required")
+		return nil, fmt.Errorf("vector store is required")
 	}
 	if cfg.MetaStore == nil {
-		return nil, fmt.Errorf("MetaStore is required")
+		return nil, fmt.Errorf("meta store is required")
 	}
 	if cfg.CodeChunker == nil {
-		return nil, fmt.Errorf("CodeChunker is required")
+		return nil, fmt.Errorf("code chunker is required")
 	}
 
 	idGen := cfg.IDGenerator
@@ -388,47 +388,35 @@ type docChunkData struct {
 	endLine   int
 }
 
+// codeExts is the set of file extensions recognized as code.
+var codeExts = map[string]bool{
+	".go": true, ".py": true, ".js": true, ".ts": true, ".tsx": true,
+	".jsx": true, ".rs": true, ".java": true, ".c": true, ".cpp": true,
+	".h": true, ".hpp": true, ".rb": true, ".php": true, ".swift": true,
+	".kt": true, ".scala": true, ".cs": true,
+}
+
+// docExts is the set of file extensions recognized as documentation.
+var docExts = map[string]bool{
+	".md": true, ".mdx": true, ".txt": true, ".rst": true,
+	".adoc": true, ".org": true,
+}
+
 func detectContentType(filePath, content string) string {
 	ext := strings.ToLower(filepath.Ext(filePath))
 
-	// Code files
-	codeExts := map[string]bool{
-		".go": true, ".py": true, ".js": true, ".ts": true, ".tsx": true,
-		".jsx": true, ".rs": true, ".java": true, ".c": true, ".cpp": true,
-		".h": true, ".hpp": true, ".rb": true, ".php": true, ".swift": true,
-		".kt": true, ".scala": true, ".cs": true,
-	}
 	if codeExts[ext] {
 		return TypeCode
-	}
-
-	// Documentation files
-	docExts := map[string]bool{
-		".md": true, ".mdx": true, ".txt": true, ".rst": true,
-		".adoc": true, ".org": true,
 	}
 	if docExts[ext] {
 		return TypeDoc
 	}
-
-	// Default to manual/generic
 	return TypeManual
 }
 
 func isIndexable(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
-
-	indexableExts := map[string]bool{
-		// Code
-		".go": true, ".py": true, ".js": true, ".ts": true, ".tsx": true,
-		".jsx": true, ".rs": true, ".java": true, ".c": true, ".cpp": true,
-		".h": true, ".hpp": true, ".rb": true, ".php": true, ".swift": true,
-		".kt": true, ".scala": true, ".cs": true,
-		// Docs
-		".md": true, ".mdx": true, ".txt": true, ".rst": true,
-	}
-
-	return indexableExts[ext]
+	return codeExts[ext] || docExts[ext]
 }
 
 func buildCodeTitle(chunk chunking.CodeChunk) string {

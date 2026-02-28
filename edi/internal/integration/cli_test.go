@@ -13,38 +13,10 @@ import (
 	"github.com/anthropics/aef/edi/internal/testutil"
 )
 
-// getEdiBinary returns the path to the edi binary.
-// It looks for the binary in common locations. The binary should be built
-// before running integration tests (make test-integration handles this).
+// getEdiBinary returns the path to the edi binary via shared helper.
 func getEdiBinary(t *testing.T) string {
 	t.Helper()
-
-	// Get the current working directory to construct absolute paths
-	cwd, _ := os.Getwd()
-
-	// Look for binary relative to test file location
-	// Tests are in internal/integration/, binary is in bin/
-	binPaths := []string{
-		filepath.Join(cwd, "..", "..", "bin", "edi"),
-		filepath.Join(cwd, "bin", "edi"),
-		// Also check PATH
-		"edi",
-	}
-
-	for _, binPath := range binPaths {
-		absPath, _ := filepath.Abs(binPath)
-		if _, err := os.Stat(absPath); err == nil {
-			return absPath
-		}
-	}
-
-	// Try to find via PATH
-	if path, err := exec.LookPath("edi"); err == nil {
-		return path
-	}
-
-	t.Fatal("edi binary not found. Run 'make build' first or ensure edi is in PATH")
-	return ""
+	return testutil.GetEdiBinary(t)
 }
 
 func TestEDIInitProject(t *testing.T) {
@@ -242,7 +214,9 @@ func TestRecallServerStartup(t *testing.T) {
 	env := testutil.SetupTestEnv(t)
 
 	dbPath := filepath.Join(env.ProjectEDI, "recall", "test.db")
-	os.MkdirAll(filepath.Dir(dbPath), 0755)
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+		t.Fatalf("Failed to create database directory: %v", err)
+	}
 
 	ediBinary := getEdiBinary(t)
 
@@ -354,7 +328,9 @@ func TestRecallServerSessionIDRequired(t *testing.T) {
 	env := testutil.SetupTestEnv(t)
 
 	dbPath := filepath.Join(env.ProjectEDI, "recall", "test.db")
-	os.MkdirAll(filepath.Dir(dbPath), 0755)
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+		t.Fatalf("Failed to create database directory: %v", err)
+	}
 
 	ediBinary := getEdiBinary(t)
 

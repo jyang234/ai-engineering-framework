@@ -9,6 +9,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/anthropics/aef/edi/pkg/types"
 )
 
 // MCPTestClient wraps stdin/stdout communication with an MCP server.
@@ -22,7 +24,7 @@ type MCPTestClient struct {
 	timeout time.Duration
 }
 
-// MCPRequest represents a JSON-RPC 2.0 request
+// MCPRequest represents a JSON-RPC 2.0 request (client-side: Params is interface{})
 type MCPRequest struct {
 	JSONRPC string      `json:"jsonrpc"`
 	ID      interface{} `json:"id,omitempty"`
@@ -30,54 +32,18 @@ type MCPRequest struct {
 	Params  interface{} `json:"params,omitempty"`
 }
 
-// MCPResponse represents a JSON-RPC 2.0 response
+// MCPResponse represents a JSON-RPC 2.0 response (client-side: Result is json.RawMessage)
 type MCPResponse struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      interface{}     `json:"id"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *MCPError       `json:"error,omitempty"`
-}
-
-// MCPError represents a JSON-RPC 2.0 error
-type MCPError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-}
-
-// Tool represents an MCP tool definition
-type Tool struct {
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	InputSchema interface{} `json:"inputSchema"`
-}
-
-// ListToolsResult represents the result of tools/list
-type ListToolsResult struct {
-	Tools []Tool `json:"tools"`
-}
-
-// CallToolResult represents the result of tools/call
-type CallToolResult struct {
-	Content []ToolContent `json:"content"`
-	IsError bool          `json:"isError,omitempty"`
-}
-
-// ToolContent represents content returned from a tool call
-type ToolContent struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+	JSONRPC string           `json:"jsonrpc"`
+	ID      interface{}      `json:"id"`
+	Result  json.RawMessage  `json:"result,omitempty"`
+	Error   *types.MCPError  `json:"error,omitempty"`
 }
 
 // InitializeResult represents the result of initialize
 type InitializeResult struct {
-	ProtocolVersion string     `json:"protocolVersion"`
-	ServerInfo      ServerInfo `json:"serverInfo"`
-}
-
-// ServerInfo represents MCP server information
-type ServerInfo struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
+	ProtocolVersion string           `json:"protocolVersion"`
+	ServerInfo      types.ServerInfo `json:"serverInfo"`
 }
 
 // NewMCPTestClient creates a new MCP test client that spawns the given server binary.
@@ -157,7 +123,7 @@ func (c *MCPTestClient) Initialize() (*InitializeResult, error) {
 }
 
 // ListTools retrieves the list of available tools from the server.
-func (c *MCPTestClient) ListTools() ([]Tool, error) {
+func (c *MCPTestClient) ListTools() ([]types.Tool, error) {
 	resp, err := c.sendRequest("tools/list", nil)
 	if err != nil {
 		return nil, err
@@ -167,7 +133,7 @@ func (c *MCPTestClient) ListTools() ([]Tool, error) {
 		return nil, fmt.Errorf("tools/list error: %s (code: %d)", resp.Error.Message, resp.Error.Code)
 	}
 
-	var result ListToolsResult
+	var result types.ListToolsResult
 	if err := json.Unmarshal(resp.Result, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse tools/list result: %w", err)
 	}
@@ -176,7 +142,7 @@ func (c *MCPTestClient) ListTools() ([]Tool, error) {
 }
 
 // CallTool calls a tool with the given arguments and returns the result.
-func (c *MCPTestClient) CallTool(name string, args map[string]interface{}) (*CallToolResult, error) {
+func (c *MCPTestClient) CallTool(name string, args map[string]interface{}) (*types.CallToolResult, error) {
 	params := map[string]interface{}{
 		"name":      name,
 		"arguments": args,
@@ -191,7 +157,7 @@ func (c *MCPTestClient) CallTool(name string, args map[string]interface{}) (*Cal
 		return nil, fmt.Errorf("tools/call error: %s (code: %d)", resp.Error.Message, resp.Error.Code)
 	}
 
-	var result CallToolResult
+	var result types.CallToolResult
 	if err := json.Unmarshal(resp.Result, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse tools/call result: %w", err)
 	}

@@ -92,7 +92,7 @@ func ChunkMarkdown(content string, maxChunkSize int) []MarkdownSection {
 		} else {
 			// Split large sections by paragraphs
 			chunks := splitByParagraphs(section.Content, maxChunkSize)
-			for i, chunk := range chunks {
+			for _, chunk := range chunks {
 				result = append(result, MarkdownSection{
 					Title:     section.Title,
 					Content:   chunk,
@@ -100,7 +100,6 @@ func ChunkMarkdown(content string, maxChunkSize int) []MarkdownSection {
 					StartLine: section.StartLine, // Approximate
 					EndLine:   section.EndLine,
 				})
-				_ = i // suppress unused warning
 			}
 		}
 	}

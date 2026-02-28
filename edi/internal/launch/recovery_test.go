@@ -66,8 +66,12 @@ func TestDetectStaleSession(t *testing.T) {
 
 		// Create history dir with unrelated file
 		historyDir := filepath.Join(tmpDir, ".edi", "history")
-		os.MkdirAll(historyDir, 0755)
-		os.WriteFile(filepath.Join(historyDir, "2026-01-29-ffffffff.md"), []byte("---\n---\n"), 0644)
+		if err := os.MkdirAll(historyDir, 0755); err != nil {
+			t.Fatalf("Failed to create history directory: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(historyDir, "2026-01-29-ffffffff.md"), []byte("---\n---\n"), 0644); err != nil {
+			t.Fatalf("Failed to write test file: %v", err)
+		}
 
 		stale, err := DetectStaleSession(tmpDir)
 		if err != nil {
@@ -88,8 +92,12 @@ func TestDetectStaleSession(t *testing.T) {
 
 		// Create matching history file
 		historyDir := filepath.Join(tmpDir, ".edi", "history")
-		os.MkdirAll(historyDir, 0755)
-		os.WriteFile(filepath.Join(historyDir, "2026-01-29-abcdef12.md"), []byte("---\n---\n"), 0644)
+		if err := os.MkdirAll(historyDir, 0755); err != nil {
+			t.Fatalf("Failed to create history directory: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(historyDir, "2026-01-29-abcdef12.md"), []byte("---\n---\n"), 0644); err != nil {
+			t.Fatalf("Failed to write test file: %v", err)
+		}
 
 		stale, err := DetectStaleSession(tmpDir)
 		if err != nil {

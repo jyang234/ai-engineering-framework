@@ -4,11 +4,13 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"time"
 
+	"github.com/anthropics/aef/edi/pkg/types"
 	"github.com/google/uuid"
 )
 
@@ -26,7 +28,8 @@ func NewServer(storage *Storage, sessionID string) *Server {
 	}
 }
 
-// MCP Protocol Types
+// MCP Protocol Types — shared types are in pkg/types/mcp.go
+
 type MCPRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      interface{}     `json:"id"`
@@ -35,30 +38,16 @@ type MCPRequest struct {
 }
 
 type MCPResponse struct {
-	JSONRPC string      `json:"jsonrpc"`
-	ID      interface{} `json:"id"`
-	Result  interface{} `json:"result,omitempty"`
-	Error   *MCPError   `json:"error,omitempty"`
-}
-
-type MCPError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-}
-
-type InitializeParams struct {
-	ProtocolVersion string `json:"protocolVersion"`
+	JSONRPC string           `json:"jsonrpc"`
+	ID      interface{}      `json:"id"`
+	Result  interface{}      `json:"result,omitempty"`
+	Error   *types.MCPError  `json:"error,omitempty"`
 }
 
 type InitializeResult struct {
 	ProtocolVersion string             `json:"protocolVersion"`
-	ServerInfo      ServerInfo         `json:"serverInfo"`
+	ServerInfo      types.ServerInfo   `json:"serverInfo"`
 	Capabilities    ServerCapabilities `json:"capabilities"`
-}
-
-type ServerInfo struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
 }
 
 type ServerCapabilities struct {
@@ -69,29 +58,9 @@ type ToolsCapability struct {
 	ListChanged bool `json:"listChanged,omitempty"`
 }
 
-type ListToolsResult struct {
-	Tools []Tool `json:"tools"`
-}
-
-type Tool struct {
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	InputSchema interface{} `json:"inputSchema"`
-}
-
 type CallToolParams struct {
 	Name      string                 `json:"name"`
 	Arguments map[string]interface{} `json:"arguments"`
-}
-
-type CallToolResult struct {
-	Content []ToolContent `json:"content"`
-	IsError bool          `json:"isError,omitempty"`
-}
-
-type ToolContent struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
 }
 
 // Run starts the MCP server on stdio
@@ -109,7 +78,7 @@ func (s *Server) Run(ctx context.Context) error {
 		// Read line (JSON-RPC message)
 		line, err := reader.ReadBytes('\n')
 		if err != nil {
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				return nil
 			}
 			return err
@@ -144,7 +113,7 @@ func (s *Server) handleRequest(req *MCPRequest) *MCPResponse {
 		return &MCPResponse{
 			JSONRPC: "2.0",
 			ID:      req.ID,
-			Error:   &MCPError{Code: -32601, Message: "Method not found"},
+			Error:   &types.MCPError{Code: -32601, Message: "Method not found"},
 		}
 	}
 }
@@ -155,7 +124,7 @@ func (s *Server) handleInitialize(req *MCPRequest) *MCPResponse {
 		ID:      req.ID,
 		Result: InitializeResult{
 			ProtocolVersion: "2024-11-05",
-			ServerInfo: ServerInfo{
+			ServerInfo: types.ServerInfo{
 				Name:    "recall",
 				Version: "1.0.0",
 			},
@@ -167,7 +136,7 @@ func (s *Server) handleInitialize(req *MCPRequest) *MCPResponse {
 }
 
 func (s *Server) handleListTools(req *MCPRequest) *MCPResponse {
-	tools := []Tool{
+	tools := []types.Tool{
 		{
 			Name:        "recall_search",
 			Description: "Search organizational knowledge for patterns, failures, and decisions",
@@ -293,7 +262,7 @@ func (s *Server) handleListTools(req *MCPRequest) *MCPResponse {
 	return &MCPResponse{
 		JSONRPC: "2.0",
 		ID:      req.ID,
-		Result:  ListToolsResult{Tools: tools},
+		Result:  types.ListToolsResult{Tools: tools},
 	}
 }
 
@@ -303,7 +272,7 @@ func (s *Server) handleCallTool(req *MCPRequest) *MCPResponse {
 		return &MCPResponse{
 			JSONRPC: "2.0",
 			ID:      req.ID,
-			Error:   &MCPError{Code: -32602, Message: "Invalid params"},
+			Error:   &types.MCPError{Code: -32602, Message: "Invalid params"},
 		}
 	}
 
@@ -325,7 +294,7 @@ func (s *Server) handleCallTool(req *MCPRequest) *MCPResponse {
 		return &MCPResponse{
 			JSONRPC: "2.0",
 			ID:      req.ID,
-			Error:   &MCPError{Code: -32601, Message: "Unknown tool"},
+			Error:   &types.MCPError{Code: -32601, Message: "Unknown tool"},
 		}
 	}
 
@@ -333,8 +302,8 @@ func (s *Server) handleCallTool(req *MCPRequest) *MCPResponse {
 		return &MCPResponse{
 			JSONRPC: "2.0",
 			ID:      req.ID,
-			Result: CallToolResult{
-				Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error: %v", err)}},
+			Result: types.CallToolResult{
+				Content: []types.ToolContent{{Type: "text", Text: fmt.Sprintf("error: %v", err)}},
 				IsError: true,
 			},
 		}
@@ -345,8 +314,8 @@ func (s *Server) handleCallTool(req *MCPRequest) *MCPResponse {
 		return &MCPResponse{
 			JSONRPC: "2.0",
 			ID:      req.ID,
-			Result: CallToolResult{
-				Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Error marshaling result: %v", err)}},
+			Result: types.CallToolResult{
+				Content: []types.ToolContent{{Type: "text", Text: fmt.Sprintf("error marshaling result: %v", err)}},
 				IsError: true,
 			},
 		}
@@ -354,8 +323,8 @@ func (s *Server) handleCallTool(req *MCPRequest) *MCPResponse {
 	return &MCPResponse{
 		JSONRPC: "2.0",
 		ID:      req.ID,
-		Result: CallToolResult{
-			Content: []ToolContent{{Type: "text", Text: string(resultJSON)}},
+		Result: types.CallToolResult{
+			Content: []types.ToolContent{{Type: "text", Text: string(resultJSON)}},
 		},
 	}
 }
@@ -458,8 +427,8 @@ func (s *Server) handleAdd(args map[string]interface{}) (interface{}, error) {
 
 func (s *Server) handleFeedback(args map[string]interface{}) (interface{}, error) {
 	itemID, _ := args["item_id"].(string)
-	usefulVal, usefulOK := args["useful"].(bool)
-	ctx, _ := args["context"].(string)
+	useful, usefulOK := args["useful"].(bool)
+	feedbackCtx, _ := args["context"].(string)
 
 	if itemID == "" {
 		return nil, fmt.Errorf("item_id is required")
@@ -467,9 +436,8 @@ func (s *Server) handleFeedback(args map[string]interface{}) (interface{}, error
 	if !usefulOK {
 		return nil, fmt.Errorf("useful is required and must be a boolean")
 	}
-	useful := usefulVal
 
-	if err := s.storage.RecordFeedback(itemID, s.sessionID, useful, ctx); err != nil {
+	if err := s.storage.RecordFeedback(itemID, s.sessionID, useful, feedbackCtx); err != nil {
 		return nil, err
 	}
 
@@ -519,7 +487,7 @@ func (s *Server) sendError(w io.Writer, id interface{}, code int, message string
 	resp := &MCPResponse{
 		JSONRPC: "2.0",
 		ID:      id,
-		Error:   &MCPError{Code: code, Message: message},
+		Error:   &types.MCPError{Code: code, Message: message},
 	}
 	return s.sendResponse(w, resp)
 }
