@@ -569,6 +569,32 @@ This is not a failure of the webhook hooks feature — it's a reflection that AE
 
 Resist the temptation to build a sophisticated policy engine. The 14-policy config with phased rollout looks impressive in a design doc, but most of those policies either duplicate existing tooling or attempt to algorithmically enforce what is fundamentally a judgment call.
 
+## Webhook Hooks for RECALL: Not the Right Layer
+
+An attractive idea is using webhook hooks to improve RECALL retrieval quality — observing search results, tracking what Claude does with them, and feeding signals back. After analysis, this doesn't hold up.
+
+**RECALL's actual quality problems are internal to the search engine:**
+- The `feedback` table captures user signals but the search engine never reads them when ranking
+- Flight recorder `retrieval_judgment` entries log kept/dropped decisions but nothing feeds this back to scoring
+- RRF produces narrow score distributions that the retrieval-judge skill itself calls unreliable
+- Reranking is optional, untested, and likely not running in most deployments
+
+**Why webhooks can't fix these:** Webhooks observe tool calls from the outside. They can see that `recall_search` was called and what it returned, but they can't change how the engine ranks results. The signal that RECALL needs (feedback → better ranking) must flow inside the search engine, not through an external HTTP observer.
+
+**The plausible webhook ideas and why they're not worth it:**
+- *Implicit relevance* (correlate retrieved items with subsequent file edits): Fragile inference, requires cross-event state tracking, uncertain signal quality
+- *Query quality monitoring* (warn on vague queries): The retrieval-judge skill already does this via prompting
+- *Auto-capture failures*: Bypasses AEF's "prompted capture" philosophy and would pollute the knowledge base with unvetted items
+- *Usage counting*: Belongs inside the MCP server as a one-line counter, not in a webhook sidecar
+
+**What would actually improve RECALL:**
+1. Make the search engine read the `feedback` table and adjust ranking scores
+2. Convert flight recorder `retrieval_judgment` entries into feedback signals automatically
+3. Ship and enable reranking models by default
+4. Add test coverage for chunking, embeddings, and MCP protocol
+
+These are codex-internal improvements, not webhook problems.
+
 ## Open Questions
 
 1. **Process lifecycle**: Since EDI uses `syscall.Exec`, the sidecar must be a separate process. EDI starts it in the background before exec'ing Claude Code. What's the cleanest way to ensure it shuts down when the Claude Code session ends? PID file + signal? Automatic exit on stdin close?
