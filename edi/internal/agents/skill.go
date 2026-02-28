@@ -82,10 +82,10 @@ func parseSkillFile(content []byte) (*Skill, string, error) {
 	var body strings.Builder
 	for {
 		line, err := reader.ReadString('\n')
+		body.WriteString(line)
 		if err != nil {
 			break
 		}
-		body.WriteString(line)
 	}
 
 	return &skill, strings.TrimSpace(body.String()), nil
