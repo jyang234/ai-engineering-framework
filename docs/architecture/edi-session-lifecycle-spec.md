@@ -1,6 +1,6 @@
 # EDI Session Lifecycle Specification
 
-> **Implementation Status (January 31, 2026):** Core concepts implemented (briefing, history, tasks, /end). Missing: dedicated recorder package (handled in recall server), JSONL flight recorder files, retention/cleanup, friction budgets, RECALL auto-query at launch.
+> **Implementation Status (February 28, 2026):** Core concepts implemented: briefing generation, history read/write, task management with annotations, /end workflow, stale session recovery. Flight recorder implemented via MCP server (flight_recorder_log tool) and flightlog package. Still missing: JSONL flight recorder files, retention/cleanup, friction budgets, RECALL auto-query at launch.
 
 **Status**: Draft
 **Created**: January 25, 2026

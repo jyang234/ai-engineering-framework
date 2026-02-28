@@ -1,6 +1,6 @@
 # EDI Agent System Specification
 
-> **Implementation Status (January 31, 2026):** 4 agents and slash command switching implemented. Missing: YAML frontmatter parsing, project/global override resolution, per-agent RecallConfig/ModelConfig/ContextConfig.
+> **Implementation Status (February 28, 2026):** 4 agents implemented with slash command switching. Agent loading via embedded assets with YAML frontmatter parsing. 8 skills loaded per agent configuration. 7 subagents available. Still missing: project/global override resolution, per-agent RecallConfig/ModelConfig/ContextConfig.
 
 **Status**: Draft
 **Created**: January 25, 2026

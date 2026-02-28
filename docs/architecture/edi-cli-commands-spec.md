@@ -1,6 +1,6 @@
 # EDI CLI & Commands Specification
 
-> **Implementation Status (January 31, 2026):** Core launch mechanism (syscall.Exec, --append-system-prompt-file) matches. Command tree evolved: added doctor, sync; actual Claude flags differ from spec (no --mcp-server, --skills-path, --allowedTools flags). Ralph noted as future.
+> **Implementation Status (February 28, 2026):** Core launch mechanism implemented (syscall.Exec, --append-system-prompt-file). Command tree includes: init, sync, config, recall, history, agent, doctor, flight-log, ralph, version. Ralph is fully implemented. Claude Code flags differ from original spec (no --mcp-server, --skills-path, --allowedTools). MCP config managed via .mcp.json file instead. Installation section (Homebrew, download script) not implemented — install from source only.
 
 **Status**: Draft
 **Created**: January 25, 2026
@@ -144,6 +144,7 @@ func main() {
 edi                           # Start session (default command)
 ├── init                      # Initialize EDI
 │   ├── --global              # Initialize global ~/.edi/
+│   ├── --backend             # Backend selection (v0 or codex)
 │   └── --force               # Overwrite existing
 ├── sync                      # Sync assets to install locations
 ├── config                    # Configuration management
@@ -154,7 +155,6 @@ edi                           # Start session (default command)
 │   └── set <key> <value>     # Set config value
 ├── recall                    # RECALL utilities
 │   ├── search <query>        # Search knowledge base
-│   ├── index <path>          # Index files
 │   ├── status                # Show RECALL status
 │   └── server                # Server management
 │       ├── start             # Start MCP server
@@ -162,14 +162,16 @@ edi                           # Start session (default command)
 │       └── status            # Check server status
 ├── history                   # History utilities
 │   ├── list                  # List recent sessions
-│   ├── show <id>             # Show session details
-│   └── cleanup               # Apply retention policy
+│   └── show <id>             # Show session details
 ├── agent                     # Agent utilities
 │   ├── list                  # List available agents
-│   ├── show <name>           # Show agent details
-│   └── validate <file>       # Validate agent file
-├── ralph                     # (future) Run Ralph loop from EDI
-│   └── Currently standalone via ~/.edi/ralph/ralph.sh
+│   └── show <name>           # Show agent details
+├── doctor                    # Check installation health
+├── flight-log                # Inspect flight recorder logs
+├── ralph                     # Run Ralph autonomous loop
+│   ├── init                  # Scaffold PRD template
+│   ├── --prd <path>          # Custom PRD path
+│   └── --max-iterations <n>  # Max loop iterations
 └── version                   # Show version info
 ```
 
@@ -1059,13 +1061,15 @@ edi/
 | `edi init` | Initialize project |
 | `edi init --global` | Initialize global EDI |
 | `edi sync` | Sync assets to ~/.edi and ~/.claude |
+| `edi doctor` | Check installation health |
 | `edi config show` | Show configuration |
 | `edi config edit` | Edit configuration |
 | `edi recall search` | Search RECALL |
-| `edi recall index` | Index files |
 | `edi history list` | List sessions |
 | `edi agent list` | List agents |
-| `edi ralph` | (future) Run Ralph loop — currently standalone via `~/.edi/ralph/ralph.sh` |
+| `edi ralph` | Run Ralph autonomous loop |
+| `edi flight-log` | Inspect flight recorder logs |
+| `edi version` | Show version info |
 
 ### Slash Commands (in Claude Code)
 
@@ -1075,7 +1079,11 @@ edi/
 | `/build` | Switch to coder agent |
 | `/review` | Switch to reviewer agent |
 | `/incident` | Switch to incident agent |
+| `/task` | Manage tasks with RECALL context |
+| `/review-plan` | Review plan for regression risk |
+| `/ralph` | Guided PRD authoring |
 | `/end` | End session |
+| `/end-recovery` | Recover from unclean exit |
 
 ---
 
@@ -1083,9 +1091,10 @@ edi/
 
 | Variable | Purpose | Required |
 |----------|---------|----------|
-| `VOYAGE_API_KEY` | Voyage AI embeddings | Yes |
-| `OPENAI_API_KEY` | OpenAI embeddings | Yes |
-| `ANTHROPIC_API_KEY` | Stage 3 reranking | No |
+| `LOCAL_EMBEDDING_URL` | Ollama API base URL (default: http://localhost:11434) | No |
+| `LOCAL_EMBEDDING_MODEL` | Embedding model name (default: nomic-embed-text) | No |
+| `CODEX_METADATA_DB` | SQLite database path (default: ~/.edi/codex.db) | No |
+| `CODEX_API_KEY` | Bearer token auth for web UI and MCP | No |
 | `EDI_HOME` | Override ~/.edi | No |
 | `EDI_CONFIG` | Override config path | No |
 | `EDI_DEBUG` | Enable debug logging | No |

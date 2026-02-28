@@ -1,6 +1,6 @@
 # EDI Specification Index
 
-> **Implementation Status (January 31, 2026):** Index structure useful but content stale. References Qdrant, Voyage Code-3, VERIFY — none implemented. VOYAGE_API_KEY and OPENAI_API_KEY no longer required.
+> **Implementation Status (February 28, 2026):** EDI v0 and Codex v1 are implemented. Storage uses SQLite (FTS5 + vector BLOBs), not Qdrant. Embeddings use local Ollama (nomic-embed-text), not Voyage/OpenAI. VERIFY is not implemented. No API keys required for core features. Updated env vars, storage, and command references to match implementation.
 
 **Status**: Complete
 **Created**: January 25, 2026
@@ -108,7 +108,8 @@ $ edi → Configure → Launch claude → EDI exits → Claude Code runs nativel
 │ • search()    │           │ • /plan       │           │ • history/    │
 │ • get()       │           │ • /build      │           │ • profile.md  │
 │ • add()       │           │ • /review     │           │ • config.yaml │
-│ • context()   │           │ • /end        │           │ • agents/     │
+│ • feedback()  │           │ • /incident   │           │ • tasks/      │
+│ • flight_log()│           │ • /end        │           │               │
 └───────────────┘           └───────────────┘           └───────────────┘
 ```
 
@@ -126,24 +127,16 @@ $ edi → Configure → Launch claude → EDI exits → Claude Code runs nativel
 │   └── incident.md
 ├── skills/                          # Shared skill library
 ├── commands/                        # Slash command definitions
-├── recall/                          # RECALL MCP server data
-│   ├── config.yaml
-│   ├── global.db                    # SQLite + embeddings
-│   └── qdrant/                      # Vector store
-├── projects.yaml                    # Project registry
-├── bin/                             # EDI binaries
-└── cache/                           # ONNX models, embeddings
+├── bin/                             # EDI binaries (edi, recall-mcp, task-sync-hook)
+└── cache/                           # Embeddings cache
 
 ~/project/.edi/                      # Project-specific
 ├── config.yaml                      # Project configuration (overrides global)
 ├── profile.md                       # Project context document
-├── agents/                          # Project agent overrides (optional)
-├── skills/                          # Project-specific skills (optional)
 ├── history/                         # Session summaries
 │   └── 2026-01-24-abc123.md
-└── recall/                          # Project knowledge
-    ├── project.db
-    └── qdrant/
+└── tasks/                           # Active task manifests
+    └── active.yaml
 ```
 
 ---
@@ -212,16 +205,15 @@ $ edi → Configure → Launch claude → EDI exits → Claude Code runs nativel
 |---------|-------------|
 | `edi` | Configure and launch Claude Code with briefing |
 | `edi --agent architect` | Launch with specific agent context |
-| `edi --continue` | Launch and continue most recent session |
-| `edi --resume <id>` | Launch and resume specific session |
 | `edi init` | Initialize project workspace |
 | `edi init --global` | Initialize global ~/.edi/ |
+| `edi sync` | Sync assets to ~/.edi and ~/.claude |
+| `edi doctor` | Check installation health |
 | `edi config show` | Show merged configuration |
-| `edi config edit` | Edit configuration |
 | `edi recall search <query>` | Search RECALL knowledge (standalone) |
-| `edi recall index <path>` | Index files to RECALL |
 | `edi history list` | List recent sessions |
 | `edi agent list` | List available agents |
+| `edi ralph` | Run Ralph autonomous loop |
 
 ### Slash Commands (in Claude Code)
 
@@ -233,7 +225,11 @@ These are `.claude/commands/*.md` files installed by `edi init`:
 | `/build` | coder | Switch to implementation focus |
 | `/review` | reviewer | Switch to review/security focus |
 | `/incident` | incident | Switch to debugging/incident focus |
+| `/task` | — | Manage tasks with RECALL context |
+| `/review-plan` | reviewer | Review a plan for regression risk and complexity |
+| `/ralph` | — | Guided PRD authoring for Ralph execution |
 | `/end` | — | End session with summary and capture workflow |
+| `/end-recovery` | — | Recover session summary from unclean exit |
 
 ---
 
@@ -559,9 +555,9 @@ recall:
 | **Language** | Go | Single binary, fast startup, matches RECALL |
 | **Config** | YAML + Viper | Human-readable, standard Go library |
 | **Agents** | Markdown + YAML frontmatter | Human-readable, version-controllable |
-| **Storage** | SQLite + Qdrant | Local-first, no external dependencies |
-| **Embeddings** | Voyage Code-3 | Best for code, reasonable cost |
-| **Reranking** | Self-hosted BGE | Minimize vendor dependencies |
+| **Storage** | SQLite (FTS5 + vector BLOBs) | Local-first, single-file, no external dependencies |
+| **Embeddings** | nomic-embed-text (local Ollama) | Privacy, offline-capable, zero API cost |
+| **Reranking** | Stubbed (planned: BGE ONNX) | Not yet functional |
 | **CLI** | Cobra | Standard Go CLI framework |
 | **Integrations** | MCP servers | Consistent interface, Claude-native |
 
@@ -571,9 +567,10 @@ recall:
 
 | Variable | Purpose | Required |
 |----------|---------|----------|
-| `VOYAGE_API_KEY` | Voyage AI embeddings | Yes |
-| `OPENAI_API_KEY` | OpenAI embeddings (fallback) | Yes |
-| `ANTHROPIC_API_KEY` | Stage 3 reranking | No |
+| `LOCAL_EMBEDDING_URL` | Ollama API base URL (default: http://localhost:11434) | No |
+| `LOCAL_EMBEDDING_MODEL` | Embedding model name (default: nomic-embed-text) | No |
+| `CODEX_METADATA_DB` | SQLite database path (default: ~/.edi/codex.db) | No |
+| `CODEX_API_KEY` | Bearer token auth for web UI and MCP | No |
 | `EDI_HOME` | Override ~/.edi | No |
 | `EDI_CONFIG` | Override config path | No |
 | `EDI_DEBUG` | Enable debug logging | No |

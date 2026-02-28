@@ -86,7 +86,7 @@ edi sync
 ```
   Synced agents
   Synced commands
-  Synced skills (7)
+  Synced skills (8)
   Synced subagents
 
 Assets synced successfully.
@@ -94,13 +94,14 @@ Assets synced successfully.
 
 ## Skills
 
-Skills are detailed guidance documents loaded into the system prompt based on each agent's `skills` list. EDI ships with 7 skills, all installed to `~/.claude/skills/` by `edi init --global` or `edi sync`.
+Skills are detailed guidance documents loaded into the system prompt based on each agent's `skills` list. EDI ships with 8 skills, all installed to `~/.claude/skills/` by `edi init --global` or `edi sync`.
 
 | Skill | Agents | What it does |
 |-------|--------|-------------|
 | `edi-core` | All | Core EDI behaviors, persona, RECALL integration, task workflows |
 | `retrieval-judge` | All | Evaluates RECALL search results for relevance before presenting |
 | `coding` | Coder | Coding standards — error handling, naming, function design |
+| `golang-idioms` | Coder | Idiomatic Go patterns from Effective Go |
 | `testing` | Coder, Test Writer | Testing standards — table-driven tests, coverage, anti-patterns |
 | `scaffolding-tests` | Coder, Test Writer | Golden master / characterization tests for safe refactoring |
 | `refactoring-planning` | Architect | Structured methodology for planning and executing refactoring |
@@ -178,6 +179,17 @@ Observed: OrderService could use refactoring
 Correct action:  Fix the bug only. Note refactoring opportunity separately.
 Incorrect action: Refactor while fixing bug.
 ```
+
+### Golang Idioms
+
+Loaded by the coder agent. Provides idiomatic Go patterns from Effective Go — zero values, interfaces, error handling, concurrency, and naming.
+
+**Key patterns:**
+- Design structs so zero values are valid and usable
+- Accept interfaces, return concrete types
+- Use `io.Reader`/`io.Writer` for composable I/O
+- Prefer channels for coordination, mutexes for state protection
+- Use `context.Context` as the first parameter for cancellation and timeouts
 
 ### Testing
 
@@ -454,6 +466,7 @@ Common issues and their causes:
 | `/review-plan` | Review a plan for regression risk and complexity |
 | `/ralph` | Guided PRD authoring for Ralph execution |
 | `/end` | End session and save history |
+| `/end-recovery` | Recover session summary from unclean exit |
 
 ## Configuration
 
