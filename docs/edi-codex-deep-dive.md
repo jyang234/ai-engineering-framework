@@ -727,12 +727,11 @@ EDI works in three modes:
 | `reranking` | `internal/reranking/` | Reranker stub (not functional) |
 | `mcp` | `internal/mcp/` | JSON-RPC stdio MCP server, 5 tools |
 | `web` | `internal/web/` | Gin HTTP server, web UI + REST API |
-| `eval` | `eval/` | Evaluation framework: harness, runners (pipe + agent), scorer, stats, LLM judge, metrics, reports, results DB, conditions, PayFlow test data |
+| `eval` | `eval/` | Level 1 component evaluation: retrieval quality, LLM judge, MCP round-trip, IR metrics, PayFlow test data |
 | `codex-cli` | `cmd/codex-cli/` | Admin CLI |
 | `recall-mcp` | `cmd/recall-mcp/` | MCP server entry point |
 | `codex-web` | `cmd/codex-web/` | Web server entry point |
 | `codex-testgen` | `cmd/codex-testgen/` | Test data generation server |
-| `aef-eval` | `cmd/aef-eval/` | Evaluation CLI: run, score, report, list |
 
 ### Key Design Decisions
 
@@ -1612,7 +1611,7 @@ cd codex
 CGO_ENABLED=1 go build ./cmd/codex-cli
 CGO_ENABLED=1 go build ./cmd/recall-mcp
 CGO_ENABLED=1 go build ./cmd/codex-web
-CGO_ENABLED=1 go build -tags fts5 ./cmd/aef-eval
+CGO_ENABLED=1 go build ./cmd/codex-testgen
 ```
 
 ### Common Tasks
@@ -1651,21 +1650,10 @@ CODEX_API_KEY=my-secret-key codex-web
 codex-cli migrate --v0-db ~/.recall/recall.db
 ```
 
-**Run retrieval quality evaluation (requires Ollama):**
+**Run evaluation (requires Ollama):**
 ```bash
-cd codex && go test -tags fts5 -run TestEvalHarness ./eval/
-```
-
-**Run a controlled experiment:**
-```bash
-# Baseline (no AEF features)
-aef-eval run --experiment 3A --condition baseline --task-dir ./tasks --strategy pipe
-
-# AEF-full (all skills + RECALL)
-aef-eval run --experiment 3A --condition aef-full --task-dir ./tasks --skill-dir ~/.claude/skills/ --strategy agent
-
-# Generate comparison report
-aef-eval report --experiment 3A --format text
+cd codex && make test-eval     # Retrieval quality (TestE2E)
+cd codex && make test-judge    # Full suite including LLM judge
 ```
 
 ### Backup
