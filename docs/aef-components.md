@@ -53,7 +53,7 @@
 - MCP server auto-configuration based on backend
 - 4 core agents (coder, architect, reviewer, incident)
 - 7 subagents for specialized tasks
-- 6 slash commands (/plan, /build, /review, /incident, /task, /end)
+- 9 slash commands (/plan, /build, /review, /incident, /task, /end, /ralph, /review-plan, /end-recovery)
 - Session briefings with history integration
 
 **Configuration:**

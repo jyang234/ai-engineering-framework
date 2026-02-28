@@ -88,13 +88,14 @@ See [AEF Install Model](docs/architecture/aef-install-model.md) for details.
 
 ## Skills
 
-EDI ships with 7 skills that provide specialized guidance to agents:
+EDI ships with 8 skills that provide specialized guidance to agents:
 
 | Skill | Used By | Purpose |
 |-------|---------|---------|
 | **edi-core** | All agents | Core EDI behaviors, persona, RECALL integration, task workflows |
 | **retrieval-judge** | All agents | Evaluate and filter RECALL search results for relevance |
 | **coding** | Coder | Coding standards — error handling, naming, function design |
+| **golang-idioms** | Coder | Idiomatic Go patterns from Effective Go |
 | **testing** | Coder, Test Writer | Testing standards — table-driven tests, coverage, anti-patterns |
 | **scaffolding-tests** | Coder, Test Writer | Golden master / characterization tests for safe refactoring |
 | **refactoring-planning** | Architect | Structured methodology for planning and executing refactoring |
@@ -215,7 +216,7 @@ See [edi/README.md](edi/README.md#ralph-loop) for usage details and [Ralph Loop 
 
 ## Project Status
 
-**EDI v0**: Complete. CLI harness with 11 commands, 4 agents, 7 skills, 9 slash commands, session briefings, stale session recovery, auto memory integration, and Ralph autonomous loop.
+**EDI v0**: Complete. CLI harness with 4 agents, 8 skills, 9 slash commands, 7 subagents, session briefings, stale session recovery, auto memory integration, and Ralph autonomous loop.
 
 **Codex v1**: Substantially complete. Hybrid search (vector KNN + FTS5 + RRF fusion), MCP server with 5 tools, AST chunking (7 languages via Tree-sitter), markdown chunking, web UI, admin CLI, and v0-to-v1 migration. Reranking and contextual chunking are stubbed — search works without them.
 

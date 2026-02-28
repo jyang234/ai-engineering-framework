@@ -1,6 +1,6 @@
 # RECALL MCP Server Specification
 
-> **Implementation Status (January 31, 2026):** Significantly outdated. Hand-rolled JSON-RPC used (not official MCP SDK). 5 of 8 tools implemented (missing recall_list, recall_context, recall_index). Storage is SQLite FTS5 (not Qdrant). No Voyage/OpenAI embeddings. Codex backend partially catches up with vector search via SQLite BLOBs + local embeddings. See edi-codex-deep-dive.md for current architecture.
+> **Implementation Status (February 28, 2026):** Significantly outdated spec — use `docs/edi-codex-deep-dive.md` for current architecture. Key differences from spec: Hand-rolled JSON-RPC (not official MCP SDK). 5 tools implemented: recall_search, recall_get, recall_add, recall_feedback, flight_recorder_log. Missing from spec: recall_list, recall_context, recall_index. Storage is SQLite FTS5 + vector BLOBs (not Qdrant). Embeddings via local Ollama nomic-embed-text (not Voyage/OpenAI). No API keys required for core features.
 
 **Status**: Draft
 **Created**: January 24, 2026

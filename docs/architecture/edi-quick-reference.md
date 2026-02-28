@@ -1,6 +1,6 @@
 # EDI Quick Reference
 
-> **Implementation Status (January 31, 2026):** Outdated. Shows all phases as 'Not started' — this is wrong. EDI v0 and Codex v1 are complete. Content is stale.
+> **Implementation Status (February 28, 2026):** Updated. EDI v0 and Codex v1 are complete. All specification phases are done.
 
 **Purpose**: Quick context loading for EDI specification sessions.
 **Full Details**: See `edi-specification-plan.md`
@@ -19,12 +19,14 @@
 
 | Component | Purpose | Status |
 |-----------|---------|--------|
-| **RECALL** | MCP server for knowledge retrieval | To spec |
-| **Agents** | Specialized modes (architect, coder, reviewer, incident) | To spec |
-| **History** | Session summaries, decision memory | To spec |
-| **Briefings** | Proactive context loading at session start | To spec |
-| **Capture** | Prompted knowledge preservation at session end | To spec |
-| **CLI** | Launches Claude Code with EDI config | To spec |
+| **RECALL** | MCP server for knowledge retrieval (5 tools) | ✅ Implemented |
+| **Agents** | Specialized modes (architect, coder, reviewer, incident) | ✅ Implemented |
+| **History** | Session summaries, decision memory | ✅ Implemented |
+| **Briefings** | Proactive context loading at session start | ✅ Implemented |
+| **Capture** | Prompted knowledge preservation at session end | ✅ Implemented |
+| **CLI** | Launches Claude Code with EDI config | ✅ Implemented |
+| **Tasks** | Task management with RECALL annotations | ✅ Implemented |
+| **Ralph** | Autonomous batch execution loop | ✅ Implemented |
 
 ---
 
@@ -104,11 +106,18 @@ END   → Summary → Capture prompt → Save history
 | Command | Purpose |
 |---------|---------|
 | `edi` | Start session with briefing |
+| `edi doctor` | Check installation health |
+| `edi sync` | Sync assets to install locations |
+| `edi ralph` | Run Ralph autonomous loop |
 | `/plan` | Architect agent |
 | `/build` | Coder agent |
 | `/review` | Reviewer agent |
 | `/incident` | Incident agent |
+| `/task` | Manage tasks with RECALL context |
+| `/review-plan` | Review plan for regression risk |
+| `/ralph` | Guided PRD authoring |
 | `/end` | End session, capture |
+| `/end-recovery` | Recover from unclean exit |
 
 ---
 
@@ -116,11 +125,11 @@ END   → Summary → Capture prompt → Save history
 
 | Phase | Focus | Status |
 |-------|-------|--------|
-| **1** | Workspace, Config, RECALL MCP | ⬜ Not started |
-| **2** | History, Briefings, Capture | ⬜ Not started |
-| **3** | Agent schema, Core agents | ⬜ Not started |
-| **4** | CLI, Commands | ⬜ Not started |
-| **5** | Multi-project, Integrations | ⬜ Not started |
+| **1** | Workspace, Config, RECALL MCP | ✅ Complete |
+| **2** | History, Briefings, Capture | ✅ Complete |
+| **3** | Agent schema, Core agents | ✅ Complete |
+| **4** | CLI, Commands | ✅ Complete |
+| **5** | Multi-project, Integrations | 📋 Planned |
 
 ---
 
@@ -140,4 +149,5 @@ END   → Summary → Capture prompt → Save history
 |------|---------|
 | `edi-specification-plan.md` | Full planning document |
 | `aef-architecture-specification-v0.5.md` | Parent framework |
-| `codex-architecture-deep-dive.md` | RECALL retrieval design |
+| `../edi-codex-deep-dive.md` | Full system architecture |
+| `../aef-components.md` | Component registry with status |
