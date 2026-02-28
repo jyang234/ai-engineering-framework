@@ -1,7 +1,10 @@
 # AEF Evaluation Framework
 
 > Design date: 2026-02-24
+> Last updated: 2026-02-28
 > Purpose: Definitively evaluate AEF's viability and performance, replacing self-assessed claims with measured evidence
+>
+> **Current status**: Level 1 component evaluation is implemented and runnable (retrieval quality, judge filtering, MCP protocol, audit trail). Level 3 infrastructure (runners, scorers, corpus, CLI) was built and intentionally removed — see "Implementation History" section.
 
 ---
 
@@ -47,7 +50,7 @@ Level 2: Integration       Do RECALL + retrieval-judge + plan-review work togeth
 Level 1: Component         Does RECALL retrieve well? Do hooks fire? Do skills load?
 ```
 
-Level 1 is partially covered by the existing EvalHarness and JudgeHarness. Levels 2-4 are entirely unproven.
+Level 1 is implemented via the EvalHarness and JudgeHarness in `codex/eval/`. Level 2 partial support exists (false filtering rate in `judge_metrics.go`). Levels 3-4 infrastructure was built and intentionally removed — see Implementation History.
 
 ---
 
@@ -55,15 +58,20 @@ Level 1 is partially covered by the existing EvalHarness and JudgeHarness. Level
 
 ### What Exists
 
-The `codex/eval/` directory contains:
+The `codex/eval/` directory contains the Level 1 evaluation infrastructure:
 
-| Component | Harness | Status |
+| File | Purpose | Status |
 |---|---|---|
-| RECALL retrieval quality | EvalHarness (8-phase pipeline) | Implemented; PayFlow benchmarks recorded |
-| LLM judge filtering | JudgeHarness (Claude Sonnet) | Implemented; thresholds defined |
-| MCP protocol correctness | EvalHarness Phase 1-2 | Implemented |
-| Feedback mechanism | EvalHarness Phase 6 | Implemented |
-| Flight recorder logging | EvalHarness Phase 7-8 | Implemented |
+| `harness.go` | 8-phase pipeline: MCP protocol check, indexing, retrieval eval, feedback, flight recorder, audit trail | Implemented |
+| `judge.go` | LLM-as-judge via Anthropic Messages API (Claude Sonnet); `AnthropicClient` with retry + exponential backoff | Implemented |
+| `metrics.go` | Recall@K, Precision@K, nDCG@10, MRR | Implemented |
+| `judge_metrics.go` | Per-query judge precision, recall, F1, filtering rate, false filtering rate, per-category aggregation | Implemented |
+| `report.go` | Text + JSON output of eval results (`EvalSummary`, `FullEvalReport`) | Implemented |
+| `mcpclient.go` | JSON-RPC client for RECALL MCP server via io.Pipe (in-process, no subprocess) | Implemented |
+| `testdata_payflow.go` | PayFlow domain corpus: 30 docs, 20 ground-truth queries across 3 categories | Implemented |
+| `testdata.go` | Test collection types (`TestDoc`, `TestQuery`, `TestCollection`) | Implemented |
+| `roundtrip_test.go` | End-to-end MCP add→search roundtrip via JSON-RPC, proves the core value loop | Implemented |
+| `groundtruth.go` | Ground truth annotation types for eval queries | Implemented |
 
 **Existing benchmark results** (from `codex/eval/benchmarks_local_nomic.txt`):
 - Recall@5: 0.829–0.830
@@ -159,7 +167,7 @@ The `codex/eval/` directory contains:
 - False filtering rate ≤ 15% (the judge should not discard correct results)
 - Filtering rate between 20% and 60% (filtering too little = no value; filtering too much = destroying recall)
 
-**Infrastructure needed**: Partially exists in `codex/eval/judge.go`. Extend to compute false filtering rate.
+**Infrastructure needed**: Implemented in `codex/eval/judge.go` and `judge_metrics.go`. False filtering rate is computed by `computeFalseFilteringRate()` and included in `JudgeMetrics` and `JudgeSummary` aggregations.
 
 ### 2B. RECALL + Plan Review Cross-Reference
 
@@ -689,9 +697,11 @@ CREATE TABLE eval_recall_state (
 
 ---
 
-## Execution Plan
+## Execution Plan (Removed — Reference Only)
 
-> **Note**: The Build Specification section below contains the authoritative component breakdown, dependency graph, and critical path. This Execution Plan describes the _run_ phases — when experiments execute and what they produce. Build activities follow the Build Specification's 3-week critical path; experiment execution follows the milestones below.
+> **Note**: The L3/L4 execution plan described below was partially executed — the build phase completed (all 7 components built) — but the infrastructure was then removed as it answered the wrong question for the stated goal. See Implementation History. This section is retained as reference for the experimental design.
+>
+> The Build Specification section below contains the authoritative component breakdown, dependency graph, and critical path. This Execution Plan describes the _run_ phases — when experiments execute and what they produce.
 
 ### Build Phase (Weeks 1–3)
 
@@ -798,7 +808,9 @@ Where `X.X` is derived from measured metrics and `n` is the sample size.
 
 ---
 
-## Cost Estimate
+## Cost Estimate (L3/L4 — Not Applicable, Reference Only)
+
+> **Note**: These costs apply to the L3/L4 experiments whose infrastructure was removed. The Level 1 evaluation (what currently runs) uses local Ollama embeddings and has no API cost except for the judge eval which uses the Anthropic API.
 
 Costs derived from per-token pricing — see "Pricing Assumptions" in the execution section for the full derivation. Shown for Sonnet 4.6; multiply by 1.7× for Opus 4.6.
 
@@ -825,15 +837,18 @@ The majority of cost is in Experiment 3A (270 runs at ~$360), which is also the 
 
 5. **Production incident response** — The incident agent mode is not evaluated. Building realistic incident scenarios requires production-like environments.
 
-These limitations should be acknowledged in the final report. They represent future evaluation work, not gaps in this framework.
+6. **Level 3-4 experiments** — The L3/L4 infrastructure (runners, scorers, corpus) was built and removed. The current evaluation scope is Level 1 component testing. See Implementation History for the rationale.
+
+These limitations should be acknowledged in any evaluation report. Items 1-5 represent future evaluation work. Item 6 represents a deliberate scope reduction.
 
 ---
 
 ## How To Actually Run This
 
 > Added 2026-02-24 after critical review of execution feasibility.
+> Updated 2026-02-28: Strategy A (Direct MCP Testing) is the only currently implemented strategy. Strategies B and C were implemented and removed — see Implementation History.
 
-The experiments above describe *what* to measure. This section describes *how* to execute them, given the actual infrastructure that exists. It is honest about what's easy, what's hard, and what's impractical.
+The experiments above describe *what* to measure. This section describes *how* to execute them. **Currently, only Strategy A (Direct MCP Testing for Levels 1-2) is implemented.** Strategies B and C1 were built, found to answer the wrong question for the stated goal, and removed.
 
 ### The Execution Gap
 
@@ -852,30 +867,31 @@ Most Level 3-4 experiments assume you can programmatically drive Claude Code thr
 
 Each experiment maps to one of three execution strategies, depending on what it actually tests.
 
-#### Strategy A: Direct MCP Testing (Levels 1-2)
+#### Strategy A: Direct MCP Testing (Levels 1-2) — **Implemented**
 
 **What**: Test RECALL and its integrations by calling the MCP server directly, without Claude Code in the loop.
 
-**How**: Extend the existing `codex/eval/` harness. The `MCPClient` in `mcpclient.go` already communicates with the RECALL MCP server via JSON-RPC over io.Pipe. The `JudgeHarness` already calls the Anthropic Messages API for LLM-as-judge scoring.
+**How**: The `codex/eval/` harness communicates with the RECALL MCP server via JSON-RPC over io.Pipe (in-process). The `JudgeHarness` calls the Anthropic Messages API for LLM-as-judge scoring.
 
-**Runnable today**:
+**Runnable now**:
 ```bash
-# Level 1: RECALL retrieval quality (already implemented)
+# Level 1: RECALL retrieval quality (8-phase pipeline)
 go test -tags "fts5,evalintegration" ./codex/eval/... -run TestE2E
 
-# Level 1: Judge filtering quality (already implemented)
+# Level 1: Judge filtering quality (LLM-as-judge with false filtering rate)
 go test -tags "fts5,evalintegration" ./codex/eval/... -run TestJudge
+
+# Level 1: MCP roundtrip (add→search→feedback)
+go test -tags "fts5,evalintegration" ./codex/eval/... -run TestRoundTrip
 ```
 
 **Extends to**: Experiments 1C, 2A, 2B, 2D. All of these test RECALL behavior directly — they don't need Claude Code making decisions, they need the MCP tools working correctly and the LLM judge evaluating results.
 
-**Implementation effort**: 2-3 days of Go code extending the existing harness.
+**What this proves**: RECALL retrieves relevant knowledge (design claim 1), retrieval-judge filters noise (design claim 2), false filtering rate is low (design claim 2a), MCP protocol works correctly (design claim 0).
 
-**What this proves**: RECALL retrieves relevant knowledge (design claim 1), retrieval-judge filters noise (design claim 2), plan-review can surface past failures (design claim 3).
+#### Strategy B: Pipe Mode Testing (Level 3 — Skills and Hooks) — **Removed**
 
-#### Strategy B: Pipe Mode Testing (Level 3 — Skills and Hooks)
-
-**What**: Test whether AEF's skills and hooks improve Claude Code's behavior on implementation tasks, without RECALL.
+**What**: Test whether AEF's skills and hooks improve Claude Code's behavior on implementation tasks, without RECALL. *Implementation (`runner_pipe.go`) was built and removed — see Implementation History.*
 
 **How**: Use `claude -p` with `--append-system-prompt-file` to inject skills, and `.claude/settings.json` to configure hooks. Pipe task specifications in, capture output, run automated scoring.
 
@@ -899,9 +915,9 @@ cat task-spec.md | claude -p \
 
 **What this proves**: Skills influence agent behavior (design claim 4), hooks enforce mechanical standards (design claim 5). The skills+hooks value proposition.
 
-#### Strategy C: Controlled Session Testing (Level 3 — RECALL Integration)
+#### Strategy C: Controlled Session Testing (Level 3 — RECALL Integration) — **Removed**
 
-**What**: Test whether RECALL knowledge actually helps Claude Code produce better code. This is the hardest to automate because it requires both MCP access and task execution.
+**What**: Test whether RECALL knowledge actually helps Claude Code produce better code. This is the hardest to automate because it requires both MCP access and task execution. *Implementation (`runner_agent.go`, `agent_tools.go`) was built and removed — see Implementation History.*
 
 **Three sub-approaches**, in order of practicality:
 
@@ -954,35 +970,50 @@ cat task-spec.md | claude -p \
 
 ### Build Specification
 
-This section inventories what exists and what needs building. Each component is mapped to the strategy it supports and the experiments it enables.
+> Updated 2026-02-28: The "What Needs Building" components below were built and subsequently removed. See Implementation History for details. The "What Exists" table reflects the current codebase.
 
-#### What Exists
+This section inventories what exists and what was built. Each component is mapped to the strategy it supports and the experiments it enables.
 
-| Component | Location | What It Does | Used By |
-|---|---|---|---|
-| MCPClient | `codex/eval/mcpclient.go` | JSON-RPC client for RECALL MCP server via io.Pipe (in-process, no subprocess) | Strategy A, C1 |
-| EvalHarness | `codex/eval/harness.go` | 8-phase pipeline: protocol check, indexing, retrieval eval, audit trail | Strategy A |
-| JudgeHarness | `codex/eval/judge.go` | LLM-as-judge via Anthropic Messages API (single-turn); includes AnthropicClient with retry | Strategy A |
-| IR Metrics | `codex/eval/metrics.go` | Recall@K, Precision@K, nDCG, MRR | Strategy A |
-| Judge Metrics | `codex/eval/judge_metrics.go` | Per-query judge precision, recall, F1, filtering rate, per-category aggregation | Strategy A |
-| Report Generator | `codex/eval/report.go` | Text + JSON output of eval results | Strategy A |
-| PayFlow Corpus | `codex/eval/testdata_payflow.go` | 30 docs, 20 ground-truth queries across 3 categories (semantic, keyword, hybrid-advantage) | Strategy A |
-| MCP Server | `codex/internal/mcp/server.go` + `tools.go` | JSON-RPC handler, 5 tools: recall_search/get/add, recall_feedback, flight_recorder_log | Strategy A, C1 |
-| Ralph Loop | `edi/internal/assets/ralph/ralph.sh` | `claude -p` invocation with skills injected via stdin prompt, `--allowedTools` whitelist, task iteration from PRD.json | Strategy B (pattern) |
-| SQLite Schema | `edi/internal/recall/schema.sql` | items, vectors, flight_recorder, feedback tables with FTS5 virtual table | All |
-| SearchEngine | `codex/internal/search/engine.go` | Hybrid search: vector cosine similarity + FTS5 BM25 + RRF fusion | Strategy A, C1 |
+#### What Exists (Current)
 
-**What's runnable today:**
+These components remain in the codebase and form the Level 1 evaluation infrastructure:
+
+| Component | Location | What It Does |
+|---|---|---|
+| MCPClient | `codex/eval/mcpclient.go` | JSON-RPC client for RECALL MCP server via io.Pipe (in-process, no subprocess) |
+| EvalHarness | `codex/eval/harness.go` | 8-phase pipeline: protocol check, indexing, retrieval eval, feedback, flight recorder, audit trail |
+| JudgeHarness | `codex/eval/judge.go` | LLM-as-judge via Anthropic Messages API (Claude Sonnet 4, single-turn); includes AnthropicClient with retry |
+| IR Metrics | `codex/eval/metrics.go` | Recall@K, Precision@K, nDCG, MRR |
+| Judge Metrics | `codex/eval/judge_metrics.go` | Per-query judge precision, recall, F1, filtering rate, false filtering rate, per-category aggregation |
+| Report Generator | `codex/eval/report.go` | Text + JSON output of eval results (`EvalSummary`, `FullEvalReport`) |
+| PayFlow Corpus | `codex/eval/testdata_payflow.go` | 30 docs, 20 ground-truth queries across 3 categories (semantic, keyword, hybrid-advantage) |
+| Ground Truth | `codex/eval/groundtruth.go` | Ground truth annotation types for eval queries |
+| Test Data Types | `codex/eval/testdata.go` | `TestDoc`, `TestQuery`, `TestCollection`, `SearchResultFromMCP`, `ItemFromMCP` types |
+| Roundtrip Test | `codex/eval/roundtrip_test.go` | End-to-end MCP add→search→feedback roundtrip, scope isolation, semantic matching |
+| MCP Server | `codex/internal/mcp/server.go` + `tools.go` | JSON-RPC handler, 5 tools: recall_search/get/add, recall_feedback, flight_recorder_log |
+| SearchEngine | `codex/internal/core/engine.go` | Hybrid search: vector cosine similarity + FTS5 BM25 + RRF fusion |
+| SQLite Schema | `edi/internal/recall/schema.sql` | items, vectors, flight_recorder, feedback tables with FTS5 virtual table |
+
+**What's runnable:**
 
 ```bash
-# RECALL retrieval quality (Level 1)
+# RECALL retrieval quality — full 8-phase pipeline (Level 1)
 go test -tags "fts5,evalintegration" ./codex/eval/... -run TestE2E
 
-# Judge filtering quality (Level 1)
+# Judge filtering quality — LLM-as-judge evaluation (Level 1)
 go test -tags "fts5,evalintegration" ./codex/eval/... -run TestJudge
+
+# MCP roundtrip — add→search→feedback via JSON-RPC
+go test -tags "fts5,evalintegration" ./codex/eval/... -run TestRoundTrip
+
+# Via Makefile
+cd codex && make test-eval    # TestE2E -short (15m timeout)
+cd codex && make test-judge   # Full judge + retrieval (45m timeout)
 ```
 
-#### What Needs Building
+#### What Was Built and Removed
+
+> **Note**: The seven components below were fully implemented and then removed (see Implementation History). This section is retained as a reference for the original design. All components listed here no longer exist in the codebase.
 
 Seven components, listed in dependency order. Components 1–6 are engineering work; component 7 is authoring work that can be parallelized.
 
@@ -1170,127 +1201,70 @@ Task corpus authoring can start in week 1 and run in parallel. The first 5 tasks
 
 Milestone 2 (190 runs) requires the full 30-task corpus (Corpus 2) plus Corpus 3 task pairs. At 3–4 tasks per day authoring rate, the corpus is the bottleneck for Milestone 2 — not the infrastructure.
 
-### Implementation Map: How the Code Fits Together
+### Implementation History
 
-> Added 2026-02-27. The Build Specification above describes what to build. This section describes what was actually built, where the code lives, and how the pieces relate at runtime.
+> Updated 2026-02-28.
 
-The eval system has two distinct halves: **infrastructure** (the eval engine) and **corpus** (the eval data). Neither works without the other, and confusing them is the most common source of misunderstanding.
+#### What Was Built and Removed
 
-```
-codex/
-├── cmd/aef-eval/main.go        ← CLI entry point (run, score, report, list)
-├── eval/
-│   ├── runner_pipe.go          ┐
-│   ├── runner_agent.go         │  The eval engine — runs tasks, grades results,
-│   ├── condition.go            │  stores scores, computes statistics, and
-│   ├── scorer.go               │  generates evidence reports.
-│   ├── results.go              │
-│   ├── stats.go                │  This code does NOT implement circuit breakers,
-│   ├── report_l3.go            │  LRU caches, etc. It orchestrates AI agents
-│   ├── agent_tools.go          │  that implement them, then measures the quality
-│   ├── mcpclient.go            ┘  of what those agents produce.
-│   │
-│   └── corpus/
-│       ├── run-eval.sh         ← Turn-key runner script
-│       ├── pairs.yaml          ← Experiment 3B pair definitions
-│       └── tasks/
-│           ├── retry-backoff/  ┐
-│           ├── json-validator/ │  The eval data — 15 standalone coding challenges.
-│           ├── circuit-breaker/│  Each is a self-contained Go module with:
-│           ├── lru-cache/      │    README.md      — task specification
-│           ├── worker-pool/    │    *.go           — skeleton with TODO stubs
-│           ├── pipeline/       │    *_test.go      — comprehensive tests (mostly fail against skeleton)
-│           ├── ...             │    scoring.yaml   — complexity level
-│           └── (15 total)      ┘    pitfalls.yaml  — known failure patterns + RECALL seeds
-```
+The Level 3 evaluation infrastructure described in the Build Specification above was fully implemented (111 files, 16,740 lines) and then intentionally removed in commit `32e6b58` on 2026-02-28.
 
-#### The Skeleton Pattern
+**Why it was removed**: The L3 eval (runners, scorers, conditions, stats, corpus, CLI) tested "does Claude write better code with pitfall knowledge?" — a prompting effectiveness study that requires real human subjects and statistical power the current setup doesn't have. The stated goal of the eval framework is: "are the tools built well and built in a way that allows Claude to use them effectively?"
 
-Each task's `.go` file (e.g., `breaker.go`) is a **skeleton, not a solution**. It defines the types, function signatures, and trivial stubs (`// TODO: implement`) so the package compiles. The accompanying `_test.go` file contains tests that define the correct behavior — most tests fail against the skeleton.
+**What was removed** (all previously in `codex/eval/`):
 
-During an eval run, the AI agent receives the README + skeleton + tests and must fill in the real implementation. The skeleton exists because Go requires a compilable package to run `go test` at all — without it, the test file can't reference the types and functions it needs to test.
-
-#### Runtime Flow
-
-```
-aef-eval run --experiment 3A --condition aef-full --tasks corpus/tasks/
-        │
-        ▼
-   ┌─ condition.go ──────────────────────────────────────┐
-   │  Reads condition name → produces config:            │
-   │    baseline:    no skills, no hooks, no RECALL       │
-   │    aef-minimal: skills + hooks, no RECALL            │
-   │    aef-full:    skills + hooks + RECALL seeds        │
-   └──────────────┬──────────────────────────────────────┘
-                  │
-                  ▼
-   ┌─ runner_pipe.go or runner_agent.go ─────────────────┐
-   │  For each task in corpus/tasks/:                    │
-   │    1. Copy task to temp dir (isolated workspace)     │
-   │    2. Inject condition config (system prompt, hooks)  │
-   │    3. Give agent the README + skeleton + tests       │
-   │    4. Agent writes implementation (fills in TODOs)    │
-   │    5. Collect the agent's code output                │
-   └──────────────┬──────────────────────────────────────┘
-                  │
-                  ▼
-   ┌─ scorer.go ─────────────────────────────────────────┐
-   │  Grade the agent's work:                            │
-   │    go test -race    → pass/fail counts              │
-   │    golangci-lint    → lint violations               │
-   │    pitfall check    → grep + LLM judge on pitfalls  │
-   │    LLM judge        → 5-dimension quality rubric    │
-   │  Compute weighted combined score → results.db        │
-   └──────────────┬──────────────────────────────────────┘
-                  │
-                  ▼
-   ┌─ report_l3.go + stats.go ───────────────────────────┐
-   │  Compare scores across conditions:                   │
-   │    Mann-Whitney U, Bootstrap CI, Wilcoxon            │
-   │  Validate claims C1-C7 against thresholds            │
-   │  Generate evidence report                            │
-   └─────────────────────────────────────────────────────┘
-```
-
-#### What Each Infrastructure File Does
-
-| File | Spec Component | What It Does |
-|---|---|---|
-| `cmd/aef-eval/main.go` | CLI Interface | Cobra commands: `run`, `score`, `report`, `list` |
-| `runner_pipe.go` | Strategy B Runner | Feeds tasks to Claude via `claude -p`, captures output |
-| `runner_agent.go` | Strategy C1 Runner | Multi-turn tool-use loop via Anthropic Messages API + MCP proxy |
-| `condition.go` | Condition Configurator | Factory for baseline / aef-minimal / aef-full configs |
-| `scorer.go` | Scoring Pipeline | Runs tests, lint, pitfall detection, LLM judge; computes combined score |
-| `results.go` | Results Database | SQLite storage for eval runs, batch management, cross-run queries |
-| `stats.go` | Statistical Analysis | Mann-Whitney U, Bootstrap CI, Wilcoxon signed-rank, Spearman correlation |
-| `report_l3.go` | Report Generator | Validates claims C1-C7, generates markdown/JSON evidence reports |
-| `agent_tools.go` | Tool Dispatcher | Routes agent tool calls (Read/Write/Edit/Bash/Glob/Grep/RECALL) |
-| `mcpclient.go` | MCPClient | JSON-RPC client boots RECALL MCP server in-process, seeds knowledge |
-
-#### What Each Corpus File Does
-
-| File | Purpose |
+| File | What It Did |
 |---|---|
-| `README.md` | Task specification the agent sees — requirements, constraints, API contract |
-| `*.go` (e.g., `breaker.go`) | Skeleton with types + function signatures + `// TODO` stubs. Compiles but doesn't work. |
-| `*_test.go` | Comprehensive test suite defining correct behavior. Most tests fail against the skeleton. |
-| `scoring.yaml` | Declares complexity level (`simple`, `moderate`, `complex`) for scoring thresholds |
-| `pitfalls.yaml` | Known failure patterns with detection rules, anti-patterns, and RECALL seed content |
-| `go.mod` | Standalone module so each task compiles independently (no cross-task dependencies) |
+| `cmd/aef-eval/main.go` | Cobra CLI: `run`, `score`, `report`, `list` |
+| `runner_pipe.go` | Strategy B: feed tasks to Claude via `claude -p`, capture output |
+| `runner_agent.go` | Strategy C1: multi-turn tool-use loop via Anthropic Messages API + MCP proxy |
+| `condition.go` | Factory for baseline / aef-minimal / aef-full configs |
+| `scorer.go` | Test/lint/pitfall/LLM judge scoring pipeline |
+| `results.go` | SQLite results database for experiment tracking |
+| `stats.go` | Mann-Whitney U, Bootstrap CI, Wilcoxon signed-rank, Spearman correlation |
+| `report_l3.go` | Claim validation reports (C1-C7) |
+| `agent_tools.go` | Tool dispatcher for synthetic agent (Read/Write/Edit/Bash/Glob/Grep/RECALL) |
+| `plan_review.go` | Plan review experiment harness |
+| `corpus/` | 15 coding tasks with skeletons, tests, pitfall configs, and pair definitions |
 
-#### Key Distinction: The Corpus Tests Are Not Testing AEF
+#### What Remains (Current State)
 
-The test files in the corpus (e.g., `breaker_test.go`) test the **agent's implementation** of a circuit breaker — they are not testing AEF's own code. AEF's own unit tests live in `codex/internal/` and `edi/internal/` as normal Go tests.
+The Level 1 component evaluation infrastructure remains and directly answers whether the tools work correctly:
 
-The eval answers: "Given a coding task with known pitfalls, does an AI agent equipped with AEF produce higher-quality code than one without?" It does this by comparing scores across the three conditions on the same tasks.
+```
+codex/eval/
+├── harness.go              ← 8-phase evaluation pipeline
+├── harness_test.go         ← TestE2E integration test
+├── judge.go                ← LLM-as-judge via Anthropic API (single-turn)
+├── judge_test.go           ← TestJudge integration test
+├── judge_metrics.go        ← Judge precision/recall/F1/filtering/false-filtering
+├── judge_metrics_test.go   ← Judge metrics unit tests
+├── mcpclient.go            ← JSON-RPC client for MCP server (in-process via io.Pipe)
+├── metrics.go              ← Recall@K, Precision@K, nDCG, MRR
+├── metrics_test.go         ← Metrics unit tests
+├── report.go               ← Text + JSON report formatting
+├── testdata.go             ← TestDoc/TestQuery/TestCollection types
+├── testdata_payflow.go     ← 30 PayFlow docs + 20 ground-truth queries
+├── roundtrip_test.go       ← End-to-end MCP add→search roundtrip
+├── groundtruth.go          ← Ground truth annotation types
+├── benchmarks_local_nomic.txt  ← Nomic-embed-text benchmark results
+└── benchmarks_voyage.txt       ← Voyage Code-3 benchmark results
+```
 
-### Runner Operations
+This code proves:
+- RECALL indexes and retrieves documents correctly (harness phases 1-3)
+- Retrieval quality meets IR thresholds (Recall@10 ≥ 0.3, MRR ≥ 0.2)
+- The LLM judge improves precision over raw retrieval (judge precision ≥ 0.6)
+- False filtering rate is measured (judge doesn't discard relevant results)
+- MCP protocol works end-to-end (roundtrip add→search)
+- Flight recorder and feedback mechanisms function correctly
+- Audit trail entries are logged automatically for retrieval operations
 
-This section specifies the operational aspects of the eval runners: how they're invoked, how they handle errors, how runs are orchestrated, and the Bash sandbox rules.
+### Runner Operations (Removed — Reference Only)
 
-#### CLI Interface
+> **Note**: This section describes the operational design of the L3 eval runners that were built and subsequently removed (see Implementation History). It is retained as a reference for future reimplementation if the project scope expands to require L3 evaluation.
 
-The eval runner is a Go binary built from `codex/eval/cmd/aef-eval/main.go`.
+~~The eval runner is a Go binary built from `codex/eval/cmd/aef-eval/main.go`.~~
 
 ```
 aef-eval <command> [flags]
@@ -1445,7 +1419,9 @@ For Strategy B (pipe mode), sandboxing is handled by `claude -p --allowedTools` 
 | `baseline` | `Edit,Write,Bash(go build:*),Bash(go test:*),Bash(go vet:*),Read,Glob,Grep` |
 | `aef-minimal` | Same as baseline (skills via `--append-system-prompt-file`, hooks via `.claude/settings.json`) |
 
-### Recommended Execution Path
+### Recommended Execution Path (Removed — Reference Only)
+
+> **Note**: This section describes the phased execution plan for L3/L4 experiments that were removed. Retained as reference.
 
 Given the goal is to **prove the design claims** (not prove production viability), here's the practical execution path:
 
@@ -1672,21 +1648,25 @@ For **proving the design claims** specifically — the stated goal — the frame
 
 ### Honest Conclusion
 
-**For proving design claims**: The framework is sufficient. It maps every claim to a measurable experiment and can produce "yes, this works" or "no, this doesn't" for each one. The sample sizes are small but adequate for design validation — you're not publishing a paper, you're deciding whether to invest further.
+> Updated 2026-02-28 to reflect the L3 infrastructure removal.
+
+**For proving the tools work correctly**: The Level 1 evaluation (what currently runs) is rigorous. It uses standard IR metrics, ground truth annotations, and LLM-as-judge with measured false filtering rates. This directly answers "are the tools built well?"
+
+**For proving the tools help Claude write better code**: This was the L3 goal (Experiments 3A-3D). The infrastructure was built but removed because it fundamentally tested prompting effectiveness — whether giving Claude domain knowledge via system prompts improves output — which requires human subjects and statistical power beyond the current setup. The L3 experimental *design* remains valid and is retained in this document as reference.
 
 **For proving market viability**: The framework is insufficient. That requires real developers, real projects, and longitudinal data that no automated evaluation can provide.
 
-**For identifying what to cut**: The framework is excellent at this. If Experiment 3A shows AEF-full ≈ AEF-minimal, you know RECALL isn't pulling its weight. If 3D shows hooks don't improve adherence, you know the hook architecture needs rethinking. The framework's greatest value may be in what it *disproves*.
+**For identifying what to cut**: The framework's value was demonstrated by the L3 removal itself — building the infrastructure revealed that the question it answered ("does Claude write better code with pitfall knowledge?") was different from the question that matters ("are the retrieval tools reliable and correct?"). The Level 1 eval answers the latter.
 
 **The pass/fail thresholds are arbitrary**: Why ≥20 percentage points for pitfall avoidance? Why ≥10 for combined quality? These are judgment calls, not derived from theory. They should be treated as "meaningful improvement" guidelines, not hard cutoffs. The actual numbers matter more than whether they cross a pre-defined line.
 
 ---
 
-## Specification Gap Analysis
+## Specification Gap Analysis (Historical — Reference Only)
 
-> Added 2026-02-24 after auditing the build specification against actual code in `codex/eval/`, skill files in `edi/internal/assets/skills/`, and the Ralph loop in `edi/internal/assets/ralph/ralph.sh`.
+> Added 2026-02-24. The gaps below were identified, resolved, implemented in the L3 infrastructure, and then removed along with that infrastructure. This section is retained as reference for the design decisions made.
 
-This section catalogs everything that's underspecified — things a developer would need to ask about before they could implement each of the seven build components. Gaps are categorized by severity.
+This section catalogs gaps that were identified in the build specification. All gaps were resolved and implemented in code that was subsequently removed (see Implementation History).
 
 ### Critical Gaps (Block Implementation)
 
@@ -2207,48 +2187,50 @@ Note: SQLite doesn't have a built-in `MEDIAN` function. The Go code needs to com
 
 ### Summary: Gap Resolution Status
 
-> Updated 2026-02-24 after resolving all decision gaps and drafting specs for remaining items.
+> Updated 2026-02-28. Most gaps were resolved in L3 infrastructure that was subsequently built and removed. The gap decisions are retained as reference for the design thinking.
 
 #### Gap Decisions
 
-| # | Gap | Resolution | Status |
+| # | Gap | Resolution | Current Status |
 |---|---|---|---|
-| 1 | Skills reference RECALL in AEF-minimal | **Option B**: Preamble override ("RECALL tools not available — ignore instructions to use them") | Decided |
-| 2 | No LLM judge prompt template | Template drafted in this doc (system prompt + user template + JSON response schema) | Spec drafted |
-| 3 | AnthropicClient is single-turn | New client required (~350 lines including API types). Not an extension. | Documented |
-| 4 | No tool schemas for synthetic agent | RECALL schemas extracted from `codex/internal/mcp/tools.go`. File-op schemas need authoring. | **Open — see below** |
-| 5 | `task_test.go` hiding | **Option B**: Inject at scoring time. Store in `validation/task-{id}/`. | Decided |
-| 6 | `pitfalls.yaml` detection rules | Three-method schema: grep (pattern), test (specific test name), judge (LLM query) | Spec drafted |
-| 7 | `scoring.yaml` undefined | **Dropped.** Use rubric defaults for all tasks. | Decided |
+| 1 | Skills reference RECALL in AEF-minimal | **Option B**: Preamble override ("RECALL tools not available — ignore instructions to use them") | Decided; implemented in removed `condition.go` |
+| 2 | No LLM judge prompt template | Template drafted in this doc (system prompt + user template + JSON response schema) | Spec drafted; implemented in removed `scorer.go` |
+| 3 | AnthropicClient is single-turn | New client required (~350 lines including API types). Not an extension. | Implemented in removed `runner_agent.go` |
+| 4 | No tool schemas for synthetic agent | RECALL schemas extracted from `codex/internal/mcp/tools.go`. File-op schemas authored. | Implemented in removed `agent_tools.go` |
+| 5 | `task_test.go` hiding | **Option B**: Inject at scoring time. Store in `validation/task-{id}/`. | Decided; corpus removed |
+| 6 | `pitfalls.yaml` detection rules | Three-method schema: grep (pattern), test (specific test name), judge (LLM query) | Spec drafted; implemented in removed corpus |
+| 7 | `scoring.yaml` undefined | **Dropped.** Use rubric defaults for all tasks. | Decided; corpus removed |
 | 8 | Ralph loop inaccuracy | Strategy B departs from Ralph by adding `--append-system-prompt-file`. | Documented |
-| 9 | `--allowedTools` per condition | Per-condition allowlist table drafted in this doc. | Spec drafted |
+| 9 | `--allowedTools` per condition | Per-condition allowlist table drafted in this doc. | Spec drafted; implemented in removed `condition.go` |
 | 10 | Context window management | **Resolved.** Use API-native compaction + context editing + memory tool. | Resolved |
-| 11 | Efficiency scoring | Pass turn count + action summary to judge. Dimension redefined. | Spec drafted |
+| 11 | Efficiency scoring | Pass turn count + action summary to judge. Dimension redefined. | Spec drafted; implemented in removed `scorer.go` |
 | 12 | Hook config + scripts | **Deferred** to Milestone 2. Skills-only for Milestone 1. | Decided |
-| 13 | 3B pitfall guarantee | **Option B**: Seed RECALL artificially. Don't depend on Session A failing. | Decided |
-| 14 | 3C `recall_add` trigger | Agent-driven capture. Runner verifies items added per session. | Decided |
-| 15 | Statistical tests | Mann-Whitney U, Wilcoxon signed-rank, Bootstrap CIs. | Decided |
-| 16 | Model version | Add `--model` flag. Default Sonnet 4.6. | Decided |
-| 17 | Skill concatenation order | edi-core → coding → testing → plan-review → retrieval-judge. | Decided |
-| 18 | Results reporting queries | Concrete SQL queries drafted in this doc. Median in Go. | Spec drafted |
+| 13 | 3B pitfall guarantee | **Option B**: Seed RECALL artificially. Don't depend on Session A failing. | Decided; corpus removed |
+| 14 | 3C `recall_add` trigger | Agent-driven capture. Runner verifies items added per session. | Decided; runner removed |
+| 15 | Statistical tests | Mann-Whitney U, Wilcoxon signed-rank, Bootstrap CIs. | Implemented in removed `stats.go` |
+| 16 | Model version | Add `--model` flag. Default Sonnet 4.6. | Implemented in removed `cmd/aef-eval` |
+| 17 | Skill concatenation order | edi-core → coding → testing → plan-review → retrieval-judge. | Decided; implemented in removed `condition.go` |
+| 18 | Results reporting queries | Concrete SQL queries drafted in this doc. Median in Go. | Implemented in removed `results.go` |
 
-#### Build Component Readiness
+#### Build Component Status
 
-| Component | Status | Remaining Work |
-|---|---|---|
-| 1. Results Database (1–2 days) | **Ready to build** | — |
-| 2. Scoring Pipeline (2–3 days) | **Ready to build** | Judge prompt template drafted. Detection schema drafted. |
-| 3. Strategy A Extensions (2–3 days) | **Ready to build** | — |
-| 4. Condition Configurator (1 day) | **Ready to build** | Gap 1 decided (preamble). Gap 12 deferred. |
-| 5. Strategy B Runner (3–4 days) | **Ready to build** | Gap 8 documented. Gap 9 specified. |
-| 6. Synthetic Agent Runner (5–8 days) | **Needs file-op tool schemas** | RECALL schemas exist in code. 6 file-op tool schemas (Read, Edit, Write, Glob, Grep, Bash) need authoring. See Gap 4 addendum below. |
-| 7. Task Corpus (10–15 days) | **Ready to author** | Gap 5 decided (inject tests). Gap 6 detection schema drafted. |
+| Component | Status |
+|---|---|
+| 1. Results Database | Built and removed |
+| 2. Scoring Pipeline | Built and removed |
+| 3. Strategy A Extensions | **Implemented** (FalseFilteringRate in `judge_metrics.go`) |
+| 4. Condition Configurator | Built and removed |
+| 5. Strategy B Runner | Built and removed |
+| 6. Synthetic Agent Runner | Built and removed |
+| 7. Task Corpus | Built and removed (15 tasks) |
 
-**6 of 7 components are build-ready.** Component 6 needs the file-op tool schemas authored — that's the only remaining spec work.
+**Strategy A extensions (component 3) are the only build component that remains in the codebase.** FalseFilteringRate was the primary addition and is now part of `judge_metrics.go`.
 
-#### Gap 4 Addendum: File-Op Tool Schemas for Synthetic Agent
+#### Gap 4 Addendum: File-Op Tool Schemas for Synthetic Agent (Removed — Reference Only)
 
-The synthetic agent sends Anthropic Messages API `tools` definitions so the model knows what tools are available. RECALL tool schemas already exist in `codex/internal/mcp/tools.go` (lines 304–427) and can be extracted directly. Six file-operation tool schemas must be authored to match Claude Code's tool interface:
+> **Note**: These schemas were authored and implemented in the removed `agent_tools.go`. Retained as reference for the API contract design.
+
+The synthetic agent sends Anthropic Messages API `tools` definitions so the model knows what tools are available. RECALL tool schemas already exist in `codex/internal/mcp/tools.go` and can be extracted directly. Six file-operation tool schemas were authored to match Claude Code's tool interface:
 
 **Read**
 ```json
@@ -2349,9 +2331,9 @@ The synthetic agent sends Anthropic Messages API `tools` definitions so the mode
 }
 ```
 
-These are intentionally minimal — matching the core interface the model needs without replicating every optional parameter from Claude Code's full tool definitions. The synthetic agent's tool dispatcher handles the actual implementation (file I/O, ripgrep, sandboxed exec).
+These are intentionally minimal — matching the core interface the model needs without replicating every optional parameter from Claude Code's full tool definitions.
 
-With these schemas, **all 7 components are build-ready.**
+These schemas were implemented in the removed `agent_tools.go` and are retained here as a reference for the API contract design.
 
 ---
 
@@ -2464,21 +2446,21 @@ For existing projects with MEMORY.md:
 
 No changes to the MCP server. The tools (`recall_search`, `recall_add`, `recall_get`, `recall_feedback`, `flight_recorder_log`) remain unchanged. The behavioral change is in the skills (instructions to the model), not in the tooling. `recall_add` remains available for edge cases — the restriction is soft (via skill instructions) not hard (via tool removal).
 
-### What Changes in the Eval Runner
+### What Changes in the Eval Runner (Historical)
 
-The synthetic agent runner (Build Component 6) adds:
+> **Note**: The synthetic agent runner was removed. These design notes are retained for reference if L3 eval is reimplemented.
+
+The synthetic agent runner (Build Component 6, now removed) was designed to add:
 1. `context_management` config to API requests (compaction + context editing)
-2. Memory tool in the tool list + client-side handler (~100 lines: view/create/str_replace/delete on a temp `/memories/` directory)
+2. Memory tool in the tool list + client-side handler
 3. Skills system prompt updated to reflect the aligned design
 
-This makes the eval runner test the aligned RECALL design, not the current one. Results measure the value of RECALL + memory tool + compaction together — which is the design that would ship.
-
-### Impact on Experiments
+### Impact on Experiments (Historical)
 
 | Experiment | Impact |
 |---|---|
-| 3A (defect rate) | AEF-full condition now uses memory tool + compaction. More realistic. Complex tasks can actually complete. |
-| 3B (repeat failure) | Session 1 insights written to `/memories/`. Between sessions, runner promotes relevant items to RECALL via `recall_add`. Session 2 searches RECALL normally. Cleaner than hoping the agent calls `recall_add` mid-session. |
+| 3A (defect rate) | AEF-full condition would use memory tool + compaction. More realistic. Complex tasks can actually complete. |
+| 3B (repeat failure) | Session 1 insights written to `/memories/`. Between sessions, runner promotes relevant items to RECALL via `recall_add`. Session 2 searches RECALL normally. |
 | 3C (longitudinal) | Memory tool provides natural cross-compaction continuity within sessions. `/end` workflow promotes to RECALL between sessions. |
 | 3D (hook adherence) | No impact — hooks are orthogonal to context management. |
 
