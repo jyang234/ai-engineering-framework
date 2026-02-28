@@ -386,24 +386,43 @@ PostToolUseFailure (all tools)
 
 **Impact**: Catches the "stuck in a loop" failure mode and promotes it to actionable knowledge. Feeds directly into the `/end` session capture workflow.
 
-## Opportunity Priority Matrix
+## Honest Assessment: Value vs. Performative Complexity
 
-| # | Opportunity | Event | Enforcement | Latency | Value | Effort |
-|---|------------|-------|-------------|---------|-------|--------|
-| 1 | Pre-commit quality gate | PreToolUse | Blocking | Low | **Critical** | Medium |
-| 2 | Destructive command guard | PreToolUse | Blocking | Low | **Critical** | Low |
-| 9 | Build tag enforcement | PreToolUse | Blocking | Trivial | **High** | Low |
-| 7 | Test integrity enforcement | PostToolUse | Advisory | Low | **High** | Medium |
-| 8 | Error handling detection | PostToolUse | Advisory | Low | **High** | Medium |
-| 4 | Session telemetry | Multiple | Observational | None | **High** | Low |
-| 14 | Failure pattern detection | PostToolUseFailure | Advisory | Low | **High** | Medium |
-| 13 | PreCompact preservation | PreCompact | Preservational | Low | **High** | Medium |
-| 12 | Agent-mode enforcement | PreToolUse | Advisory | Trivial | **Medium** | Low |
-| 10 | Scope creep detection | Multiple | Advisory | Low | **Medium** | Medium |
-| 5 | RECALL enrichment | PreToolUse | Advisory | Medium | **Medium** | Medium |
-| 6 | Task completion validation | TaskCompleted | Advisory | Low | **Medium** | Medium |
-| 11 | Refactoring safety gate | PreToolUse | Advisory | Low | **Medium** | High |
-| 3 | Write audit & conventions | PostToolUse | Advisory | Medium | **Medium** | High |
+Not all 14 opportunities are created equal. Most are either duplicating existing tooling, solving problems that prompting already handles, or adding infrastructure complexity disproportionate to the failure rate they address.
+
+### Tier 1: Genuinely Valuable (build these)
+
+| # | Opportunity | Why it's real |
+|---|------------|---------------|
+| **9** | Build tag enforcement | Concrete, recurring failure. Claude forgets `-tags fts5` after compaction. String match, zero false positives, trivial to implement. This is a project-specific `.editorconfig` equivalent. |
+| **2** | Destructive command guard | Low-frequency, catastrophic-consequence. Deny-list is cheap insurance. The value is entirely in the 1-in-100 session where it prevents `rm -rf .edi/` or force-push to main. |
+| **14** | Failure pattern detection | Claude tends to retry failing commands with small variations rather than stepping back. An external "you've been stuck for 5 rounds" signal genuinely changes behavior. But only as a simple counter — not a "pattern detection engine." |
+
+### Tier 2: Conditionally Valuable (build only if the precondition is met)
+
+| # | Opportunity | Precondition |
+|---|------------|--------------|
+| **4** | Session telemetry | Only valuable if something consumes the data — a dashboard, eval pipeline, or analysis tool. Without a reader, it's write-only bytes. Build the consumer first. |
+| **1** | Pre-commit quality gate | Only valuable if Claude actually skips quality checks frequently enough to justify the state-tracking infrastructure. Measure the failure rate first. A simpler fix may be to bake `go vet && go test` into the commit command in the skill itself. |
+
+### Tier 3: Sounds Good, Actually Duplicative (don't build)
+
+| # | Opportunity | What it's really doing |
+|---|------------|----------------------|
+| **8** | Error handling detection | Reimplementing `go vet` and `staticcheck` inside a webhook. Those tools already exist, are more comprehensive, and are already in the pre-commit checklist. |
+| **3** | Write audit & conventions | Same as #8 but broader. You're building a linter in a webhook. Use the actual linters. |
+| **7** | Test integrity enforcement | Claude violates the FORBIDDEN rules in two cases: user asks it to (webhook won't override), or context loss (real fix is better compaction, not a PostToolUse regex). And "assertion changed to match broken behavior" is semantically impossible to detect — you'd need to understand intent, not syntax. |
+
+### Tier 4: Solving the Wrong Problem at the Wrong Layer (don't build)
+
+| # | Opportunity | Why it's wrong-layered |
+|---|------------|----------------------|
+| **5** | RECALL enrichment | The sidecar would need the full codex library, embedding models, and DB access. RECALL is already an MCP tool Claude can call proactively. The fix is a better prompt, not duplicating the MCP server in a webhook. |
+| **13** | PreCompact preservation | Context loss is real, but a webhook can't know what's "critical" without understanding the conversation. Improve what goes into `/memories/` and CLAUDE.md instead. |
+| **6** | Task completion validation | "Are tests written? Build passing?" — the sidecar can't answer these without running the tests itself. Checking for test file existence is a poor proxy. |
+| **12** | Agent-mode enforcement | Assumes modes are strict access-control boundaries. In practice, reviewers make quick fixes, architects prototype. Blocking writes in reviewer mode forces tedious mode-switching for legitimate workflows. |
+| **11** | Refactoring safety gate | Requires Go AST analysis in the sidecar. Heavy engineering for infrequent scenarios with brittle detection (is adding a parameter a "signature change" or "extending an API"?). |
+| **10** | Scope creep detection | "High file count + diverse packages" isn't an algorithm, it's a judgment call. Any threshold you pick will have high false positives, training users to ignore the warnings — which is worse than not having them. |
 
 ## Architecture: EDI Webhook Service
 
@@ -429,28 +448,12 @@ edi launch
 hooks:
   enabled: true
   port: 9090
-  policies:
-    # Phase 1: Blocking guards (low latency, high confidence)
-    build_tag_enforcement: true    # #9  — Require -tags fts5 for go test/build
-    destructive_guard: true        # #2  — Block rm -rf .edi/, force-push main
-    agent_mode_enforcement: true   # #12 — Warn on mode-inappropriate actions
-
-    # Phase 2: Observational (advisory context injection)
-    telemetry: true                # #4  — Log all tool events
-    test_integrity: true           # #7  — Detect test deletion, t.Skip abuse
-    error_handling: true           # #8  — Detect discarded errors, bare returns
-    failure_patterns: true         # #14 — Detect repeated failures
-
-    # Phase 2b: Stateful enforcement
-    pre_commit_checks: true        # #1  — Require vet/test/staticcheck before commit
-    compaction_safety: true        # #13 — Preserve critical context before compaction
-
-    # Phase 3: Advanced (opt-in, higher latency)
-    recall_enrichment: false       # #5  — Query RECALL before build/deploy
-    scope_creep: false             # #10 — Track change diversity within session
-    refactoring_safety: false      # #11 — Require scaffolding tests for sig changes
-    task_validation: false         # #6  — Validate task completion criteria
-    write_audit: false             # #3  — Full convention analysis on writes
+  build_tags: ["fts5"]              # Required build tags for go test/build
+  destructive_deny_list:            # Commands to block (regex patterns)
+    - "rm -rf .edi"
+    - "git push --force.*main"
+    - "git push --force.*master"
+  failure_loop_threshold: 3         # Inject warning after N consecutive failures
 ```
 
 ### Option B: External Service (Team/Enterprise)
@@ -533,59 +536,42 @@ Shared webhook service with:
 | **Agents** | Agent-specific hook policies (e.g., reviewer mode has stricter write guards). |
 | **`/end` workflow** | SessionEnd hook can automate parts of the capture workflow. |
 
-## Revised Implementation Phases
+## Revised Implementation Plan
 
-### Phase 1: Settings Generation + Trivial Guards (1-2 days)
+### What to build
 
-Extend `edi launch` to write `.claude/settings.json` with webhook hook configuration. Implement the simplest blocking hooks in the sidecar:
+1. **Settings generation plumbing** — Extend `edi launch` to write `.claude/settings.json` with hook configuration, same merge pattern as `UpdateMCPConfig`. This is pure plumbing that unlocks any future hooks.
 
-- **Build tag enforcement (#9)** — Pure string match, zero false positives, immediate value
-- **Destructive command guard (#2)** — Deny-list only, well-scoped
-- **Agent-mode enforcement (#12)** — Header check, trivial logic
+2. **Minimal sidecar (`edi-hooks`)** with exactly two policies:
+   - **Build tag enforcement (#9)** — `PreToolUse` on Bash: if command matches `go (test|build)` and doesn't include `-tags.*fts5`, deny with corrected command. String match, 10 lines of logic.
+   - **Destructive command guard (#2)** — `PreToolUse` on Bash: deny-list of `rm -rf .edi`, `git push --force.*main`, `DROP TABLE`, etc. Another 20 lines of logic.
 
-These three hooks require minimal infrastructure and provide immediate safety value.
+3. **Failure loop breaker (#14)** — Add a simple counter in the sidecar: if the same tool + command pattern fails 3+ times, inject "Repeated failure — consider a different approach." This is a counter, not a pattern engine.
 
-### Phase 2: Observational Hooks (3-5 days)
+### What to defer until there's evidence
 
-Add the non-blocking hooks that observe and advise:
+- **Pre-commit quality gate (#1)** — Measure how often Claude actually skips quality checks first. If it's rare, the simpler fix is baking `go vet && go test -tags fts5 -race ./... &&` into the commit step of the skill.
+- **Session telemetry (#4)** — Build the consumer (dashboard, eval integration) first. Then add the data source.
 
-- **Session telemetry (#4)** — Log all tool events to a local SQLite DB
-- **Test integrity enforcement (#7)** — PostToolUse analysis of test file changes
-- **Error handling detection (#8)** — PostToolUse analysis of Go file changes
-- **Failure pattern detection (#14)** — PostToolUseFailure pattern matching
+### What not to build
 
-These are advisory — they inject context but never block. Low risk, high signal.
-
-### Phase 2b: Pre-Commit Gate + Compaction Safety
-
-- **Pre-commit quality gate (#1)** — Requires telemetry from Phase 2 to know whether checks were run
-- **PreCompact preservation (#13)** — Requires session state tracking from Phase 2
-
-### Phase 3: RECALL Integration + Advanced Policies
-
-- **RECALL enrichment (#5)** — Query RECALL DB from the sidecar
-- **Scope creep detection (#10)** — Requires multi-tool state tracking
-- **Refactoring safety gate (#11)** — Requires Go AST analysis
-- **Task completion validation (#6)** — Requires manifest access
-
-### Phase 4: Team Policies
-
-Shared webhook service, configurable rule engine, audit dashboard.
+Everything in Tiers 3 and 4. These are either duplicating existing tools (go vet, staticcheck, RECALL MCP), solving problems at the wrong layer (compaction handling belongs in prompts, not webhooks), or attempting algorithmic judgments (scope creep, completion validation) that produce more false positives than signal.
 
 ## Recommendation
 
-Start with **Phase 1** — it's 1-2 days of work that delivers three blocking guards with near-zero false positive risk. Build tag enforcement (#9) alone will eliminate a recurring failure mode that costs minutes per occurrence.
+The honest scope of genuinely valuable webhook hooks for AEF is small: **two blocking guards and a failure counter**. That's roughly 50-80 lines of policy logic in a sidecar, plus the plumbing to configure it.
 
-Follow with **Phase 2** observational hooks. The test integrity enforcement (#7) is the single highest-ROI webhook for AEF's quality mission: the testing skill's FORBIDDEN rules are the hardest quality boundaries in the system, and moving them from prompt-level to infrastructure-level is a step change in enforcement confidence.
+This is not a failure of the webhook hooks feature — it's a reflection that AEF's prompt-level enforcement (skills, agents, RECALL) already works well for most quality concerns. Hooks add value specifically where:
 
-Phase 2b's pre-commit gate (#1) is the crown jewel — it closes the loop between "skills say run checks" and "checks were actually run" — but it depends on the telemetry infrastructure from Phase 2.
+1. The failure is **mechanical** (wrong flags, dangerous commands), not **judgmental** (code quality, scope management)
+2. The check is **trivially decidable** (string match, counter), not **semantically complex** (intent detection, coverage analysis)
+3. Prompt-level enforcement **actually fails** in practice, not just in theory
+
+Resist the temptation to build a sophisticated policy engine. The 14-policy config with phased rollout looks impressive in a design doc, but most of those policies either duplicate existing tooling or attempt to algorithmically enforce what is fundamentally a judgment call.
 
 ## Open Questions
 
-1. **Process lifecycle**: Since EDI uses `syscall.Exec`, the sidecar must be a separate process. Should it be managed by EDI (started before exec) or by a systemd/launchd service?
-2. **Settings file ownership**: `.claude/settings.json` may have user customizations beyond hooks. EDI should merge, not overwrite. Same challenge as `.mcp.json` — the `UpdateMCPConfig` pattern applies.
-3. **Agent-specific policies**: Should hook behavior change when switching modes via `/plan`, `/build`, `/review`? The webhook endpoint has access to `EDI_AGENT_MODE` via headers. Opportunity #12 provides basic enforcement, but deeper mode-aware policies (e.g., reviewer can run tests but not edit source) would require richer configuration.
-4. **Migration path**: Should `task-sync-hook` (currently a command hook) migrate to webhook format for consistency, or keep both patterns?
-5. **Go AST analysis**: Opportunities #8 (error handling), #10 (scope creep), and #11 (refactoring safety) benefit from Go AST parsing rather than regex. Should the sidecar include `go/parser` for structural analysis, or keep checks regex-based for simplicity?
-6. **Telemetry storage**: Session telemetry (#4) needs a local store. Reuse the RECALL SQLite database (simpler) or a separate `~/.edi/telemetry.db` (cleaner separation)?
-7. **Hook composition**: If multiple hooks fire on the same event (e.g., build tag enforcement AND RECALL enrichment on `go test`), how should their responses compose? First-deny-wins? Merge all advisory context?
+1. **Process lifecycle**: Since EDI uses `syscall.Exec`, the sidecar must be a separate process. EDI starts it in the background before exec'ing Claude Code. What's the cleanest way to ensure it shuts down when the Claude Code session ends? PID file + signal? Automatic exit on stdin close?
+2. **Settings file ownership**: `.claude/settings.json` may have user customizations beyond hooks. EDI should merge, not overwrite — same pattern as `UpdateMCPConfig` for `.mcp.json`.
+3. **Migration path**: Should `task-sync-hook` (currently a command hook) migrate to webhook format, or keep both patterns? The command hook is simpler for its purpose — no reason to change it unless maintaining both becomes burdensome.
+4. **Command hook alternative**: For the three policies identified, would command hooks (which AEF already uses for `task-sync-hook`) be simpler than webhook hooks? Command hooks avoid the HTTP server lifecycle entirely. The trade-off is that webhook hooks are more natural for a future team/shared service, while command hooks are simpler for local-only use.
