@@ -108,16 +108,19 @@ codex/
 ## Development
 
 ```bash
-make build    # Build all binaries
-make test     # Run tests
-make lint     # Run linter
-make fmt      # Format code
+make build      # Build all binaries
+make test       # Run tests
+make test-eval  # Run retrieval eval (requires Ollama)
+make test-judge # Run full eval suite (requires Ollama + Anthropic API)
+make lint       # Run linter
+make fmt        # Format code
 ```
 
 ## Further Reading
 
 - [AEF Overview](../README.md) — the big picture, quick start, and component map
 - [EDI + Codex Technical Deep-Dive](../docs/edi-codex-deep-dive.md) — full system architecture and data flows
+- [Evaluation Framework](eval/README.md) — eval harness, metrics, benchmarks, and how to run
 
 ## License
 
