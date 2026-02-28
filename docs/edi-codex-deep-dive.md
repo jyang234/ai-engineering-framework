@@ -1289,64 +1289,53 @@ Admin CLI for indexing, searching, migration, and server management. Each subcom
 
 ### `codex-testgen` (`cmd/codex-testgen/main.go`)
 
-Serves the PayFlow evaluation test collection as a REST API on `:8088`. Endpoints: `/`, `/documents`, `/documents/:id`, `/queries`, `/queries/:id`, `/export`.
-
-### `aef-eval` (`cmd/aef-eval/main.go`)
-
-Evaluation CLI for running controlled experiments. Requires `-tags fts5` build tag.
-
-```
-Subcommands:
-  run     -- Execute evaluation runs (pipe or agent strategy)
-  score   -- Score a completed run (tests, lint, pitfalls, LLM judge)
-  report  -- Generate condition comparison reports (text or JSON)
-  list    -- List tasks, runs, or experiments
-```
+Serves the PayFlow evaluation test collection as a REST API on `:8088`. Primarily used during eval development. Endpoints: `/`, `/documents`, `/documents/:id`, `/queries`, `/queries/:id`, `/export`.
 
 ---
 
 ## 16. Evaluation
 
 **Path:** `codex/eval/`
+**Quick start:** See [`codex/eval/README.md`](../codex/eval/README.md)
 
-The evaluation framework measures whether AEF's components (RECALL, skills, agents) actually improve outcomes. It is structured in four levels, from individual component tests to controlled A/B comparisons.
+The evaluation framework tests whether RECALL's tools work correctly: indexing, retrieval quality, MCP protocol, LLM judge filtering, and end-to-end round-trips. It answers "do the tools work?" — not "does Claude write better code with RECALL?" (the latter is a prompting question; see Implementation History below).
 
 ### Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                       aef-eval CLI                              │
-│  run | score | report | list                                    │
+│  Integration Tests                                               │
+│  TestE2E · TestJudge · TestRoundTrip                             │
 ├─────────────────────────────────────────────────────────────────┤
-│  Level 1: EvalHarness     │  Level 2-4: Runners + Scorer       │
-│  ─────────────────────    │  ──────────────────────────         │
-│  MCP protocol tests       │  PipeRunner (Strategy B)           │
-│  Index/retrieve verify    │  AgentRunner (Strategy C1)         │
-│  Retrieval metrics        │  Scorer (tests + lint + judge)     │
-│  Feedback + flight log    │  Stats (Mann-Whitney, Bootstrap)   │
-│  Audit trail              │  L3 Reports (comparisons, claims)  │
-├───────────────────────────┴─────────────────────────────────────┤
-│  Shared Infrastructure                                          │
-│  ─────────────────────                                          │
-│  Conditions (baseline, aef-minimal, aef-full)                   │
-│  ResultsDB (SQLite for run data)                                │
-│  TestCollection (PayFlow ground truth)                          │
-│  AnthropicClient (LLM-as-judge)                                 │
-└─────────────────────────────────────────────────────────────────┘
+│  EvalHarness (harness.go)       │  AnthropicClient (judge.go)   │
+│  ─────────────────────────      │  ──────────────────────────    │
+│  MCP protocol check             │  LLM-as-judge (Claude Sonnet) │
+│  Index/retrieve verify          │  Relevance judgments           │
+│  Retrieval metrics (IR)         │  Judge precision/recall/F1     │
+│  Feedback + flight recorder     │  False filtering rate          │
+│  Audit trail                    │                                │
+├─────────────────────────────────┴────────────────────────────────┤
+│  Infrastructure                                                   │
+│  ──────────────                                                   │
+│  MCPClient (JSON-RPC via io.Pipe, in-process)                    │
+│  TestCollection (PayFlow: 30 docs, 20 queries, 3 categories)    │
+│  IR Metrics (Recall@K, Precision@K, nDCG, MRR)                  │
+│  Judge Metrics (precision, recall, F1, filtering, FFR)           │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-### Level 1: Component Evaluation (`harness.go`)
+### EvalHarness (`harness.go`)
 
-`EvalHarness` runs end-to-end evaluation against a real SearchEngine with a temp SQLite database. The full pipeline has 8 phases:
+Runs end-to-end evaluation against a real SearchEngine with a temp SQLite database and real Ollama embeddings. Nothing is mocked. The full pipeline has 8 phases:
 
-1. **Boot** -- create MCP client, perform initialize handshake
-2. **Verify Protocol** -- list tools, confirm all 5 present
-3. **Index Collection** -- add all PayFlow test documents via `recall_add`
-4. **Verify Indexed** -- retrieve each document via `recall_get`
-5. **Run Retrieval** -- search all queries, compute metrics
-6. **Test Feedback** -- verify `recall_feedback` works
-7. **Test Flight Recorder** -- verify `flight_recorder_log` works
-8. **Test Audit Trail** -- verify `recall_search` auto-logs retrieval_query entries
+1. **Boot** — create MCP client via `io.Pipe`, perform initialize handshake
+2. **Verify Protocol** — list tools, confirm all 5 present
+3. **Index Collection** — add all 30 PayFlow test documents via `recall_add`
+4. **Verify Indexed** — retrieve each document via `recall_get`
+5. **Run Retrieval** — search all 20 queries, compute IR metrics
+6. **Test Feedback** — verify `recall_feedback` works
+7. **Test Flight Recorder** — verify `flight_recorder_log` works
+8. **Test Audit Trail** — verify `recall_search` auto-logs `retrieval_query` entries
 
 ### Retrieval Metrics (`metrics.go`)
 
@@ -1357,105 +1346,40 @@ All metrics operate on ordered lists of document IDs:
 | Precision@K | `PrecisionAtK(retrieved, relevant, k)` | Fraction of top-K results that are relevant |
 | Recall@K | `RecallAtK(retrieved, relevant, k)` | Fraction of relevant items found in top-K |
 | MRR | `MRR(retrieved, relevant)` | 1/rank of first relevant result |
-| NDCG@K | `NDCG(retrieved, relevant, k)` | Normalized DCG. Relevance scores assigned by position in ground truth list (first = highest) |
+| NDCG@K | `NDCG(retrieved, relevant, k)` | Normalized DCG with position-weighted relevance |
 
 ### LLM Judge (`judge.go`)
 
-`JudgeHarness` wraps the eval harness and adds LLM-as-judge evaluation using Claude Sonnet (`claude-sonnet-4-20250514`) via the Anthropic Messages API.
+`JudgeHarness` wraps the eval harness and adds LLM-as-judge evaluation using Claude Sonnet via the Anthropic Messages API.
 
 For each query:
 1. Search via MCP
-2. Build a numbered result list prompt
-3. Send to Claude with a retrieval-judge skill prompt
+2. Build a numbered result list prompt with title, type, score, and 300-char content snippet
+3. Send to Claude with a retrieval-judge prompt
 4. Parse JSON response: `{"relevant_results": [1, 3], "reasoning": "..."}`
-5. Compute judge precision, recall, F1, filtering rate
+5. Compute judge precision, recall, F1, filtering rate, false filtering rate
 
-### Level 2-4: Controlled Experiments
+### MCP Round-Trip (`roundtrip_test.go`)
 
-#### Conditions (`condition.go`)
+Proves RECALL's core value loop: items added via `recall_add` are retrievable via `recall_search`. Five subtests:
 
-Three evaluation conditions control what the agent has access to:
+1. **AddThenSearch** — add an item, search for it, verify it appears in results
+2. **SemanticMatch** — add an item, search with semantically similar but keyword-different query
+3. **ScopeIsolation** — items in scope A are not returned for scope B queries
+4. **FlightRecorderAudit** — verify search operations are automatically logged
+5. **FeedbackRoundTrip** — verify `recall_feedback` records without error
 
-| Condition | System Prompt | RECALL | Skills |
-|-----------|--------------|--------|--------|
-| `baseline` | None (vanilla Claude Code) | No | No |
-| `aef-minimal` | Agent prompt only | No | No |
-| `aef-full` | Agent + all skills | Yes (seeded) | All 7 |
+### Report Generation (`report.go`)
 
-`NewCondition(name, skillDir, seeds)` loads skill files from disk, assembles the system prompt, and configures RECALL tool access. The condition is passed to runners for each experiment run.
-
-#### Pipe Runner (`runner_pipe.go`)
-
-Strategy B: uses `claude -p` (pipe mode) for single-shot code generation. Fastest execution, no tool use. The task spec + system prompt is piped to Claude, output is captured, then scored.
-
-#### Agent Runner (`runner_agent.go`)
-
-Strategy C1: synthetic agent with multi-turn tool-use loop. Calls the Anthropic Messages API directly, proxying RECALL tools to a real MCP server. Turn limits by complexity:
-
-| Complexity | Max Turns |
-|-----------|-----------|
-| simple | 25 |
-| moderate | 35 |
-| complex | 50 |
-
-The agent receives the task spec, can call RECALL tools (search, add, feedback), and iterates until it produces a solution or hits the turn limit.
-
-#### Scorer (`scorer.go`)
-
-Evaluates completed runs across 5 dimensions:
-
-| Dimension | Method | Source |
-|-----------|--------|--------|
-| **Correctness** | Run `go test`, compute pass rate | Automated |
-| **Code quality** | Run linter, count violations | Automated |
-| **Pitfall avoidance** | Check for known anti-patterns | Grep / test / LLM judge |
-| **Completeness** | Judge assessment of spec coverage | LLM judge (Claude Sonnet) |
-| **Efficiency** | Judge assessment of process data (turns, retries) | LLM judge (Claude Sonnet) |
-
-The LLM judge receives the task spec, generated code, process data (turn count, action summary), and pitfall results. It returns structured scores for correctness, code quality, pitfall avoidance, completeness, and efficiency — each on a 1-5 scale. A composite `judge_combined` score is computed as a weighted average.
-
-Pitfall detection supports three methods:
-- **grep** — regex pattern match against source files
-- **test** — check if a named test passes
-- **judge** — ask the LLM whether a specific anti-pattern was avoided
-
-#### Statistical Analysis (`stats.go`)
-
-Implements the statistical tests required for rigorous condition comparisons:
-
-| Test | Purpose | Used In |
-|------|---------|---------|
-| **Mann-Whitney U** | Compare two independent samples (e.g., baseline vs. aef-full) | Experiment 3A |
-| **Bootstrap CI** | 95% confidence intervals via 10K resamples | All experiments |
-| **Wilcoxon signed-rank** | Paired comparison (same task, different conditions) | Experiment 3B |
-| **Spearman correlation** | Rank correlation for trend analysis | Experiment 3C |
-
-All tests report effect sizes and significance at p < 0.05.
-
-#### Results Database (`results.go`)
-
-SQLite database for storing and querying evaluation runs. Schema:
-
-- `runs` table: run_id, experiment, condition, task_id, complexity, model, attempt, timestamps, all metric fields (test_pass_rate, judge scores, pitfall counts, token usage, turn count)
-- Query methods: `QueryByExperiment`, `QueryByCondition`, `GetRun`, `ListExperiments`
-
-#### Report Generation (`report.go`, `report_l3.go`)
-
-Two report levels:
-
-**Level 1 report** (`FullEvalReport`):
-- MCP protocol verification
+Produces `FullEvalReport` with:
+- MCP protocol verification status
 - Document index/verify counts
 - Feedback and flight recorder status
 - Audit trail results
-- Per-pipeline retrieval quality metrics (Precision@K, Recall@K, MRR, NDCG)
+- Per-query retrieval quality metrics (Precision@K, Recall@K, MRR, NDCG)
 - Per-category NDCG breakdown (semantic, keyword, hybrid-advantage)
 
-**Level 3 report** (`ExperimentReport`):
-- Condition comparison tables with means, CIs, and statistical tests
-- Claim validation (threshold vs. measured, pass/fail)
-- Per-experiment scorecards
-- Cross-experiment summary via `FormatScorecard`
+Output formats: text summary and full JSON.
 
 ### Retrieval-Judge Skill (In-Session Quality Layer)
 
@@ -1503,81 +1427,44 @@ Together these entries form a complete audit trail from query to judgment, enabl
 
 The PayFlow scenario: a realistic set of knowledge items about a payment processing system. Includes documents covering API design, error handling, idempotency, webhook patterns, and more. Queries are categorized as `semantic`, `keyword`, or `hybrid-advantage` to test different retrieval strengths.
 
-### `aef-eval` CLI (`cmd/aef-eval/`)
-
-Entry point for running evaluations. Four subcommands:
-
-| Command | Purpose | Key Flags |
-|---------|---------|-----------|
-| `run` | Execute evaluation runs | `--experiment`, `--condition`, `--task-dir`, `--strategy` (pipe/agent) |
-| `score` | Score a completed run | `--run-id`, `--task-dir` |
-| `report` | Generate comparison reports | `--experiment`, `--all`, `--format` (text/json) |
-| `list` | List tasks, runs, experiments | `--tasks`, `--runs`, `--experiments` |
-
-**Typical workflow:**
+### Running the Eval
 
 ```bash
-# 1. Build
-cd codex && CGO_ENABLED=1 go build -tags fts5 ./cmd/aef-eval
+# Unit tests only (no external dependencies)
+cd codex && go test -tags "fts5" ./eval/...
 
-# 2. Run baseline condition
-aef-eval run --experiment 3A --condition baseline --task-dir ./tasks --strategy pipe
+# Full E2E retrieval eval (Ollama required, ~15 min)
+cd codex && make test-eval
 
-# 3. Run AEF-full condition
-aef-eval run --experiment 3A --condition aef-full --task-dir ./tasks --skill-dir ~/.claude/skills/ --strategy pipe
+# Full suite including LLM judge (Ollama + ANTHROPIC_API_KEY required, ~45 min)
+cd codex && make test-judge
 
-# 4. Score all runs
-aef-eval score --run-id <baseline-run-id> --task-dir ./tasks
-aef-eval score --run-id <aef-full-run-id> --task-dir ./tasks
-
-# 5. Compare conditions
-aef-eval report --experiment 3A --format text
+# Individual test
+cd codex && go test -tags "fts5 evalintegration" -v -timeout 10m -run TestRoundTrip ./eval/
 ```
 
-### Task Corpus Format
+### Implementation History
 
-Evaluation tasks live in a task directory as YAML files. Each task specifies:
-
-```yaml
-id: "error-handler-001"
-complexity: "moderate"          # simple, moderate, complex
-spec: |
-  Implement an HTTP error handler middleware that...
-pitfalls:
-  - id: "swallowed-errors"
-    description: "Errors logged but not propagated to caller"
-    detection:
-      method: grep              # grep, test, or judge
-      pattern: "return err"
-      files: ["*.go"]
-  - id: "missing-status-code"
-    description: "Response sent without explicit status code"
-    detection:
-      method: judge
-      pattern: "Does the error handler set appropriate HTTP status codes?"
-```
+Level 3-4 evaluation infrastructure (synthetic agent runner, pipe-mode runner, scoring pipeline, stats engine, results DB, 15-task corpus, and CLI) was fully implemented (~16,740 lines) and intentionally removed in commit `32e6b58` (2026-02-28). The L3 infrastructure tested "does Claude write better code with pitfall knowledge?" — a prompting question answerable with a simple script. The stated goal is "do the tools work?" — answered by Level 1 component evaluation. See `docs/architecture/aef-evaluation-framework.md` for the full design history and experiment specifications.
 
 ### Eval Module Map
 
 | File | Purpose |
 |------|---------|
-| `harness.go` | Level 1: 8-phase MCP + retrieval evaluation |
+| `harness.go` | 8-phase evaluation pipeline |
+| `harness_test.go` | `TestE2E`: full pipeline integration test (6 subtests) |
 | `judge.go` | LLM-as-judge via Anthropic Messages API |
-| `judge_metrics.go` | Judge precision, recall, F1, filtering rate |
-| `metrics.go` | Retrieval metrics: P@K, R@K, MRR, NDCG |
-| `condition.go` | Condition definitions: baseline, aef-minimal, aef-full |
-| `runner_pipe.go` | Strategy B: single-shot pipe mode execution |
-| `runner_agent.go` | Strategy C1: multi-turn agent with tool-use loop |
-| `scorer.go` | Multi-dimensional scoring: tests, lint, pitfalls, LLM judge |
-| `stats.go` | Statistical tests: Mann-Whitney U, Bootstrap CI, Wilcoxon, Spearman |
-| `results.go` | SQLite results database for run storage and queries |
-| `report.go` | Level 1 report generation |
-| `report_l3.go` | Level 3-4 reports: condition comparisons, claim validation, scorecards |
-| `testdata_payflow.go` | PayFlow test collection: documents + ground truth queries |
-| `agent_tools.go` | RECALL tool proxy for agent runner |
-| `plan_review.go` | Plan review evaluation integration |
-| `groundtruth.go` | Ground truth loading and matching |
-| `mcpclient.go` | MCP client for harness communication |
+| `judge_test.go` | `TestJudge`: judge quality + audit trail (2 subtests) |
+| `judge_metrics.go` | Judge precision, recall, F1, filtering rate, false filtering rate |
+| `judge_metrics_test.go` | 18 unit tests for judge metrics math |
+| `metrics.go` | IR metrics: Recall@K, Precision@K, nDCG, MRR |
+| `metrics_test.go` | Unit tests for all 4 IR metrics |
+| `report.go` | Text + JSON report formatting |
+| `mcpclient.go` | JSON-RPC client for MCP server (in-process via io.Pipe) |
+| `testdata.go` | TestDoc/TestQuery/TestCollection types |
+| `testdata_payflow.go` | PayFlow: 30 docs, 20 ground-truth queries, 3 categories |
+| `roundtrip_test.go` | `TestRoundTrip`: MCP add→search→feedback (5 subtests) |
+| `groundtruth.go` | Ground truth annotation types |
 
 ---
 

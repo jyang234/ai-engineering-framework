@@ -9,7 +9,7 @@ AEF gives Claude Code persistent memory, specialized agents, and session continu
 - **Specialized agents** — Four modes (coder, architect, reviewer, incident) with different system prompts and priorities. They guide behavior through prompting but do not enforce constraints — Claude can still do whatever it wants.
 - **Hybrid search (Codex backend)** — Combines vector similarity with FTS5 keyword matching via RRF fusion. Requires Ollama running locally with nomic-embed-text. Without Ollama, falls back to keyword-only (v0 backend), which still works fine for exact queries.
 - **Session memory** — Uses Claude Code's memory tool (`/memories/`) as a session cache for decisions and insights. Important items are promoted to RECALL at session end via `/end`. Project instructions live in `CLAUDE.md` (loaded natively by Claude Code).
-- **Evaluation framework** — Measure whether RECALL and skills actually help. The `aef-eval` CLI runs controlled experiments comparing baseline Claude Code against AEF-enhanced sessions. Includes LLM-as-judge scoring, statistical tests, and retrieval quality metrics.
+- **Evaluation framework** — Measure whether RECALL's tools work correctly. Integration tests verify retrieval quality (Recall@5: 0.83, nDCG@10: 0.78), LLM-as-judge filtering, MCP protocol, and end-to-end round-trips. See `codex/eval/README.md`.
 - **Local-first** — Single SQLite file, local embeddings, no API keys for core features. Privacy and offline-capable. Tradeoff: local embedding model (nomic-embed-text) is good but not as strong as cloud embedding APIs.
 
 ## How It Works
@@ -105,75 +105,38 @@ Skills are installed to `~/.claude/skills/` by `edi init --global` and loaded in
 
 ## Evaluation Framework
 
-AEF includes a structured evaluation system for measuring whether RECALL retrieval, skills, and agents actually improve code generation outcomes. The framework is designed to produce evidence, not assumptions.
+AEF includes an evaluation system for measuring whether RECALL's tools work correctly. The framework tests retrieval quality, MCP protocol correctness, LLM judge filtering, and end-to-end round-trips. It answers "do the tools work?" — not "does Claude write better code?" (see [eval framework spec](docs/architecture/aef-evaluation-framework.md) for the design rationale).
 
 ### What It Measures
 
 | Dimension | How | Tool |
 |-----------|-----|------|
-| **Retrieval quality** | Precision@K, Recall@K, MRR, NDCG against ground truth | `EvalHarness` |
-| **Retrieval filtering** | LLM-as-judge relevance assessment of search results | `JudgeHarness` |
-| **Code generation quality** | Correctness, code quality, pitfall avoidance, completeness, efficiency | `Scorer` (LLM judge + tests + lint) |
-| **AEF vs. baseline** | Controlled A/B: baseline Claude Code vs. AEF-minimal vs. AEF-full | `aef-eval` CLI |
-| **Statistical rigor** | Mann-Whitney U, bootstrap CIs, Wilcoxon signed-rank, Spearman correlation | `stats` module |
-
-### Evaluation Levels
-
-- **Level 1 (Component)** — Implemented. Tests individual components: MCP protocol, indexing, search quality, feedback, flight recorder, audit trail. Run via `EvalHarness`.
-- **Level 2 (Integration)** — Implemented. Tests RECALL + skills together in multi-turn agent loops. Uses `AgentRunner` (synthetic Claude agent with tool-use loop) or `PipeRunner` (Claude pipe mode).
-- **Level 3 (System)** — Implemented. Compares three conditions (baseline, aef-minimal, aef-full) across experiments. Generates condition comparison tables, claim validation, and scorecards.
-- **Level 4 (Comparative)** — Infrastructure ready. Cross-experiment trend analysis using Spearman correlation. Requires experiment data to produce results.
+| **Retrieval quality** | Precision@K, Recall@K, MRR, NDCG against 20 ground-truth queries | `EvalHarness` |
+| **Retrieval filtering** | LLM-as-judge relevance assessment with false filtering rate | `JudgeHarness` |
+| **MCP round-trip** | Add items via MCP, search via MCP, verify results | `TestRoundTrip` |
+| **Protocol correctness** | Initialize handshake, tool listing, feedback, flight recorder | `TestE2E` |
 
 ### Running Evaluations
 
 ```bash
-# Build the eval CLI
-cd codex && CGO_ENABLED=1 go build -tags fts5 ./cmd/aef-eval
+# Unit tests (no external dependencies)
+cd codex && go test -tags "fts5" ./eval/...
 
-# Run a retrieval quality evaluation (requires Ollama)
-cd codex && go test -tags fts5 -run TestEvalHarness ./eval/
+# Retrieval quality (requires Ollama with nomic-embed-text)
+cd codex && make test-eval
 
-# Run a controlled experiment (pipe mode)
-aef-eval run --experiment 3A --condition baseline --task-dir ./tasks --strategy pipe
-
-# Run with AEF skills enabled
-aef-eval run --experiment 3A --condition aef-full --task-dir ./tasks --skill-dir ~/.claude/skills/ --strategy pipe
-
-# Run with synthetic agent (multi-turn tool-use loop)
-aef-eval run --experiment 3A --condition aef-full --task-dir ./tasks --strategy agent
-
-# Score a completed run
-aef-eval score --run-id <id> --task-dir ./tasks
-
-# Generate reports
-aef-eval report --experiment 3A --format text
-aef-eval report --all --format json
-
-# List available tasks and runs
-aef-eval list --tasks --task-dir ./tasks
-aef-eval list --runs
-aef-eval list --experiments
+# Full suite including LLM judge (requires Ollama + ANTHROPIC_API_KEY)
+cd codex && make test-judge
 ```
 
-### Task Corpus Format
+### Benchmark Results
 
-Evaluation tasks are YAML files in a task directory:
+| Model | Recall@5 | nDCG@10 | MRR |
+|-------|----------|---------|-----|
+| nomic-embed-text (local) | 0.83 | 0.78 | 0.84 |
+| Voyage Code-3 (API) | 0.86 | 0.78 | 0.79 |
 
-```yaml
-id: "error-handler-001"
-complexity: "moderate"    # simple, moderate, complex
-spec: |
-  Implement an HTTP error handler middleware...
-pitfalls:
-  - id: "swallowed-errors"
-    description: "Errors logged but not propagated"
-    detection:
-      method: grep          # grep, test, or judge
-      pattern: "return err"
-      files: ["*.go"]
-```
-
-See [AEF Evaluation Framework](docs/architecture/aef-evaluation-framework.md) for the full specification, experiment designs, and claim validation methodology.
+See [codex/eval/README.md](codex/eval/README.md) for full benchmark data, component details, and test instructions. See [AEF Evaluation Framework](docs/architecture/aef-evaluation-framework.md) for the experiment design history and Level 2-4 specifications.
 
 ## Ralph Loop
 
@@ -220,12 +183,13 @@ See [edi/README.md](edi/README.md#ralph-loop) for usage details and [Ralph Loop 
 
 **Codex v1**: Substantially complete. Hybrid search (vector KNN + FTS5 + RRF fusion), MCP server with 5 tools, AST chunking (7 languages via Tree-sitter), markdown chunking, web UI, admin CLI, and v0-to-v1 migration. Reranking and contextual chunking are stubbed — search works without them.
 
-**Evaluation**: Infrastructure complete across all 4 levels. `aef-eval` CLI supports run, score, report, and list commands. Statistical analysis (Mann-Whitney U, bootstrap CIs, Wilcoxon, Spearman) is implemented. Experiment data collection is the next step.
+**Evaluation**: Level 1 component evaluation is implemented and runnable (retrieval quality, judge filtering, MCP round-trip, audit trail). Level 3-4 infrastructure was built and intentionally removed — it tested prompting effectiveness, not tool quality. See `codex/eval/README.md`.
 
 ## Further Reading
 
 - [EDI + Codex Technical Deep-Dive](docs/edi-codex-deep-dive.md) — full system architecture, data flows, eval framework, and operational guide
-- [AEF Evaluation Framework](docs/architecture/aef-evaluation-framework.md) — experiment designs, claim validation, statistical methods
+- [AEF Evaluation Framework](docs/architecture/aef-evaluation-framework.md) — experiment designs, implementation history, claim validation methodology
+- [Eval Quick Start](codex/eval/README.md) — how to run the eval, components, benchmark results
 - [AEF Components Overview](docs/aef-components.md)
 - [RECALL MCP Server Spec](docs/architecture/recall-mcp-server-spec.md)
 - [EDI Session Lifecycle](docs/architecture/edi-session-lifecycle-spec.md)

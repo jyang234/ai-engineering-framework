@@ -402,9 +402,11 @@ Assert:
 
 ## Gap 3: Add→Search Round-Trip (`codex/eval/roundtrip_test.go`)
 
+> **Status: IMPLEMENTED** — `roundtrip_test.go` was added in commit `71df634` with all 5 subtests described below.
+
 ### What it proves
 
-RECALL's core value loop: knowledge added in one operation is retrievable by search in a later operation. This is the single most important integration test missing from the codebase.
+RECALL's core value loop: knowledge added in one operation is retrievable by search in a later operation.
 
 ### Setup pattern
 
@@ -904,7 +906,7 @@ Tests:
 |---|---|---|---|---|---|
 | MCP server | `codex/internal/mcp/server_test.go` | 8 | ~450 | None (io.Pipe + mock) | Claude Code can talk to RECALL correctly |
 | Embedding client | `codex/internal/embedding/local_test.go` | 8 | ~250 | None (httptest) | Embeddings generate correctly, retries work |
-| Add→search round-trip | `codex/eval/roundtrip_test.go` | 5 | ~300 | Ollama | Knowledge added is knowledge found |
+| ~~Add→search round-trip~~ | `codex/eval/roundtrip_test.go` | 5 | ~300 | Ollama | **DONE** — Knowledge added is knowledge found |
 | Hook config | Extend existing files | 1-2 | ~50 | None | Hook instructions are correct |
 | Chunking | `codex/internal/chunking/ast_test.go` + `markdown_test.go` | 14 | ~400 | None (tree-sitter is pure Go) | Code and docs split into correct, meaningful chunks |
 | **Total** | **4 new files** | **~37** | **~1,450** | | |

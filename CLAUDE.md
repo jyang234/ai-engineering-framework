@@ -21,7 +21,7 @@ EDI configures the session then replaces itself (`syscall.Exec`) with Claude Cod
 | Tasks | `edi/internal/tasks/` | Task management, manifest, annotations, git sync |
 | RECALL MCP | `codex/internal/mcp/` | JSON-RPC server: recall_search, recall_add, recall_get, recall_feedback, flight_recorder_log |
 | Search Engine | `codex/internal/core/` | Hybrid search: vector cosine similarity + FTS5 BM25 + RRF fusion |
-| Eval | `codex/eval/` | Evaluation harnesses, judges, metrics |
+| Eval | `codex/eval/` | Level 1 component evaluation: retrieval quality, judge filtering, MCP round-trip |
 
 ### Data Flow
 

@@ -91,6 +91,8 @@ These tests prove the **logic** is correct but not that the **integrations** wor
 
 ## What's Overbuilt (L3 Eval Corpus Infrastructure)
 
+> **Outcome**: Based on this audit's findings, the L3 infrastructure described below was removed on 2026-02-28 (commit `32e6b58`). The `roundtrip_test.go` gap was also filled. See `aef-evaluation-framework.md` Implementation History.
+
 ### The numbers
 
 | Component | Source Lines | Test Lines | Test Functions |
@@ -169,7 +171,7 @@ Tests that prove the tools work:
 ├── codex/eval/harness_test.go                ← EXISTS: PayFlow E2E (Recall, nDCG, MRR)
 ├── codex/eval/judge_test.go                  ← EXISTS: LLM judge quality
 ├── codex/eval/metrics_test.go                ← EXISTS: IR math
-├── codex/eval/roundtrip_test.go              ← NEW: add→search across sessions
+├── codex/eval/roundtrip_test.go              ← ADDED: add→search across sessions (5 subtests)
 ├── edi/internal/launch/*_test.go             ← EXISTS: config, commands, MCP, recovery
 ├── edi/internal/cli/*_test.go                ← EXISTS: needs 8 more command tests
 ├── edi/internal/recall/*_test.go             ← EXISTS: server + integration
@@ -178,8 +180,7 @@ Tests that prove the tools work:
 ├── edi/internal/integration/*_test.go        ← EXISTS: E2E session lifecycle
 └── edi/hooks_test.go                         ← NEW: hook execution verification
 
-Tests that prove prompting helps (optional, relabel):
-└── codex/eval/corpus/                        ← EXISTS: 15 tasks, keep or simplify
+(L3 corpus was removed 2026-02-28 — see eval-framework.md Implementation History)
 ```
 
 ---
@@ -196,10 +197,13 @@ cd codex && go test -race -tags "fts5" ./internal/core/... ./internal/storage/..
 # Codex eval L1 tests (need Ollama)
 cd codex && go test -tags "fts5 evalintegration" ./eval/... -run TestE2E -timeout 15m
 
-# Codex eval L2 tests (need Ollama + Anthropic API key)
+# Codex eval judge tests (need Ollama + Anthropic API key)
 cd codex && go test -tags "fts5 evalintegration" ./eval/... -run TestJudge -timeout 30m
 
-# Codex eval L3 tests (test own infrastructure mocks only)
+# Codex eval round-trip tests (need Ollama)
+cd codex && go test -tags "fts5 evalintegration" ./eval/... -run TestRoundTrip -timeout 10m
+
+# Codex eval unit tests (no external deps)
 cd codex && go test -tags "fts5" ./eval/... -timeout 5m
 
 # Packages with ZERO test coverage

@@ -1,6 +1,6 @@
 # Codex v1 Implementation Plan (RECALL Upgrade)
 
-> **Implementation Status (January 31, 2026):** Technology choices superseded by ADRs: codex-storage-architecture-decision.md (SQLite over Qdrant) and codex-embedding-model-decision.md (nomic-embed-text over Voyage/OpenAI). Reranking not implemented. Contextual chunking stubbed.
+> **SUPERSEDED** — This plan describes the initial design (Jan 2026). The actual implementation differs significantly. Key differences: SQLite with BLOB vectors instead of Qdrant, nomic-embed-text (local via Ollama) instead of Voyage/OpenAI, reranking stubbed, contextual chunking not implemented. See ADRs `codex-storage-architecture-decision.md` and `codex-embedding-model-decision.md` for rationale, and `codex/README.md` for the current architecture.
 
 **Version**: 1.0
 **Created**: January 25, 2026
