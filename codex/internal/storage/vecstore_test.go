@@ -242,6 +242,154 @@ func TestVecStore_Persistence(t *testing.T) {
 	}
 }
 
+// =============================================================================
+// Cross-process cache invalidation tests (Change 5)
+// =============================================================================
+
+func TestVecStore_DetectsExternalInsert(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "vecstore-xproc-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	dbPath := filepath.Join(tmpDir, "test.db")
+	ctx := context.Background()
+
+	// Open two VecStore instances on the same DB (simulating two processes)
+	dbA, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dbA.Close()
+
+	storeA, err := NewVecStore(dbA)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dbB, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dbB.Close()
+
+	storeB, err := NewVecStore(dbB)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Insert via store A
+	if err := storeA.Upsert(ctx, "ext-item", []float32{1.0, 0.0, 0.0}); err != nil {
+		t.Fatalf("Upsert via A: %v", err)
+	}
+
+	// Force stale check on store B by resetting lastCheckTime
+	storeB.mu.Lock()
+	storeB.lastCheckTime = storeB.lastCheckTime.Add(-2 * vectorCacheCheckInterval)
+	storeB.mu.Unlock()
+
+	// Search on store B — should detect the external insert and find the item
+	results, err := storeB.Search(ctx, []float32{1.0, 0.0, 0.0}, 10)
+	if err != nil {
+		t.Fatalf("Search on B: %v", err)
+	}
+	if len(results) != 1 {
+		t.Errorf("expected store B to find 1 result after external insert, got %d", len(results))
+	}
+}
+
+func TestVecStore_DetectsExternalDelete(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "vecstore-xproc-del-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	dbPath := filepath.Join(tmpDir, "test.db")
+	ctx := context.Background()
+
+	// Shared DB
+	dbA, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dbA.Close()
+
+	storeA, err := NewVecStore(dbA)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Insert an item that both stores will see at init
+	if err := storeA.Upsert(ctx, "will-delete", []float32{1.0, 0.0, 0.0}); err != nil {
+		t.Fatal(err)
+	}
+
+	dbB, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dbB.Close()
+
+	storeB, err := NewVecStore(dbB)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify B can find the item
+	results, _ := storeB.Search(ctx, []float32{1.0, 0.0, 0.0}, 10)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result before delete, got %d", len(results))
+	}
+
+	// Delete via store A
+	if err := storeA.Delete(ctx, "will-delete"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Force stale check on B
+	storeB.mu.Lock()
+	storeB.lastCheckTime = storeB.lastCheckTime.Add(-2 * vectorCacheCheckInterval)
+	storeB.mu.Unlock()
+
+	// Search on B — should detect the external delete
+	results, _ = storeB.Search(ctx, []float32{1.0, 0.0, 0.0}, 10)
+	if len(results) != 0 {
+		t.Errorf("expected 0 results after external delete, got %d", len(results))
+	}
+}
+
+func TestVecStore_RateLimitsCheck(t *testing.T) {
+	vs, cleanup := createTestVecStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Insert an item so there's something to search
+	vs.Upsert(ctx, "item", []float32{1.0, 0.0, 0.0})
+
+	// First search will do the stale check (lastCheckTime is zero)
+	vs.Search(ctx, []float32{1.0, 0.0, 0.0}, 10)
+
+	// Record the check time
+	vs.mu.RLock()
+	checkAfterFirst := vs.lastCheckTime
+	vs.mu.RUnlock()
+
+	// Second search immediately after — should be rate-limited, not update lastCheckTime
+	vs.Search(ctx, []float32{1.0, 0.0, 0.0}, 10)
+
+	vs.mu.RLock()
+	checkAfterSecond := vs.lastCheckTime
+	vs.mu.RUnlock()
+
+	if !checkAfterFirst.Equal(checkAfterSecond) {
+		t.Errorf("expected rate-limited check (same timestamp), but got different: %v vs %v",
+			checkAfterFirst, checkAfterSecond)
+	}
+}
+
 func TestNormalize(t *testing.T) {
 	v := normalize([]float32{3.0, 4.0})
 	if math.Abs(float64(v[0])-0.6) > 0.001 || math.Abs(float64(v[1])-0.8) > 0.001 {

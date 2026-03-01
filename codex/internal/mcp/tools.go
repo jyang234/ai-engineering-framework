@@ -3,9 +3,9 @@ package mcp
 import (
 	"context"
 	"fmt"
-	"time"
-
+	"log/slog"
 	"os"
+	"time"
 
 	"github.com/anthropics/aef/codex/internal/core"
 	"github.com/google/uuid"
@@ -139,12 +139,22 @@ func (h *ToolHandler) handleSearch(ctx context.Context, args map[string]interfac
 	}
 
 	// Surface degradation warning when embedding was unavailable
+	var degraded bool
 	for _, r := range results {
 		if r.Degraded {
 			response["warning"] = "Results are keyword-only: embedding service unavailable"
+			degraded = true
 			break
 		}
 	}
+
+	slog.Info("recall_search",
+		"session_id", h.sessionID,
+		"query_len", len(query),
+		"result_count", len(results),
+		"top_score", topScore,
+		"degraded", degraded,
+	)
 
 	return response, nil
 }

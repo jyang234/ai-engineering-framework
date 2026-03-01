@@ -881,7 +881,7 @@ func TestEngineErrorPropagation(t *testing.T) {
 		return nil, embedErr
 	}
 
-	t.Run("search_embed_error", func(t *testing.T) {
+	t.Run("search_embed_degrades_gracefully", func(t *testing.T) {
 		ts := setupTestServer(t, nil, nil, failEmbed)
 		defer ts.cleanup()
 
@@ -890,13 +890,17 @@ func TestEngineErrorPropagation(t *testing.T) {
 		if err != nil {
 			t.Fatalf("recv: %v", err)
 		}
-		parsed, isError, _ := parseToolResult(resp)
-		if !isError {
-			t.Fatal("expected isError=true for embed error")
+		parsed, isError, err := parseToolResult(resp)
+		if err != nil {
+			t.Fatalf("parseToolResult: %v", err)
 		}
-		raw, _ := parsed["_raw"].(string)
-		if !strings.Contains(raw, "failed to embed query") {
-			t.Errorf("error %q does not contain %q", raw, "failed to embed query")
+		if isError {
+			t.Fatal("expected graceful degradation, not an error")
+		}
+		// With embedding unavailable and no keyword results, count should be 0
+		count, _ := parsed["count"].(float64)
+		if int(count) != 0 {
+			t.Errorf("count = %v, want 0 (no keyword results configured)", count)
 		}
 	})
 
@@ -935,4 +939,79 @@ func TestEngineErrorPropagation(t *testing.T) {
 			t.Fatal("expected isError=true for not found")
 		}
 	})
+}
+
+func TestRecallSearchDegradedMode(t *testing.T) {
+	// When embedding fails but keyword results exist, search should return
+	// keyword-only results with a degradation warning in the MCP response.
+	meta := &stubMetadata{
+		items: map[string]*storage.ItemRecord{
+			"K1": {ID: "K1", Type: "pattern", Title: "Retry Pattern", Content: "Add jitter to backoff", Tags: []string{"retry"}, Scope: "project"},
+		},
+	}
+	vecStore := &stubVecStore{upserted: map[string][]float32{}}
+	kwResults := &stubKeywords{
+		results: []storage.KeywordResult{
+			{ID: "K1", Type: "pattern", Title: "Retry Pattern", Content: "Add jitter to backoff", Score: 1.5, Tags: []string{"retry"}, Scope: "project"},
+		},
+	}
+
+	// Embedder that always fails
+	failEmbed := func(_ context.Context, _ string) ([]float32, error) {
+		return nil, fmt.Errorf("ollama connection refused")
+	}
+
+	engine := core.NewSearchEngineWithDeps(core.SearchEngineDeps{
+		Config:   core.Config{},
+		VecStore: vecStore,
+		Metadata: meta,
+		Keywords: kwResults,
+		Embedder: &stubEmbedder{embedFn: failEmbed},
+	})
+
+	clientR, serverW := io.Pipe()
+	serverR, clientW := io.Pipe()
+
+	server := mcp.NewServer(engine, "test-session")
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- server.RunForIO(ctx, serverR, serverW) }()
+	defer func() {
+		cancel()
+		clientW.Close()
+		<-done
+	}()
+
+	reader := bufio.NewReader(clientR)
+
+	_, _ = clientW.Write(toolCallRequest(1, "recall_search", map[string]interface{}{"query": "retry"}))
+	line, err := reader.ReadBytes('\n')
+	if err != nil {
+		t.Fatalf("recv: %v", err)
+	}
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(line, &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	parsed, isError, err := parseToolResult(resp)
+	if err != nil {
+		t.Fatalf("parseToolResult: %v", err)
+	}
+	if isError {
+		t.Fatalf("expected success with degradation, not error: %v", parsed)
+	}
+
+	// Should have keyword results
+	count, _ := parsed["count"].(float64)
+	if int(count) == 0 {
+		t.Fatal("expected keyword results, got 0")
+	}
+
+	// Should have degradation warning
+	warning, _ := parsed["warning"].(string)
+	if !strings.Contains(warning, "keyword-only") {
+		t.Errorf("expected degradation warning containing 'keyword-only', got %q", warning)
+	}
 }
