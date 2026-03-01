@@ -10,6 +10,7 @@ AEF gives Claude Code persistent memory, specialized agents, and session continu
 - **Hybrid search (Codex backend)** — Combines vector similarity with FTS5 keyword matching via RRF fusion. Requires Ollama running locally with nomic-embed-text. Without Ollama, falls back to keyword-only (v0 backend), which still works fine for exact queries.
 - **Session memory** — Uses Claude Code's memory tool (`/memories/`) as a session cache for decisions and insights. Important items are promoted to RECALL at session end via `/end`. Project instructions live in `CLAUDE.md` (loaded natively by Claude Code).
 - **Evaluation framework** — Measure whether RECALL's tools work correctly. Integration tests verify retrieval quality (Recall@5: 0.83, nDCG@10: 0.78), LLM-as-judge filtering, MCP protocol, and end-to-end round-trips. See `codex/eval/README.md`.
+- **Code quality guard (edi-guard)** — Command hook that runs on every Bash tool call. Blocks destructive commands (force-push to main, `rm -rf .edi/`), injects missing build tags, detects failure loops, and snapshots session state before compaction. Extensible via a policy interface — add new policies without touching dispatch logic.
 - **Local-first** — Single SQLite file, local embeddings, no API keys for core features. Privacy and offline-capable. Tradeoff: local embedding model (nomic-embed-text) is good but not as strong as cloud embedding APIs.
 
 ## How It Works
@@ -176,6 +177,7 @@ See [edi/README.md](edi/README.md#ralph-loop) for usage details and [Ralph Loop 
 |-----------|-------------|--------|
 | **EDI** | Claude Code harness — agents, briefings, history, session management | [edi/README.md](edi/README.md) |
 | **Codex** | Knowledge engine — hybrid search, local embeddings, single-file storage | [codex/README.md](codex/README.md) |
+| **edi-guard** | Command hook — deny list, build tags, failure loop detection, compaction snapshots | [edi/README.md](edi/README.md#edi-guard) |
 
 ## Project Status
 
@@ -187,6 +189,8 @@ See [edi/README.md](edi/README.md#ralph-loop) for usage details and [Ralph Loop 
 
 ## Further Reading
 
+- [edi-guard Implementation Spec](docs/implementation/edi-guard-spec.md) — hook events, policy behavior, and how to add new policies
+- [edi-guard Policy Interface ADR](docs/architecture/edi-guard-policy-interface-spec.md) — design decision for the policy registry architecture
 - [EDI + Codex Technical Deep-Dive](docs/edi-codex-deep-dive.md) — full system architecture, data flows, eval framework, and operational guide
 - [AEF Evaluation Framework](docs/architecture/aef-evaluation-framework.md) — experiment designs, implementation history, claim validation methodology
 - [Eval Quick Start](codex/eval/README.md) — how to run the eval, components, benchmark results

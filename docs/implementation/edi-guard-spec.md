@@ -813,6 +813,202 @@ The spec says "find first task with `status: in_progress`" but there may be mult
 - Task: TSK-043 — Write edi-guard tests (+1 more)
 ```
 
+## Adding a New Policy
+
+The policy interface refactor (see [ADR](../architecture/edi-guard-policy-interface-spec.md)) makes adding new policies a self-contained operation. No changes to the dispatcher, response building, or `main.go` are required.
+
+### Prerequisites
+
+Understand the four policy interfaces in `edi/internal/guard/policy.go`:
+
+| Interface | Method | When it fires | Can it block? |
+|-----------|--------|---------------|---------------|
+| `PreToolUsePolicy` | `EvalPreToolUse(ctx, hctx, command) *PolicyResult` | Before Bash execution | Yes (exit 2) |
+| `PostToolUsePolicy` | `OnPostToolUse(ctx, hctx)` | After successful Bash execution | No |
+| `PostToolUseFailurePolicy` | `OnPostToolUseFailure(ctx, hctx)` | After failed Bash execution | No |
+| `PreCompactPolicy` | `OnPreCompact(ctx, hctx)` | Before context compaction | No |
+
+A policy implements **only** the interfaces it needs. Go's implicit interface satisfaction means no stub methods.
+
+### Step-by-step
+
+#### 1. Create the policy file
+
+Create `edi/internal/guard/policy_<name>.go`:
+
+```go
+package guard
+
+import "context"
+
+type MyPolicy struct {
+    // Config fields go here. Receive them via constructor.
+}
+
+func NewMyPolicy(/* config params */) *MyPolicy {
+    return &MyPolicy{/* ... */}
+}
+
+func (m *MyPolicy) Name() string { return "my-policy" }
+
+// Implement one or more of the four interfaces.
+func (m *MyPolicy) EvalPreToolUse(_ context.Context, hctx *HookContext, command string) *PolicyResult {
+    // Return nil for "no opinion" (policy doesn't apply to this command).
+    // Return a result to take action:
+    return nil
+}
+```
+
+#### 2. Choose your return type
+
+`EvalPreToolUse` returns `*PolicyResult`. The three fields are independent:
+
+| Field | Effect | Example use |
+|-------|--------|-------------|
+| `Block: true, Reason: "..."` | Stops execution. Reason printed to stderr as `edi-guard: <reason>`. Exit code 2. | Deny list |
+| `ModifiedCommand: "..."` | Rewrites `tool_input.command`. Claude executes the modified command. | Build tag injection |
+| `Advisory: "..."` | Injected as `additionalContext`. Claude sees it but command proceeds. | Failure loop warning |
+
+**Short-circuit rule**: If any policy returns `Block`, later policies do not run.
+
+**Chaining rule**: Each policy receives the `command` string as modified by earlier policies, not the original. This enables policy composition (e.g., a path normalizer runs before build tag injection).
+
+**Advisory merging**: Multiple advisories from different policies are joined with newlines into a single `additionalContext` string.
+
+#### 3. Register in `defaults.go`
+
+Add one line to `DefaultRegistry()` in `edi/internal/guard/defaults.go`:
+
+```go
+func DefaultRegistry(cfg *config.GuardConfig) *Registry {
+    r := NewRegistry()
+    r.Register(NewDenyListPolicy(cfg.DenyPatterns))
+    r.Register(NewBuildTagPolicy(cfg.BuildTags))
+    r.Register(NewFailureLoopPolicy(cfg.FailureLoopThreshold))
+    r.Register(NewCompactionSnapshotPolicy(cfg))
+    r.Register(NewMyPolicy(/* config */))  // ← add here
+    return r
+}
+```
+
+**Registration order matters for PreToolUse**:
+- Blocking policies should come first (deny list)
+- Command-modifying policies should come before advisory policies
+- PostToolUse/PostToolUseFailure/PreCompact order is irrelevant
+
+#### 4. Write tests
+
+Create `edi/internal/guard/policy_<name>_test.go`:
+
+```go
+package guard
+
+import (
+    "context"
+    "testing"
+)
+
+func TestMyPolicy_MatchingCommand(t *testing.T) {
+    policy := NewMyPolicy()
+    result := policy.EvalPreToolUse(context.Background(), nil, "some command")
+    if result == nil {
+        t.Fatal("expected result")
+    }
+    // Assert on result.Block, result.ModifiedCommand, or result.Advisory
+}
+
+func TestMyPolicy_NonMatchingCommand(t *testing.T) {
+    policy := NewMyPolicy()
+    result := policy.EvalPreToolUse(context.Background(), nil, "safe command")
+    if result != nil {
+        t.Fatalf("expected nil result, got: %+v", result)
+    }
+}
+```
+
+Tests are in `package guard` (not `package guard_test`), so they can access unexported helpers like `readState()` and `writeState()`.
+
+Run tests:
+```bash
+cd edi && go test ./internal/guard/... ./cmd/edi-guard/...
+```
+
+No `-tags fts5` needed — edi-guard has zero CGO dependency.
+
+#### 5. Add config fields (if needed)
+
+If your policy needs configuration:
+
+1. Add fields to `GuardConfig` in `edi/internal/config/schema.go`
+2. Add defaults in `DefaultConfig()` in `edi/internal/config/defaults.go`
+3. Pass the config to your constructor in `defaults.go`
+
+Config is loaded in `main.go` via `loadGuardConfig()`. The merge rules:
+- Scalar fields: project overrides global
+- `deny_patterns`: concatenated (both apply)
+- Other arrays: project replaces global
+
+### Available context in `HookContext`
+
+Policies receive a `*HookContext` with:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `Input` | `*HookInput` | Raw hook event (tool name, tool input JSON, error, trigger) |
+| `Config` | `*config.GuardConfig` | Resolved guard configuration |
+| `SessionID` | `string` | Claude Code session ID (for state files) |
+| `CWD` | `string` | Project working directory |
+| `Agent` | `string` | Current agent mode ("coder", "architect", etc.) |
+
+### Shared utilities
+
+The guard package provides these unexported helpers available to all policies:
+
+| Function | Location | Purpose |
+|----------|----------|---------|
+| `readState(sessionID)` | `state.go` | Read failure counter state from `/tmp/edi-guard-{session}.json` |
+| `writeState(sessionID, state)` | `state.go` | Write failure counter state |
+| `ParseBashInput(raw)` | `response.go` | Extract command from `tool_input` JSON (exported — usable from `main.go` too) |
+
+### Example: commit guard policy
+
+A policy that warns when committing without running tests:
+
+```go
+// edi/internal/guard/policy_commitguard.go
+package guard
+
+import (
+    "context"
+    "strings"
+)
+
+type CommitGuardPolicy struct{}
+
+func NewCommitGuardPolicy() *CommitGuardPolicy {
+    return &CommitGuardPolicy{}
+}
+
+func (c *CommitGuardPolicy) Name() string { return "commit-guard" }
+
+func (c *CommitGuardPolicy) EvalPreToolUse(_ context.Context, hctx *HookContext, command string) *PolicyResult {
+    if !strings.Contains(command, "git commit") {
+        return nil
+    }
+    state := readState(hctx.SessionID)
+    if state.ConsecutiveFailures > 0 {
+        return &PolicyResult{
+            Advisory: "edi-guard: committing with recent test failures. Consider running tests first.",
+        }
+    }
+    return nil
+}
+```
+
+Register with one line: `r.Register(NewCommitGuardPolicy())`
+
+No changes to `main.go`, no changes to dispatch logic, no changes to response building.
+
 ## What This Does NOT Do
 
 1. **No HTTP server**. No ports, no process lifecycle, no daemon.
