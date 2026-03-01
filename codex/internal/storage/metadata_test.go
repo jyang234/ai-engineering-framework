@@ -1104,3 +1104,212 @@ func TestMetadataStore_KeywordSearch_SpecialChars(t *testing.T) {
 	}
 	_ = results
 }
+
+// =============================================================================
+// FTS5 BM25 Column Weighting tests
+// =============================================================================
+
+func TestMetadataStore_KeywordSearch_TitleMatchRanksHigher(t *testing.T) {
+	// Given: two items — one with "authentication" in title, one only in content
+	store, cleanup := createTestMetadataStore(t)
+	defer cleanup()
+
+	store.SaveItem(&ItemRecord{
+		ID:      "title-match",
+		Type:    "pattern",
+		Title:   "Authentication Best Practices",
+		Content: "Follow these security guidelines for your application",
+		Scope:   "project",
+	})
+	store.SaveItem(&ItemRecord{
+		ID:      "content-match",
+		Type:    "pattern",
+		Title:   "Security Guidelines",
+		Content: "Authentication should use multi-factor authentication methods",
+		Scope:   "project",
+	})
+
+	// When
+	results, err := store.KeywordSearch("authentication", 10)
+	if err != nil {
+		t.Fatalf("KeywordSearch failed: %v", err)
+	}
+
+	// Then: title match should rank first
+	if len(results) < 2 {
+		t.Fatalf("expected at least 2 results, got %d", len(results))
+	}
+	if results[0].ID != "title-match" {
+		t.Errorf("expected title-match to rank first, got %s (score=%.4f); title-match score=%.4f",
+			results[0].ID, results[0].Score, results[1].Score)
+	}
+}
+
+func TestMetadataStore_KeywordSearch_TagMatchRanksHigher(t *testing.T) {
+	// Given: two items — one with "circuit" and "breaker" in tags, one only in content
+	store, cleanup := createTestMetadataStore(t)
+	defer cleanup()
+
+	store.SaveItem(&ItemRecord{
+		ID:      "tag-match",
+		Type:    "pattern",
+		Title:   "Resilience Pattern",
+		Content: "Protects downstream services from cascading failures",
+		Tags:    []string{"circuit-breaker", "reliability"},
+		Scope:   "project",
+	})
+	store.SaveItem(&ItemRecord{
+		ID:      "content-match",
+		Type:    "pattern",
+		Title:   "Service Resilience Overview",
+		Content: "A circuit breaker prevents repeated calls to failing services",
+		Tags:    []string{"overview"},
+		Scope:   "project",
+	})
+
+	// When
+	results, err := store.KeywordSearch("circuit breaker", 10)
+	if err != nil {
+		t.Fatalf("KeywordSearch failed: %v", err)
+	}
+
+	// Then: tag match should rank first
+	if len(results) < 2 {
+		t.Fatalf("expected at least 2 results, got %d", len(results))
+	}
+	if results[0].ID != "tag-match" {
+		t.Errorf("expected tag-match to rank first, got %s (score=%.4f); tag-match score=%.4f",
+			results[0].ID, results[0].Score, results[1].Score)
+	}
+}
+
+// =============================================================================
+// Stop Word Filtering tests
+// =============================================================================
+
+func TestMetadataStore_KeywordSearch_StopWordsFiltered(t *testing.T) {
+	// Given: items about PostgreSQL and DynamoDB, plus an unrelated item
+	store, cleanup := createTestMetadataStore(t)
+	defer cleanup()
+
+	store.SaveItem(&ItemRecord{
+		ID:      "pg",
+		Type:    "decision",
+		Title:   "PostgreSQL for Transaction Store",
+		Content: "We selected PostgreSQL with Citus for horizontal sharding",
+		Scope:   "project",
+	})
+	store.SaveItem(&ItemRecord{
+		ID:      "dynamo",
+		Type:    "decision",
+		Title:   "DynamoDB Evaluation",
+		Content: "DynamoDB was considered but rejected due to query limitations",
+		Scope:   "project",
+	})
+	store.SaveItem(&ItemRecord{
+		ID:      "unrelated",
+		Type:    "pattern",
+		Title:   "Logging Strategy",
+		Content: "Use structured logging vs unstructured logging",
+		Scope:   "project",
+	})
+
+	// When: search with "vs" (a stop word) between meaningful terms
+	results, err := store.KeywordSearch("PostgreSQL vs DynamoDB", 10)
+	if err != nil {
+		t.Fatalf("KeywordSearch failed: %v", err)
+	}
+
+	// Then: both database items returned, but "unrelated" (which contains "vs")
+	// should not appear because "vs" was filtered out
+	resultIDs := make(map[string]bool)
+	for _, r := range results {
+		resultIDs[r.ID] = true
+	}
+	if !resultIDs["pg"] {
+		t.Error("expected 'pg' item in results")
+	}
+	if !resultIDs["dynamo"] {
+		t.Error("expected 'dynamo' item in results")
+	}
+	if resultIDs["unrelated"] {
+		t.Error("'unrelated' item should not appear — 'vs' should be filtered as a stop word")
+	}
+}
+
+func TestMetadataStore_KeywordSearch_AllStopWordsFallback(t *testing.T) {
+	// Given: items in database
+	store, cleanup := createTestMetadataStore(t)
+	defer cleanup()
+
+	store.SaveItem(&ItemRecord{
+		ID:      "item1",
+		Type:    "pattern",
+		Title:   "Something about it",
+		Content: "This is a test of the fallback behavior",
+		Scope:   "project",
+	})
+
+	// When: query consists entirely of stop words
+	results, err := store.KeywordSearch("is it a", 10)
+
+	// Then: no error, and results are returned (fallback to unfiltered query)
+	if err != nil {
+		t.Fatalf("KeywordSearch with all stop words failed: %v", err)
+	}
+	if len(results) == 0 {
+		t.Error("expected results from all-stop-word query (fallback), got 0")
+	}
+}
+
+func TestMetadataStore_KeywordSearch_NonStopWordsPreserved(t *testing.T) {
+	// Given: existing test data (regression check)
+	store, cleanup := createTestMetadataStore(t)
+	defer cleanup()
+
+	store.SaveItem(&ItemRecord{
+		ID:      "item1",
+		Type:    "pattern",
+		Title:   "JWT Authentication Pattern",
+		Content: "Use JSON Web Tokens for stateless authentication",
+		Tags:    []string{"auth", "jwt"},
+		Scope:   "global",
+	})
+
+	// When: query has no stop words
+	results, err := store.KeywordSearch("authentication", 10)
+	if err != nil {
+		t.Fatalf("KeywordSearch failed: %v", err)
+	}
+
+	// Then: item found (no regression from stop word filtering)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].ID != "item1" {
+		t.Errorf("expected item1, got %s", results[0].ID)
+	}
+}
+
+func TestIsStopWord(t *testing.T) {
+	tests := []struct {
+		word string
+		want bool
+	}{
+		{"the", true},
+		{"The", true},
+		{"THE", true},
+		{"vs", true},
+		{"PostgreSQL", false},
+		{"authentication", false},
+		{"circuit", false},
+		{"", false},
+		{"a", true},
+		{"how", true},
+	}
+	for _, tt := range tests {
+		if got := isStopWord(tt.word); got != tt.want {
+			t.Errorf("isStopWord(%q) = %v, want %v", tt.word, got, tt.want)
+		}
+	}
+}
