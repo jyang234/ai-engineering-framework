@@ -1,7 +1,7 @@
 # Hooks Exploration: External Validation for AEF
 
 **Date**: 2026-02-28 (updated 2026-03-01)
-**Status**: Exploration / RFC
+**Status**: Graduated → Implementation spec at `docs/implementation/edi-guard-spec.md`
 **Author**: Claude (EDI session)
 
 ## Context
