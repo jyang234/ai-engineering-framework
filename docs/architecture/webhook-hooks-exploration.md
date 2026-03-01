@@ -455,36 +455,43 @@ Prompt/agent hooks are designed for genuinely complex validation — "run the te
 
 ### Recommendation: Single Command Hook Binary (`edi-guard`)
 
-Build one Go binary that handles multiple hook events, same pattern as `task-sync-hook`. The binary reads `hook_event_name` from the input JSON to determine which logic path to run:
+Build one Go binary that handles four hook events, same pattern as `task-sync-hook`. The binary reads `hook_event_name` from the input JSON to determine which logic path to run:
 
 ```
-PreToolUse fires → edi-guard → check deny-list, build tags, failure counter
-PreCompact fires → edi-guard → snapshot task ID, branch, build tags to /memories/
-PostToolUseFailure fires → edi-guard → increment failure counter
+PreToolUse fires        → edi-guard → check deny-list, build tags, read failure counter
+PostToolUse fires       → edi-guard → reset failure counter (Bash success)
+PostToolUseFailure fires → edi-guard → increment failure counter (Bash failure)
+PreCompact fires        → edi-guard → snapshot task ID, branch, build tags to /memories/
 ```
 
 ```go
 // edi-guard: ~200 lines of Go
-// 1. Parse hook JSON from stdin (includes hook_event_name, session_id, cwd)
+// 1. Parse hook JSON from stdin (includes hook_event_name, session_id, cwd, tool_name, tool_input)
 // 2. Switch on hook_event_name:
 //
 //    "PreToolUse" + tool_name == "Bash":
-//      a. Check command against deny-list patterns → exit 2 if match
-//      b. Check if command matches "go (test|build)" without "-tags fts5" → exit 2 if missing
-//      c. Check failure counter → if threshold exceeded, inject advisory on stdout
+//      a. Extract command from tool_input.command
+//      b. Check command against deny-list patterns → exit 2 with explanation if match
+//      c. Check if command matches "go (test|build|run)" without "-tags.*fts5":
+//         → If missing AND not a "make" command: MODIFY tool_input to inject -tags fts5
+//           (tool input modification, not blocking — less friction)
+//      d. Read failure counter from /tmp/edi-guard-{session}.json
+//         → If consecutive Bash failures >= threshold AND not already advised:
+//           Return JSON with additionalContext advisory, permissionDecision: "allow"
 //
-//    "PostToolUseFailure":
-//      a. Increment failure counter in /tmp/edi-guard-{session}.json
+//    "PostToolUse" + tool_name == "Bash":
+//      a. Reset failure counter to 0 in /tmp/edi-guard-{session}.json
+//
+//    "PostToolUseFailure" + tool_name == "Bash":
+//      a. Increment consecutive failure counter in /tmp/edi-guard-{session}.json
 //
 //    "PreCompact":
-//      a. Read current task from .edi/tasks/active.yaml
-//      b. Read git branch
-//      c. Write /memories/compaction-state.md with mechanical facts:
-//         - Active task ID + description
-//         - Current git branch
-//         - Required build tags (from config)
-//         - Last test/build pass or fail (from failure counter state)
-//      d. Exit 0 (PreCompact hooks can't block)
+//      a. Read current task from {cwd}/.edi/tasks/active.yaml
+//      b. Run git branch --show-current
+//      c. Read build tags from {cwd}/.edi/config.yaml
+//      d. Read last test result from /tmp/edi-guard-{session}.json
+//      e. Write {cwd}/memories/compaction-state.md (mkdir -p first) with mechanical facts
+//      f. Exit 0 (PreCompact hooks can't block)
 ```
 
 EDI's `launch.go` writes the hook config to `.claude/settings.json` using the same merge pattern as `UpdateMCPConfig`:
@@ -500,9 +507,17 @@ EDI's `launch.go` writes the hook config to `.claude/settings.json` using the sa
         ]
       }
     ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "~/.edi/bin/edi-guard" }
+        ]
+      }
+    ],
     "PostToolUseFailure": [
       {
-        "matcher": ".*",
+        "matcher": "Bash",
         "hooks": [
           { "type": "command", "command": "~/.edi/bin/edi-guard" }
         ]
@@ -536,9 +551,9 @@ guard:
 - Same proven pattern as `task-sync-hook` (already works)
 - No HTTP server, no port, no process lifecycle
 - ~5ms overhead per Bash command (imperceptible)
-- ~100-150 lines of Go, buildable in an afternoon
+- ~200 lines of Go across four event handlers
 - Configuration via EDI's existing YAML system
-- Graceful degradation (if `edi-guard` crashes, Claude Code proceeds)
+- Graceful degradation (if `edi-guard` crashes, Claude Code proceeds — non-zero exit other than 2 is non-blocking)
 
 ### When to reconsider HTTP webhooks or agent hooks
 
@@ -566,22 +581,163 @@ guard:
    - `edi/internal/launch/settings.go` — New file: `UpdateHooksSettings()` (mirrors `mcp.go` pattern)
    - `edi/internal/cli/launch.go` — Call `UpdateHooksSettings()` from `runLaunch()`
 
-2. **`edi-guard` command hook binary** — Single binary handling three events, same pattern as `task-sync-hook`:
+2. **`edi-guard` command hook binary** — Single binary handling four events, same pattern as `task-sync-hook`:
 
    **PreToolUse (Bash):**
-   - **Build tag enforcement (#9)** — If command matches `go (test|build)` without `-tags.*fts5`, exit 2 with corrected command.
-   - **Destructive command guard (#2)** — If command matches deny-list patterns, exit 2 with explanation.
-   - **Failure loop breaker (#14)** — Read counter from `/tmp/edi-guard-{session}.json`. If threshold exceeded, inject advisory on stdout.
+   - **Build tag enforcement (#9)** — If command matches `go (test|build|run)` without `-tags.*fts5` AND isn't a `make` command, **modify tool_input** to inject the flag (not block). Return modified `tool_input` on stdout.
+   - **Destructive command guard (#2)** — If command matches deny-list patterns (both `--force` and `-f` variants), exit 2 with explanation.
+   - **Failure loop breaker (#14)** — Read consecutive failure counter. If threshold exceeded and not already advised, return `additionalContext` with advisory, `permissionDecision: "allow"`.
 
-   **PostToolUseFailure (all tools):**
-   - Increment failure counter in `/tmp/edi-guard-{session}.json`.
+   **PostToolUse (Bash):**
+   - Reset consecutive failure counter to 0 in `/tmp/edi-guard-{session}.json`.
+
+   **PostToolUseFailure (Bash only, not all tools):**
+   - Increment consecutive failure counter in `/tmp/edi-guard-{session}.json`.
 
    **PreCompact:**
-   - **Compaction state snapshot (#13)** — Write `/memories/compaction-state.md` with mechanical facts: active task ID + description, git branch, required build tags, last test result.
+   - **Compaction state snapshot (#13)** — Read task from `.edi/tasks/active.yaml`, git branch, build tags from config, last test result from counter file. Write `{cwd}/memories/compaction-state.md` (create directory if needed). 5-10 lines, mechanical facts only.
 
    Changes:
    - `edi/cmd/edi-guard/main.go` — New binary (~200 lines)
    - `edi/Makefile` — Build and install alongside `task-sync-hook`
+
+## Viability Assessment: Will These Actually Work?
+
+Each policy was checked against the actual Claude Code hooks API ([hooks reference](https://code.claude.com/docs/en/hooks)) and the existing `task-sync-hook` implementation. Here's what's solid, what has gaps, and what needs design changes.
+
+### Build tag enforcement (#9) — SOLID
+
+**How it works**: PreToolUse fires with `tool_input.command` containing the full Bash command. Check for `go (test|build|run)` without `-tags.*fts5`. Block or modify.
+
+**What the API gives us**:
+- `tool_input.command`: the exact command string (e.g., `"go test ./pkg/..."`)
+- PreToolUse can block (exit 2) OR modify the tool input (return modified `tool_input` on stdout, supported since v2.0.10)
+
+**Design change**: The doc says "exit 2 with corrected command." That's wrong — **tool input modification is strictly better**. Instead of blocking and forcing Claude to retry, silently inject `-tags fts5` into the command. Less friction, same result.
+
+```go
+// Instead of exit 2: "missing -tags fts5"
+// Do this: modify tool_input and allow
+// go test ./pkg/... → go test -tags fts5 ./pkg/...
+```
+
+**Edge cases that work**:
+- `go test -tags "fts5,other" ./...` → already has fts5, pass through
+- `go test -tags=fts5 ./...` → already has fts5, pass through
+- `go test -count=1 ./specific` → inject `-tags fts5`, correct
+
+**Edge case that doesn't**:
+- `make test` (which internally runs `go test -tags fts5`) → the hook sees `make test`, not the go command. It would inject `-tags fts5` into the make command, which does nothing or errors. **Fix**: skip commands that start with `make`.
+- `cd codex && go test ./...` → compound command. The regex needs to match `go test` anywhere in the string, not just at the start.
+
+**Verdict**: Solid. One design change (modify > block). Two edge cases with clear fixes.
+
+### Destructive command guard (#2) — SOLID with pattern caveats
+
+**How it works**: PreToolUse, check `tool_input.command` against deny-list regex patterns. Exit 2 with explanation.
+
+**What the API gives us**: Same as above. `tool_input.command` contains the full command.
+
+**Pattern gaps in the current deny-list**:
+- `git push --force.*main` misses `git push -f origin main` (short flag) and `git push origin HEAD:main --force` (flag after branch). **Fix**: match both `--force` and `-f`, match `main` or `master` anywhere in a push command that also has a force flag.
+- `rm -rf .edi` would match `rm -rf .edi/tasks/completed/old.yaml` which might be intentional. **Fix**: anchor patterns more carefully, or accept the false positive as a feature (blocking any recursive delete inside `.edi/` is reasonable).
+
+**Verdict**: Solid. Ship with conservative patterns, let `.edi/config.yaml` override.
+
+### Failure loop breaker (#14) — VIABLE but more complex than described
+
+**How it works**: PostToolUseFailure increments a counter. PreToolUse reads it and injects advisory if threshold exceeded.
+
+**What the API gives us**:
+- PostToolUseFailure input: `tool_name`, `tool_input`, `error`, `is_interrupt`
+- PostToolUseFailure can return `additionalContext` via `hookSpecificOutput` (shown to Claude alongside the error)
+- PreToolUse can return `additionalContext` via `hookSpecificOutput` (shown to Claude before the tool runs)
+
+**Three design problems**:
+
+1. **The counter matcher is wrong**. The doc configures PostToolUseFailure with `"matcher": ".*"` (all tools). A failed `Read` on a nonexistent file shouldn't count toward "stuck in a loop." **Fix**: match `Bash` only, since the loop pattern is specifically about retrying shell commands.
+
+2. **No reset on success**. The counter only increments on failure. If Claude has 4 failures, then 10 successes, then 1 failure, the counter hits 5 and fires. That's wrong. **Fix**: add a PostToolUse hook (success) that resets the counter. This means a fourth hook entry in settings.json — `PostToolUse` with matcher `Bash`.
+
+   Alternatively: track timestamps, not just counts, and only count failures within a window (e.g., 5 failures in the last 10 tool calls). But this is creeping toward the "pattern detection engine" we said we wouldn't build.
+
+   **Simplest viable version**: count consecutive Bash failures. PostToolUseFailure increments, PostToolUse (success on Bash) resets to zero. If counter hits threshold, inject advisory via PreToolUse `additionalContext`. Advisory fires once (write a flag to the counter file), not repeatedly.
+
+3. **Where to inject the advisory**. The doc says "inject advisory on stdout" from PreToolUse. The correct mechanism is:
+
+```json
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "allow",
+    "additionalContext": "You've had 5 consecutive command failures. Consider stepping back to analyze the root cause rather than making incremental changes."
+  }
+}
+```
+
+**Verdict**: Viable, but needs a fourth hook entry (PostToolUse for Bash success → reset counter) and careful design. The "~10 lines" estimate is wrong — this is ~40-50 lines of counter logic.
+
+### PreCompact state snapshot (#13) — VIABLE with a key assumption
+
+**How it works**: PreCompact fires. The hook reads task state, git branch, build tags from local files. Writes `/memories/compaction-state.md`. Claude reads it after compaction.
+
+**What the API gives us**:
+- PreCompact input: common fields + `trigger` ("manual"/"auto") + `custom_instructions`
+- PreCompact **cannot block** compaction (exit 2 just shows stderr to user)
+- PreCompact only supports `type: "command"` hooks
+- No conversation content in the input JSON — just `session_id`, `cwd`, and `transcript_path`
+
+**The key assumption**: Claude reads `/memories/` after compaction. This works because:
+1. The system prompt (which survives compaction) includes the edi-core skill
+2. The edi-core skill explicitly says: "`/memories/` content persists across [compaction] — this is why you write insights there"
+3. After compaction, Claude's context includes the compressed conversation + full system prompt. The system prompt tells Claude to check `/memories/`. Claude reads it. The file is there.
+
+**This chain holds.** The assumption is valid for AEF specifically because the skill instruction survives compaction.
+
+**What the hook actually does** (I/O):
+- Read `.edi/tasks/active.yaml` for task ID + description
+- Run `git branch --show-current` for current branch
+- Read `.edi/config.yaml` for required build tags
+- Read `/tmp/edi-guard-{session}.json` for last test result (from failure counter)
+- Write `{cwd}/memories/compaction-state.md`
+
+**Concerns**:
+1. **The `memories/` directory might not exist**. The hook needs to `os.MkdirAll` it. Minor.
+2. **The `transcript_path` bug**. There's a known issue ([#13668](https://github.com/anthropics/claude-code/issues/13668)) where `transcript_path` is sometimes empty. We don't need it (we're reading local files, not the transcript), so this doesn't affect us.
+3. **File content discipline**. The file must be small — it persists in context. Target: 5-10 lines, strictly mechanical facts. No prose, no summaries, no "what was I working on" narratives.
+
+```markdown
+# Session State (auto-generated by edi-guard, do not edit)
+- Task: TSK-042 — Implement PreCompact hook for edi-guard
+- Branch: feat/edi-guard-hooks
+- Build tags: fts5
+- Last test: pass (14 tests, 0 failures)
+- Agent mode: coder
+```
+
+4. **Stale data after task completion**. If the task changes after compaction, the file still shows the old task. But this is acceptable — it's a snapshot of pre-compaction state, not a live feed.
+
+**Verdict**: Viable. The `/memories/` assumption holds for AEF. Implementation is ~30 lines of I/O.
+
+### Overall: Revised estimate
+
+The "~200 lines of Go" estimate is close but needs adjustment:
+
+| Component | Lines | Notes |
+|-----------|-------|-------|
+| Main + JSON parsing + event dispatch | ~40 | Read stdin, switch on `hook_event_name` |
+| Build tag enforcement | ~25 | Regex match, tool_input modification |
+| Destructive command guard | ~25 | Regex match against config patterns |
+| Failure counter (increment + reset + read) | ~50 | File-based counter with Bash-only tracking |
+| PreCompact snapshot | ~35 | Read 3-4 files, write 1 file |
+| Config loading | ~25 | Read `.edi/config.yaml` for deny patterns, build tags |
+| **Total** | **~200** | Honest, not padded |
+
+The settings.json config needs **four** hook entries, not three:
+- PreToolUse (Bash) — build tags, deny-list, counter read
+- PostToolUseFailure (Bash) — counter increment
+- PostToolUse (Bash) — counter reset
+- PreCompact (.*) — state snapshot
 
 ### What to defer until there's evidence
 
