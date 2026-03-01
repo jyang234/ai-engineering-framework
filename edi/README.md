@@ -338,6 +338,87 @@ You: /build
 EDI: Switched to coder mode. [Implements with conditions addressed]
 ```
 
+## edi-guard
+
+edi-guard is a Claude Code command hook that enforces code quality policies. It runs automatically on every Bash tool call, blocking destructive commands, injecting missing build flags, detecting failure loops, and preserving session state across compaction.
+
+### Built-in Policies
+
+| Policy | Event | Behavior |
+|--------|-------|----------|
+| Deny list | PreToolUse | Blocks commands matching regex patterns (exit 2) |
+| Build tags | PreToolUse | Injects missing `-tags fts5` into `go test/build/run` |
+| Failure loop | Pre/Post/Failure | Advises Claude after N consecutive Bash failures |
+| Compaction snapshot | PreCompact | Writes session state to `memories/compaction-state.md` |
+
+### Configuration
+
+Configured in `.edi/config.yaml` (project) and `~/.edi/config.yaml` (global):
+
+```yaml
+guard:
+  enabled: true
+  build_tags: ["fts5"]
+  deny_patterns:
+    - pattern: "rm\\s+-[rf]*r[rf]*\\s+(\\.edi|\\.claude)(/|\\s|$)"
+      reason: "Blocked: recursive delete of .edi/ or .claude/ directory"
+  failure_loop_threshold: 5
+```
+
+Project deny patterns are **appended** to global patterns (both apply). Other fields use project-overrides-global semantics.
+
+### Adding a New Policy
+
+Policies are self-contained types in `edi/internal/guard/`. Adding a new policy requires no changes to the dispatcher or response building — just implement the interface and register it.
+
+**Step 1: Create the policy file.**
+
+```go
+// edi/internal/guard/policy_yourpolicy.go
+package guard
+
+import "context"
+
+type YourPolicy struct {
+    // any config fields
+}
+
+func NewYourPolicy() *YourPolicy {
+    return &YourPolicy{}
+}
+
+func (p *YourPolicy) Name() string { return "your-policy" }
+
+func (p *YourPolicy) EvalPreToolUse(_ context.Context, hctx *HookContext, command string) *PolicyResult {
+    // Return nil for "no opinion", or:
+    // - &PolicyResult{Block: true, Reason: "..."} to block
+    // - &PolicyResult{ModifiedCommand: "..."} to rewrite the command
+    // - &PolicyResult{Advisory: "..."} to inject context
+    return nil
+}
+```
+
+**Step 2: Register it in `defaults.go`.**
+
+```go
+r.Register(NewYourPolicy())
+```
+
+**Step 3: Add tests in `policy_yourpolicy_test.go`.**
+
+That's it. The dispatcher handles response merging, short-circuiting, and JSON output automatically.
+
+Four interfaces are available — implement only the ones your policy needs:
+
+| Interface | Method | When it runs |
+|-----------|--------|-------------|
+| `PreToolUsePolicy` | `EvalPreToolUse()` | Before Bash execution (can block, modify, advise) |
+| `PostToolUsePolicy` | `OnPostToolUse()` | After successful Bash execution |
+| `PostToolUseFailurePolicy` | `OnPostToolUseFailure()` | After failed Bash execution |
+| `PreCompactPolicy` | `OnPreCompact()` | Before context compaction |
+
+See [edi-guard implementation spec](../docs/implementation/edi-guard-spec.md) and [policy interface ADR](../docs/architecture/edi-guard-policy-interface-spec.md) for full details.
+
 ## Ralph Loop
 
 Ralph is an autonomous execution mode for running well-defined coding tasks in a loop. Each iteration starts with a fresh context window — no accumulated cruft, full attention on one task.
