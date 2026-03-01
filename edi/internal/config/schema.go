@@ -27,6 +27,9 @@ type Config struct {
 
 	// Project-specific settings (only in project config)
 	Project ProjectConfig `yaml:"project" mapstructure:"project"`
+
+	// Guard hook configuration
+	Guard GuardConfig `yaml:"guard" mapstructure:"guard"`
 }
 
 // RecallConfig configures the RECALL knowledge system
@@ -74,4 +77,18 @@ type MemoryConfig struct {
 type ProjectConfig struct {
 	Name      string   `yaml:"name" mapstructure:"name"`
 	Languages []string `yaml:"languages" mapstructure:"languages"` // e.g., ["go", "python"]
+}
+
+// GuardConfig configures the edi-guard command hook
+type GuardConfig struct {
+	Enabled              bool          `yaml:"enabled" mapstructure:"enabled"`
+	BuildTags            []string      `yaml:"build_tags" mapstructure:"build_tags"`
+	DenyPatterns         []DenyPattern `yaml:"deny_patterns" mapstructure:"deny_patterns"`
+	FailureLoopThreshold int           `yaml:"failure_loop_threshold" mapstructure:"failure_loop_threshold"`
+}
+
+// DenyPattern is a regex pattern that blocks matching Bash commands
+type DenyPattern struct {
+	Pattern string `yaml:"pattern" mapstructure:"pattern"`
+	Reason  string `yaml:"reason" mapstructure:"reason"`
 }

@@ -12,6 +12,7 @@ all: build
 build:
 	go build $(CGO_TAGS) $(LDFLAGS) -o bin/$(BINARY) ./cmd/edi
 	go build $(CGO_TAGS) -o bin/task-sync-hook ./cmd/task-sync-hook
+	go build -o bin/edi-guard ./cmd/edi-guard
 
 # Run tests
 test:
@@ -37,6 +38,7 @@ install: build
 	cp bin/$(BINARY) ~/.local/bin/
 	mkdir -p ~/.edi/bin
 	cp bin/task-sync-hook ~/.edi/bin/
+	cp bin/edi-guard ~/.edi/bin/
 
 # Install globally (requires sudo)
 install-global: build
@@ -83,10 +85,11 @@ sync: install
 
 # Full clean reinstall: rebuild binary, wipe old state, reinitialize
 reinstall: clean build
-	rm -f $(HOME)/.local/bin/$(BINARY) $(HOME)/.edi/bin/task-sync-hook
+	rm -f $(HOME)/.local/bin/$(BINARY) $(HOME)/.edi/bin/task-sync-hook $(HOME)/.edi/bin/edi-guard
 	mkdir -p $(HOME)/.local/bin $(HOME)/.edi/bin
 	cp bin/$(BINARY) $(HOME)/.local/bin/
 	cp bin/task-sync-hook $(HOME)/.edi/bin/
+	cp bin/edi-guard $(HOME)/.edi/bin/
 	./bin/$(BINARY) init --global --force
 
 # Help

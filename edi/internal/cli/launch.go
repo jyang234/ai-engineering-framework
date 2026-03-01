@@ -105,6 +105,15 @@ func runLaunch(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Update hook configuration for edi-guard
+	if cfg.Guard.Enabled {
+		if err := launch.UpdateHooksSettings(cwd, cfg); err != nil {
+			if verbose {
+				fmt.Fprintf(os.Stderr, "Warning: failed to update hooks config: %v\n", err)
+			}
+		}
+	}
+
 	// Build session context
 	contextPath, err := launch.BuildContext(cfg, sessionID, brief, projectName)
 	if err != nil {
