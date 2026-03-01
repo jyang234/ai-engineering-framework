@@ -43,7 +43,7 @@ func DefaultConfig() *Config {
 					Reason:  "Blocked: recursive delete of .edi/ or .claude/ directory",
 				},
 				{
-					Pattern: `git\s+push\s+.*(--force|-f).*\b(main|master)\b|git\s+push\s+.*\b(main|master)\b.*(--force|-f)`,
+					Pattern: `git\s+push\s+.*(--force(\s|$)|-f(\s|$)).*\b(main|master)\b|git\s+push\s+.*\b(main|master)\b.*(--force(\s|$)|-f(\s|$))`,
 					Reason:  "Blocked: force push to main/master",
 				},
 				{

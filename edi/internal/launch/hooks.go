@@ -28,14 +28,15 @@ var ediGuardHooks = []hookEntry{
 }
 
 // UpdateHooksSettings merges edi-guard hook entries into .claude/settings.json,
-// preserving any existing non-edi hooks. Follows the same read-merge-write
-// pattern as UpdateMCPConfig for .mcp.json.
+// preserving any existing non-edi hooks. When guard is disabled, removes any
+// existing edi-guard entries. Follows the same read-merge-write pattern as
+// UpdateMCPConfig for .mcp.json.
 func UpdateHooksSettings(projectDir string, cfg *config.Config) error {
-	if !cfg.Guard.Enabled {
-		return nil
-	}
-
 	settingsPath := filepath.Join(projectDir, ".claude", "settings.json")
+
+	if !cfg.Guard.Enabled {
+		return removeEdiGuardHooks(settingsPath)
+	}
 
 	// Read existing settings
 	settings, err := readJSONFile(settingsPath)
@@ -66,6 +67,73 @@ func UpdateHooksSettings(projectDir string, cfg *config.Config) error {
 		return fmt.Errorf("failed to marshal settings: %w", err)
 	}
 
+	return os.WriteFile(settingsPath, append(data, '\n'), 0644)
+}
+
+// removeEdiGuardHooks removes all edi-guard entries from an existing settings.json.
+// If the file doesn't exist, this is a no-op.
+func removeEdiGuardHooks(settingsPath string) error {
+	settings, err := readJSONFile(settingsPath)
+	if err != nil || len(settings) == 0 {
+		return nil // no file or empty — nothing to clean
+	}
+
+	hooks, ok := settings["hooks"].(map[string]interface{})
+	if !ok || hooks == nil {
+		return nil
+	}
+
+	changed := false
+	for event, val := range hooks {
+		groups, ok := val.([]interface{})
+		if !ok {
+			continue
+		}
+		var filtered []interface{}
+		for _, g := range groups {
+			group, ok := g.(map[string]interface{})
+			if !ok {
+				filtered = append(filtered, g)
+				continue
+			}
+			handlers, _ := group["hooks"].([]interface{})
+			var kept []interface{}
+			for _, h := range handlers {
+				handler, ok := h.(map[string]interface{})
+				if !ok {
+					kept = append(kept, h)
+					continue
+				}
+				cmd, _ := handler["command"].(string)
+				if cmd == ediGuardCommand || strings.HasSuffix(cmd, "/edi-guard") {
+					changed = true
+					continue // remove this handler
+				}
+				kept = append(kept, h)
+			}
+			if len(kept) > 0 {
+				group["hooks"] = kept
+				filtered = append(filtered, group)
+			} else {
+				changed = true // drop empty matcher group
+			}
+		}
+		if len(filtered) > 0 {
+			hooks[event] = filtered
+		} else {
+			delete(hooks, event)
+			changed = true
+		}
+	}
+
+	if !changed {
+		return nil
+	}
+
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal settings: %w", err)
+	}
 	return os.WriteFile(settingsPath, append(data, '\n'), 0644)
 }
 
@@ -125,7 +193,7 @@ func ensureEdiGuardHandler(group map[string]interface{}) {
 			continue
 		}
 		cmd, _ := handler["command"].(string)
-		if strings.Contains(cmd, "edi-guard") {
+		if cmd == ediGuardCommand || strings.HasSuffix(cmd, "/edi-guard") {
 			handler["command"] = ediGuardCommand
 			return
 		}

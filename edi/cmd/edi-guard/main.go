@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/anthropics/aef/edi/internal/config"
 	"gopkg.in/yaml.v3"
@@ -64,9 +66,12 @@ func main() {
 		os.Exit(0)
 	}
 
+	// Pre-compile deny patterns once per invocation
+	denyPatterns := compileDenyPatterns(cfg.Guard.DenyPatterns)
+
 	switch input.HookEventName {
 	case "PreToolUse":
-		handlePreToolUse(input, cfg)
+		handlePreToolUse(input, cfg, denyPatterns)
 	case "PostToolUse":
 		handlePostToolUse(input)
 	case "PostToolUseFailure":
@@ -108,37 +113,55 @@ func parseBashInput(raw json.RawMessage) *bashToolInput {
 // ---------------------------------------------------------------------------
 
 func loadGuardConfig(cwd string) *guardConfigFile {
+	defaults := config.DefaultConfig().Guard
 	cfg := &guardConfigFile{
-		Guard: config.DefaultConfig().Guard,
+		Guard: defaults,
 		Agent: "coder",
 	}
 
+	// Load global config into a separate struct so an empty "guard:" key
+	// doesn't zero out defaults.
 	home, err := os.UserHomeDir()
 	if err == nil {
-		loadYAMLInto(filepath.Join(home, ".edi", "config.yaml"), cfg)
+		var global guardConfigFile
+		if loadYAMLInto(filepath.Join(home, ".edi", "config.yaml"), &global) == nil {
+			mergeGuardConfig(cfg, &global, &defaults)
+		}
 	}
 
 	// Project config overrides global. For deny_patterns we concatenate
 	// instead of replacing, so read project separately.
 	var project guardConfigFile
 	if loadYAMLInto(filepath.Join(cwd, ".edi", "config.yaml"), &project) == nil {
-		if project.Agent != "" {
-			cfg.Agent = project.Agent
-		}
-		if project.Guard.Enabled || project.Guard.FailureLoopThreshold > 0 || len(project.Guard.BuildTags) > 0 {
-			// Project has guard config — merge it
-			if len(project.Guard.BuildTags) > 0 {
-				cfg.Guard.BuildTags = project.Guard.BuildTags // arrays replace
-			}
-			if project.Guard.FailureLoopThreshold > 0 {
-				cfg.Guard.FailureLoopThreshold = project.Guard.FailureLoopThreshold
-			}
-			// Concatenate deny patterns from both sources
-			cfg.Guard.DenyPatterns = append(cfg.Guard.DenyPatterns, project.Guard.DenyPatterns...)
-		}
+		mergeGuardConfig(cfg, &project, &defaults)
 	}
 
 	return cfg
+}
+
+// mergeGuardConfig merges a loaded config layer into cfg, using defaults as
+// the zero-value reference. Fields that are zero in the overlay are treated as
+// absent rather than intentionally zeroed.
+func mergeGuardConfig(cfg *guardConfigFile, overlay *guardConfigFile, defaults *config.GuardConfig) {
+	if overlay.Agent != "" {
+		cfg.Agent = overlay.Agent
+	}
+	// Only merge guard fields that were explicitly set (non-zero)
+	if len(overlay.Guard.BuildTags) > 0 {
+		cfg.Guard.BuildTags = overlay.Guard.BuildTags
+	}
+	if overlay.Guard.FailureLoopThreshold > 0 {
+		cfg.Guard.FailureLoopThreshold = overlay.Guard.FailureLoopThreshold
+	}
+	// Concatenate deny patterns from overlay
+	if len(overlay.Guard.DenyPatterns) > 0 {
+		cfg.Guard.DenyPatterns = append(cfg.Guard.DenyPatterns, overlay.Guard.DenyPatterns...)
+	}
+	// Enabled is a bool — only override if the overlay has a guard section
+	// with explicit fields (otherwise an empty "guard:" would set enabled=false).
+	if overlay.Guard.FailureLoopThreshold > 0 || len(overlay.Guard.BuildTags) > 0 || len(overlay.Guard.DenyPatterns) > 0 {
+		cfg.Guard.Enabled = overlay.Guard.Enabled
+	}
 }
 
 func loadYAMLInto(path string, v interface{}) error {
@@ -153,7 +176,7 @@ func loadYAMLInto(path string, v interface{}) error {
 // PreToolUse: deny-list, build tags, failure counter
 // ---------------------------------------------------------------------------
 
-func handlePreToolUse(input *hookInput, cfg *guardConfigFile) {
+func handlePreToolUse(input *hookInput, cfg *guardConfigFile, denyPatterns []compiledDenyPattern) {
 	if input.ToolName != "Bash" {
 		return
 	}
@@ -163,7 +186,7 @@ func handlePreToolUse(input *hookInput, cfg *guardConfigFile) {
 	}
 
 	// 1. Deny-list check (blocks on match)
-	if reason := checkDenyList(bash.Command, cfg.Guard.DenyPatterns); reason != "" {
+	if reason := checkDenyList(bash.Command, denyPatterns); reason != "" {
 		fmt.Fprintf(os.Stderr, "edi-guard: %s\n", reason)
 		os.Exit(2)
 	}
@@ -197,15 +220,31 @@ func handlePreToolUse(input *hookInput, cfg *guardConfigFile) {
 	}
 }
 
-// checkDenyList returns the reason string if the command matches any deny pattern.
-func checkDenyList(command string, patterns []config.DenyPattern) string {
+// compiledDenyPattern pairs a compiled regex with its reason string.
+type compiledDenyPattern struct {
+	re     *regexp.Regexp
+	reason string
+}
+
+// compileDenyPatterns compiles deny patterns once at startup, skipping invalid regexes.
+func compileDenyPatterns(patterns []config.DenyPattern) []compiledDenyPattern {
+	compiled := make([]compiledDenyPattern, 0, len(patterns))
 	for _, p := range patterns {
 		re, err := regexp.Compile(p.Pattern)
 		if err != nil {
+			fmt.Fprintf(os.Stderr, "edi-guard: invalid deny pattern %q: %v\n", p.Pattern, err)
 			continue
 		}
-		if re.MatchString(command) {
-			return p.Reason
+		compiled = append(compiled, compiledDenyPattern{re: re, reason: p.Reason})
+	}
+	return compiled
+}
+
+// checkDenyList returns the reason string if the command matches any deny pattern.
+func checkDenyList(command string, patterns []compiledDenyPattern) string {
+	for _, p := range patterns {
+		if p.re.MatchString(command) {
+			return p.reason
 		}
 	}
 	return ""
@@ -254,6 +293,15 @@ func injectBuildTags(command string, tags []string) (bool, string) {
 		}
 	}
 	return true, b.String()
+}
+
+// compileTagPatterns compiles regexes to detect tag presence, once per tag.
+func compileTagPatterns(tags []string) []*regexp.Regexp {
+	patterns := make([]*regexp.Regexp, len(tags))
+	for i, tag := range tags {
+		patterns[i] = regexp.MustCompile(`-tags[= ]+\S*\b` + regexp.QuoteMeta(tag) + `\b`)
+	}
+	return patterns
 }
 
 // hasAllTags checks if a command clause already contains all required tags.
@@ -393,7 +441,7 @@ func handlePreCompact(input *hookInput, cfg *guardConfigFile) {
 		return
 	}
 	content := strings.Join(lines, "\n") + "\n"
-	if err := os.WriteFile(filepath.Join(dir, "compaction-state.md"), []byte(content), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "compaction-state.md"), []byte(content), 0600); err != nil {
 		fmt.Fprintf(os.Stderr, "edi-guard: failed to write compaction-state.md: %v\n", err)
 	}
 }
@@ -429,7 +477,9 @@ func readActiveTasks(cwd string) []taskInfo {
 }
 
 func gitBranch() string {
-	out, err := exec.Command("git", "branch", "--show-current").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "git", "branch", "--show-current").Output()
 	if err != nil {
 		return ""
 	}
@@ -467,5 +517,5 @@ func writeState(sessionID string, state guardState) {
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(stateFilePath(sessionID), data, 0644)
+	_ = os.WriteFile(stateFilePath(sessionID), data, 0600)
 }
