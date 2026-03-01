@@ -550,7 +550,27 @@ func TestLoadGuardConfig_ExplicitDisable(t *testing.T) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, ".edi"), 0755)
 
-	// Explicitly disabled with at least one non-zero guard field
+	// Explicitly disabled — no other guard fields needed
+	cfg := `guard:
+  enabled: false
+`
+	os.WriteFile(filepath.Join(dir, ".edi", "config.yaml"), []byte(cfg), 0644)
+
+	result := loadGuardConfig(dir)
+	if result.Guard.Enabled {
+		t.Error("guard should be disabled when explicitly set to false")
+	}
+	// Defaults should still be preserved for other fields
+	defaults := config.DefaultConfig().Guard
+	if len(result.Guard.DenyPatterns) != len(defaults.DenyPatterns) {
+		t.Errorf("deny patterns should be preserved, got %d", len(result.Guard.DenyPatterns))
+	}
+}
+
+func TestLoadGuardConfig_ExplicitDisableWithThreshold(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, ".edi"), 0755)
+
 	cfg := `guard:
   enabled: false
   failure_loop_threshold: 10
@@ -559,7 +579,7 @@ func TestLoadGuardConfig_ExplicitDisable(t *testing.T) {
 
 	result := loadGuardConfig(dir)
 	if result.Guard.Enabled {
-		t.Error("guard should be disabled when explicitly set to false")
+		t.Error("guard should be disabled")
 	}
 	if result.Guard.FailureLoopThreshold != 10 {
 		t.Errorf("expected threshold 10, got %d", result.Guard.FailureLoopThreshold)

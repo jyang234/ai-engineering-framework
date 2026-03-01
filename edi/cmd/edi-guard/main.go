@@ -43,11 +43,22 @@ type guardState struct {
 	LastFailureError    string `json:"last_failure_error"`
 }
 
-// guardConfigFile is the minimal YAML shape we unmarshal from .edi/config.yaml.
-// We don't use config.Load() because it uses os.Getwd(); the hook receives cwd on stdin.
+// guardConfigFile is the resolved config after merging all layers.
 type guardConfigFile struct {
-	Guard config.GuardConfig `yaml:"guard"`
-	Agent string             `yaml:"agent"`
+	Guard config.GuardConfig
+	Agent string
+}
+
+// guardConfigOverlay is the YAML shape we unmarshal from .edi/config.yaml.
+// Uses *bool for Enabled so we can distinguish "not set" from "set to false."
+type guardConfigOverlay struct {
+	Guard struct {
+		Enabled              *bool                `yaml:"enabled"`
+		BuildTags            []string             `yaml:"build_tags"`
+		DenyPatterns         []config.DenyPattern `yaml:"deny_patterns"`
+		FailureLoopThreshold int                  `yaml:"failure_loop_threshold"`
+	} `yaml:"guard"`
+	Agent string `yaml:"agent"`
 }
 
 func main() {
@@ -113,54 +124,49 @@ func parseBashInput(raw json.RawMessage) *bashToolInput {
 // ---------------------------------------------------------------------------
 
 func loadGuardConfig(cwd string) *guardConfigFile {
-	defaults := config.DefaultConfig().Guard
 	cfg := &guardConfigFile{
-		Guard: defaults,
+		Guard: config.DefaultConfig().Guard,
 		Agent: "coder",
 	}
 
-	// Load global config into a separate struct so an empty "guard:" key
-	// doesn't zero out defaults.
+	// Load global config into a separate overlay struct so an empty "guard:"
+	// key doesn't zero out defaults.
 	home, err := os.UserHomeDir()
 	if err == nil {
-		var global guardConfigFile
+		var global guardConfigOverlay
 		if loadYAMLInto(filepath.Join(home, ".edi", "config.yaml"), &global) == nil {
-			mergeGuardConfig(cfg, &global, &defaults)
+			mergeGuardOverlay(cfg, &global)
 		}
 	}
 
-	// Project config overrides global. For deny_patterns we concatenate
-	// instead of replacing, so read project separately.
-	var project guardConfigFile
+	// Project config overrides global. Deny patterns are concatenated,
+	// other arrays replace.
+	var project guardConfigOverlay
 	if loadYAMLInto(filepath.Join(cwd, ".edi", "config.yaml"), &project) == nil {
-		mergeGuardConfig(cfg, &project, &defaults)
+		mergeGuardOverlay(cfg, &project)
 	}
 
 	return cfg
 }
 
-// mergeGuardConfig merges a loaded config layer into cfg, using defaults as
-// the zero-value reference. Fields that are zero in the overlay are treated as
-// absent rather than intentionally zeroed.
-func mergeGuardConfig(cfg *guardConfigFile, overlay *guardConfigFile, defaults *config.GuardConfig) {
+// mergeGuardOverlay merges a config overlay into cfg. Only fields explicitly
+// set in the overlay are applied. Enabled uses *bool so "not set" (nil) is
+// distinguishable from "set to false."
+func mergeGuardOverlay(cfg *guardConfigFile, overlay *guardConfigOverlay) {
 	if overlay.Agent != "" {
 		cfg.Agent = overlay.Agent
 	}
-	// Only merge guard fields that were explicitly set (non-zero)
+	if overlay.Guard.Enabled != nil {
+		cfg.Guard.Enabled = *overlay.Guard.Enabled
+	}
 	if len(overlay.Guard.BuildTags) > 0 {
 		cfg.Guard.BuildTags = overlay.Guard.BuildTags
 	}
 	if overlay.Guard.FailureLoopThreshold > 0 {
 		cfg.Guard.FailureLoopThreshold = overlay.Guard.FailureLoopThreshold
 	}
-	// Concatenate deny patterns from overlay
 	if len(overlay.Guard.DenyPatterns) > 0 {
 		cfg.Guard.DenyPatterns = append(cfg.Guard.DenyPatterns, overlay.Guard.DenyPatterns...)
-	}
-	// Enabled is a bool — only override if the overlay has a guard section
-	// with explicit fields (otherwise an empty "guard:" would set enabled=false).
-	if overlay.Guard.FailureLoopThreshold > 0 || len(overlay.Guard.BuildTags) > 0 || len(overlay.Guard.DenyPatterns) > 0 {
-		cfg.Guard.Enabled = overlay.Guard.Enabled
 	}
 }
 
@@ -293,15 +299,6 @@ func injectBuildTags(command string, tags []string) (bool, string) {
 		}
 	}
 	return true, b.String()
-}
-
-// compileTagPatterns compiles regexes to detect tag presence, once per tag.
-func compileTagPatterns(tags []string) []*regexp.Regexp {
-	patterns := make([]*regexp.Regexp, len(tags))
-	for i, tag := range tags {
-		patterns[i] = regexp.MustCompile(`-tags[= ]+\S*\b` + regexp.QuoteMeta(tag) + `\b`)
-	}
-	return patterns
 }
 
 // hasAllTags checks if a command clause already contains all required tags.
