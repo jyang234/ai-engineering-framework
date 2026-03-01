@@ -42,7 +42,7 @@ This works at four policies. It won't work at ten. The problems:
 - PreCompact writes session state to `/memories/`
 - Config merges global + project YAML with correct semantics
 - `.edi/` directory check gates all processing
-- 25+ existing tests pass (with structural migration — see §Testing)
+- 42 existing tests pass (with structural migration — see §Testing)
 - Binary has zero CGO dependency
 - stderr format: `edi-guard: <reason>` (preserved — see §Behavioral Notes)
 
@@ -1040,7 +1040,7 @@ But this is opt-in, not the default.
 
 ### Preserved tests (migrated with structural changes)
 
-All 25 existing tests in `main_test.go` move to the appropriate
+All 42 existing tests in `main_test.go` move to the appropriate
 `policy_*_test.go` files. **Assertions are preserved, but call sites change**
 to use the policy types instead of free functions. (Finding 10)
 
@@ -1197,7 +1197,7 @@ resp := BuildPreToolUseResponse("go test -tags fts5 ./...", []string{"you're stu
 |---|---|---|
 | `TestInjectBuildTags_*` (10 tests) | `policy_buildtag_test.go` | Package declaration only |
 | `TestHasAllTags_*` (4 tests) | `policy_buildtag_test.go` | Package declaration only |
-| `TestDenyList_*` (8 tests) | `policy_denylist_test.go` | Structural: free function -> policy method |
+| `TestDenyList_*` (12 tests) | `policy_denylist_test.go` | Structural: free function -> policy method |
 | `TestCompileDenyPatterns_*` (1 test) | `policy_denylist_test.go` | Structural: test via constructor + eval |
 | `TestFailureCounter_*` (2 tests) | `policy_failureloop_test.go` | Package declaration only |
 | `TestPreCompact_*` (3 tests) | `policy_compaction_test.go` | Structural: HookContext with Agent field |
@@ -1280,7 +1280,7 @@ time in `Register()`. Until then, the simple approach is correct.
 | 6 | Write `DefaultRegistry` + `defaults_test.go` |
 | 7 | Rewrite `main.go` as thin dispatcher (config loading stays) |
 | 8 | Add registry integration tests (including Register validation panic test) |
-| 9 | Verify all 25+ existing tests pass with migrated call sites |
+| 9 | Verify all 42 existing tests pass with migrated call sites |
 
 ---
 
