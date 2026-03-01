@@ -1,14 +1,14 @@
-# Webhook Hooks Exploration: External Validation for AEF
+# Hooks Exploration: External Validation for AEF
 
-**Date**: 2026-02-28
+**Date**: 2026-02-28 (updated 2026-03-01)
 **Status**: Exploration / RFC
 **Author**: Claude (EDI session)
 
 ## Context
 
-Claude Code now supports **webhook hooks** (HTTP hooks) — a mechanism where tool-use events are POSTed to external HTTP endpoints that can validate, block, modify, or audit actions in real time. This is a significant expansion beyond the existing shell command hooks that AEF already uses (e.g., `task-sync-hook` on `SessionStart`).
+Claude Code supports four hook types — command, HTTP webhook, prompt, and agent — that can validate, block, modify, or audit actions in real time. AEF already uses command hooks (`task-sync-hook` on `SessionStart`).
 
-This document explores how webhook hooks align with AEF's core mission of producing reliable, high-quality codegen output, and identifies concrete integration opportunities.
+This document explores how hooks align with AEF's quality mission, identifies 14 potential opportunities, honestly assesses which are valuable vs. performative complexity, and recommends a minimal implementation using command hooks.
 
 ## How Webhook Hooks Work
 
@@ -424,129 +424,127 @@ Not all 14 opportunities are created equal. Most are either duplicating existing
 | **11** | Refactoring safety gate | Requires Go AST analysis in the sidecar. Heavy engineering for infrequent scenarios with brittle detection (is adding a parameter a "signature change" or "extending an API"?). |
 | **10** | Scope creep detection | "High file count + diverse packages" isn't an algorithm, it's a judgment call. Any threshold you pick will have high false positives, training users to ignore the warnings — which is worse than not having them. |
 
-## Architecture: EDI Webhook Service
+## Architecture: Choosing the Right Hook Type
 
-### Option A: Sidecar Process (Recommended for v0)
+Claude Code supports four hook types. For AEF's three Tier 1 policies, only one makes sense.
 
-EDI launches a lightweight HTTP server alongside Claude Code, rather than replacing itself entirely.
+### Hook Type Comparison for AEF's Policies
+
+| | Command Hook | HTTP Webhook | Prompt Hook | Agent Hook |
+|---|---|---|---|---|
+| **Mechanism** | Binary on stdin/stdout | POST to localhost | Single-turn LLM call | Multi-turn subagent |
+| **Latency** | ~5ms (process spawn) | ~10ms (HTTP round-trip) | ~500ms-3s (API call) | ~5-30s (agentic loop) |
+| **Can block** | Exit code 2 | JSON `permissionDecision: "deny"` | `{"ok": false}` | `{"ok": false}` |
+| **Maintains state** | File-based (hacky but works) | In-memory (clean) | No | No |
+| **Needs server process** | No | Yes (lifecycle management) | No | No |
+| **Existing AEF pattern** | Yes (`task-sync-hook`) | No | No | No |
+| **Cost per invocation** | Zero | Zero | API tokens | API tokens |
+
+### Why command hooks win for these policies
+
+**Build tag enforcement (#9)** is checking whether a string contains `-tags fts5`. A regex. Using an LLM for this (prompt/agent hook) is like using a neural network to check if a number is even — slower, more expensive, less reliable, and harder to debug than a 5ms process that runs `strings.Contains()`.
+
+**Destructive command guard (#2)** is matching against a deny-list of regex patterns. Same argument.
+
+**Failure loop breaker (#14)** needs a counter across invocations. A command hook can write `{"go test": 3}` to `/tmp/edi-guard-{session}.json` and read it on the next invocation. Slightly inelegant, but it's ~10 lines of code vs. an entire HTTP server lifecycle.
+
+An HTTP webhook sidecar's only advantage over command hooks is in-memory state for the counter. That's not worth introducing process lifecycle management (who starts it? who kills it when the session ends? what if it crashes?).
+
+Prompt/agent hooks are designed for genuinely complex validation — "run the test suite and verify it passes before letting Claude stop." That's a real use case for an LLM with tool access. String matching is not.
+
+### Recommendation: Single Command Hook Binary (`edi-guard`)
+
+Build one Go binary that handles all PreToolUse events, same pattern as `task-sync-hook`:
 
 ```
-edi launch
-  ├── Start webhook service on localhost:9090
-  ├── Write .claude/settings.json with hook config
-  ├── Write .mcp.json with RECALL config (existing)
-  └── syscall.Exec → Claude Code
+PreToolUse fires → Claude Code invokes edi-guard → JSON on stdin →
+  edi-guard applies three checks → exit 0 (allow) or exit 2 (block with reason on stderr)
 ```
 
-**Pros**: Simple, no external dependencies, shares local context (files, RECALL DB).
-**Cons**: Must manage process lifecycle (or use a goroutine before exec). The `syscall.Exec` model means EDI replaces itself — the sidecar would need to be a separate binary.
+```go
+// edi-guard: ~100-150 lines of Go
+// 1. Parse PreToolUse JSON from stdin
+// 2. If tool_name == "Bash":
+//    a. Check command against deny-list patterns → exit 2 if match
+//    b. Check if command matches "go (test|build)" without "-tags fts5" → exit 2 if missing
+//    c. Read failure counter from temp file, increment if PostToolUseFailure context
+// 3. Exit 0 (allow)
+```
 
-**Implementation approach**: Build `edi-hooks` as a separate binary (like `task-sync-hook`) that EDI starts in the background before exec'ing Claude Code. Configure it via EDI config.
+EDI's `launch.go` writes the hook config to `.claude/settings.json` using the same merge pattern as `UpdateMCPConfig`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.edi/bin/edi-guard"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
 
 ```yaml
 # .edi/config.yaml
-hooks:
+guard:
   enabled: true
-  port: 9090
-  build_tags: ["fts5"]              # Required build tags for go test/build
-  destructive_deny_list:            # Commands to block (regex patterns)
+  build_tags: ["fts5"]
+  deny_patterns:
     - "rm -rf .edi"
     - "git push --force.*main"
     - "git push --force.*master"
-  failure_loop_threshold: 3         # Inject warning after N consecutive failures
+  failure_loop_threshold: 3
 ```
 
-### Option B: External Service (Team/Enterprise)
+**What this gives you:**
+- Same proven pattern as `task-sync-hook` (already works)
+- No HTTP server, no port, no process lifecycle
+- ~5ms overhead per Bash command (imperceptible)
+- ~100-150 lines of Go, buildable in an afternoon
+- Configuration via EDI's existing YAML system
+- Graceful degradation (if `edi-guard` crashes, Claude Code proceeds)
 
-For teams, the webhook endpoint is a shared service:
+### When to reconsider HTTP webhooks or agent hooks
 
-```
-hooks:
-  enabled: true
-  url: https://edi-hooks.internal.company.com
-  auth_token_env: EDI_HOOK_TOKEN
-```
-
-**Pros**: Centralized policy enforcement, team-wide audit trail.
-**Cons**: Network latency, requires infrastructure, auth management.
-
-### Option C: Hybrid
-
-Local sidecar for low-latency validation (destructive guards, convention checks), external service for audit logging and team policies.
-
-## Implementation Sketch
-
-### Phase 1: Settings Generation (Low effort, high value)
-
-Extend `edi launch` to write `.claude/settings.json` with webhook hook configuration, pointing at whatever endpoints are configured. This is purely plumbing — it makes webhook hooks configurable through EDI's config system.
-
-**Changes**:
-- Add `HooksConfig` to `config/schema.go`
-- Add `WriteHooksSettings()` to `launch/` package
-- Call from `runLaunch()` alongside `UpdateMCPConfig()`
-
-### Phase 2: Local Validation Sidecar (Medium effort, high value)
-
-Build `edi-hooks` binary that serves the validation endpoints.
-
-**Priority endpoints**:
-1. `POST /hooks/pre-tool-use` — Destructive command guard
-2. `POST /hooks/post-tool-use` — Telemetry logging
-3. `POST /hooks/task-completed` — Completion validation
-
-**Changes**:
-- New `edi/cmd/edi-hooks/` binary
-- Policy engine in `edi/internal/hooks/policies/`
-- Telemetry sink in `edi/internal/hooks/telemetry/`
-- Update Makefile to build and install
-
-### Phase 3: RECALL Integration (Medium effort, medium value)
-
-Connect the hooks service to the RECALL database for enrichment and feedback.
-
-- PreToolUse enrichment queries RECALL
-- PostToolUseFailure feeds failure patterns back to RECALL
-- Session telemetry informs RECALL relevance scoring
-
-### Phase 4: Team Policies (Higher effort, enterprise value)
-
-Shared webhook service with:
-- Configurable policy rules (YAML/JSON)
-- Team-wide audit dashboard
-- Integration with CI/CD and PR review
-
-## Risk Assessment
-
-| Risk | Mitigation |
-|------|-----------|
-| Latency impact on developer flow | Local sidecar (< 10ms). Timeout configuration. Non-blocking for observational hooks. |
-| Over-blocking frustrates users | Start with deny-list only (known-dangerous). Convention checks are advisory (PostToolUse context injection, not blocking). |
-| Sidecar lifecycle management | EDI starts it, Claude Code's session doesn't depend on it (non-2xx = proceed). Crash = graceful degradation. |
-| Configuration complexity | Sensible defaults in EDI config. `hooks.enabled: true` with preset policies. |
-| Security of local endpoint | Localhost only. Token-based auth for remote endpoints. |
+- **HTTP webhooks**: If AEF gains a team mode where multiple developers share policies via a centralized service. That's an enterprise feature that doesn't exist yet — don't build for it.
+- **Prompt hooks**: If a future policy requires semantic judgment (not regex). Example: "Is this SQL query potentially destructive?" can't be regex-matched because `DELETE FROM users WHERE id = 5` is fine but `DELETE FROM users` isn't, and the distinction is semantic.
+- **Agent hooks**: If a policy needs to read files or run commands to make a decision. Example: "Before allowing Claude to stop, verify the test suite passes." That needs tool access.
 
 ## Relationship to Existing AEF Components
 
-| Component | Relationship to Webhook Hooks |
-|-----------|------------------------------|
-| **Skills** (coding, testing) | Hooks *enforce* what skills *suggest*. Skills guide Claude's reasoning; hooks validate the output. |
-| **Flight recorder** | Hooks feed additional telemetry into the same audit trail. |
-| **RECALL** | Hooks can query RECALL for enrichment and feed observations back. |
-| **task-sync-hook** | Existing command hook pattern. Webhook hooks are the HTTP evolution. Could migrate `task-sync-hook` to webhook format for consistency. |
-| **Agents** | Agent-specific hook policies (e.g., reviewer mode has stricter write guards). |
-| **`/end` workflow** | SessionEnd hook can automate parts of the capture workflow. |
+| Component | Relationship |
+|-----------|-------------|
+| **Skills** (coding, testing) | `edi-guard` enforces what skills suggest. Skills guide reasoning; the guard catches mechanical failures (wrong flags, dangerous commands). |
+| **task-sync-hook** | Proven pattern. `edi-guard` follows the same architecture: Go binary, JSON on stdin, exit codes. |
+| **RECALL** | No direct relationship. RECALL's quality problems are internal (see "Not the Right Layer" section). |
+| **Agents** | No agent-specific hook policies needed. Mode enforcement via hooks is performative (see Tier 4 assessment). |
 
 ## Revised Implementation Plan
 
 ### What to build
 
-1. **Settings generation plumbing** — Extend `edi launch` to write `.claude/settings.json` with hook configuration, same merge pattern as `UpdateMCPConfig`. This is pure plumbing that unlocks any future hooks.
+1. **Settings generation plumbing** — Extend `edi launch` to write `.claude/settings.json` with hook configuration, using the same merge pattern as `UpdateMCPConfig` for `.mcp.json`. Add `GuardConfig` to `config/schema.go`.
 
-2. **Minimal sidecar (`edi-hooks`)** with exactly two policies:
-   - **Build tag enforcement (#9)** — `PreToolUse` on Bash: if command matches `go (test|build)` and doesn't include `-tags.*fts5`, deny with corrected command. String match, 10 lines of logic.
-   - **Destructive command guard (#2)** — `PreToolUse` on Bash: deny-list of `rm -rf .edi`, `git push --force.*main`, `DROP TABLE`, etc. Another 20 lines of logic.
+   Changes:
+   - `edi/internal/config/schema.go` — Add `GuardConfig` struct
+   - `edi/internal/launch/settings.go` — New file: `UpdateHooksSettings()` (mirrors `mcp.go` pattern)
+   - `edi/internal/cli/launch.go` — Call `UpdateHooksSettings()` from `runLaunch()`
 
-3. **Failure loop breaker (#14)** — Add a simple counter in the sidecar: if the same tool + command pattern fails 3+ times, inject "Repeated failure — consider a different approach." This is a counter, not a pattern engine.
+2. **`edi-guard` command hook binary** — Single binary, three checks, same pattern as `task-sync-hook`:
+   - **Build tag enforcement (#9)** — If command matches `go (test|build)` without `-tags.*fts5`, exit 2 with corrected command.
+   - **Destructive command guard (#2)** — If command matches deny-list patterns, exit 2 with explanation.
+   - **Failure loop breaker (#14)** — Read/write counter from `/tmp/edi-guard-{session}.json`. If same command pattern fails 3+ times, exit 0 with advisory context on stdout.
+
+   Changes:
+   - `edi/cmd/edi-guard/main.go` — New binary (~100-150 lines)
+   - `edi/Makefile` — Build and install alongside `task-sync-hook`
 
 ### What to defer until there's evidence
 
@@ -597,7 +595,6 @@ These are codex-internal improvements, not webhook problems.
 
 ## Open Questions
 
-1. **Process lifecycle**: Since EDI uses `syscall.Exec`, the sidecar must be a separate process. EDI starts it in the background before exec'ing Claude Code. What's the cleanest way to ensure it shuts down when the Claude Code session ends? PID file + signal? Automatic exit on stdin close?
-2. **Settings file ownership**: `.claude/settings.json` may have user customizations beyond hooks. EDI should merge, not overwrite — same pattern as `UpdateMCPConfig` for `.mcp.json`.
-3. **Migration path**: Should `task-sync-hook` (currently a command hook) migrate to webhook format, or keep both patterns? The command hook is simpler for its purpose — no reason to change it unless maintaining both becomes burdensome.
-4. **Command hook alternative**: For the three policies identified, would command hooks (which AEF already uses for `task-sync-hook`) be simpler than webhook hooks? Command hooks avoid the HTTP server lifecycle entirely. The trade-off is that webhook hooks are more natural for a future team/shared service, while command hooks are simpler for local-only use.
+1. **Settings file ownership**: `.claude/settings.json` may have user customizations beyond hooks. EDI should merge, not overwrite — same read-merge-write pattern as `UpdateMCPConfig` for `.mcp.json`.
+2. **Failure counter for #14**: The `PostToolUseFailure` event is a separate hook event from `PreToolUse`. The counter needs a second hook entry on `PostToolUseFailure` that increments the file-based counter, while the `PreToolUse` hook reads it. Alternatively, `edi-guard` could handle both events in one binary by checking `hook_event_name` from the input JSON.
+3. **Config-driven deny-list**: Should deny patterns live in `.edi/config.yaml` (project-specific, checked into repo) or in `~/.edi/config.yaml` (global, personal)? Project-level makes sense for team conventions; global makes sense for personal safety rails. Probably both, merged at load time.
