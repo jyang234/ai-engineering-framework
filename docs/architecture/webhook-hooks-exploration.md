@@ -593,6 +593,17 @@ An attractive idea is using webhook hooks to improve RECALL retrieval quality �
 
 These are codex-internal improvements, not webhook problems.
 
+## Other Claude Code Features Assessed
+
+These features were evaluated for AEF relevance and found to be either premature or irrelevant:
+
+| Feature | Verdict | Why |
+|---------|---------|-----|
+| **Worktree isolation for subagents** | Not yet | AEF's 7 subagents are pre-configured agent definitions with no parallel orchestration code. Parallelism is documented in the spec but delegated to Claude Code's native Tasks mechanism, which AEF doesn't invoke programmatically. Worktree isolation matters the day you build an orchestration layer — which is a separate, larger effort. |
+| **MCP Tool Search (dynamic loading)** | Irrelevant | RECALL exposes 5 tools (~1500 tokens of schema). That's 0.75% of a 200K context window. Dynamic loading triggers at 10%. You'd need ~65 tools before this matters. |
+| **PreCompact hook** | Conditional | Placed in Tier 4 for the policy-engine version. But a trivial PreCompact command hook that writes task ID + branch + last test result to `/memories/` could be valuable — *if* post-compaction sessions actually degrade. Measure first: does Claude forget build tags or re-run searches after compaction? If yes, 10 lines of hook code fixes it. If no, it's preventive engineering for a non-problem. |
+| **Memory leak fixes** | Already shipped | Tree-sitter WASM, MCP cache leaks, task output retention — all fixed in recent Claude Code releases. Update Claude Code if you haven't. No AEF work needed. |
+
 ## Open Questions
 
 1. **Settings file ownership**: `.claude/settings.json` may have user customizations beyond hooks. EDI should merge, not overwrite — same read-merge-write pattern as `UpdateMCPConfig` for `.mcp.json`.
