@@ -34,6 +34,25 @@ func DefaultConfig() *Config {
 			UpdateOnLaunch: true,
 			UpdateOnEnd:    true,
 		},
+		Guard: GuardConfig{
+			Enabled:   true,
+			BuildTags: []string{"fts5"},
+			DenyPatterns: []DenyPattern{
+				{
+					Pattern: `rm\s+-[rf]*r[rf]*\s+(\.edi|\.claude)(/|\s|$)`,
+					Reason:  "Blocked: recursive delete of .edi/ or .claude/ directory",
+				},
+				{
+					Pattern: `git\s+push\s+.*(--force(\s|$)|-f(\s|$)).*\b(main|master)\b|git\s+push\s+.*\b(main|master)\b.*(--force(\s|$)|-f(\s|$))`,
+					Reason:  "Blocked: force push to main/master",
+				},
+				{
+					Pattern: `git\s+reset\s+--hard`,
+					Reason:  "Blocked: git reset --hard (use git stash or git checkout instead)",
+				},
+			},
+			FailureLoopThreshold: 5,
+		},
 	}
 }
 

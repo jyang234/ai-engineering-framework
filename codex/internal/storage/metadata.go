@@ -438,8 +438,49 @@ func (s *MetadataStore) FindByTitle(title string) (*ItemRecord, error) {
 	return &item, nil
 }
 
+// ftsStopWords contains common English words that add noise to FTS queries.
+// These are filtered before constructing the MATCH expression. If filtering
+// removes all terms, the original unfiltered query is used as a fallback.
+var ftsStopWords = map[string]bool{
+	"a": true, "an": true, "and": true, "are": true, "as": true,
+	"at": true, "be": true, "by": true, "do": true, "for": true,
+	"from": true, "has": true, "how": true, "i": true, "in": true,
+	"is": true, "it": true, "its": true, "not": true, "of": true,
+	"on": true, "or": true, "so": true, "that": true, "the": true,
+	"this": true, "to": true, "vs": true, "was": true, "we": true,
+	"what": true, "when": true, "which": true, "who": true,
+	"will": true, "with": true,
+}
+
+func isStopWord(word string) bool {
+	return ftsStopWords[strings.ToLower(word)]
+}
+
+// buildFTSTerms splits a query into quoted FTS5 terms joined by OR.
+// Hyphens are treated as word separators. When filterStops is true,
+// common English stop words are excluded from the result.
+func buildFTSTerms(query string, filterStops bool) []string {
+	raw := strings.Fields(query)
+	var terms []string
+	for _, w := range raw {
+		for _, part := range strings.Split(w, "-") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			if filterStops && isStopWord(part) {
+				continue
+			}
+			escaped := strings.ReplaceAll(part, `"`, `""`)
+			terms = append(terms, `"`+escaped+`"`)
+		}
+	}
+	return terms
+}
+
 // KeywordSearch performs FTS5 full-text search on items.
-// Returns results ranked by BM25 relevance score.
+// Returns results ranked by BM25 relevance score with column weighting:
+// title (5x), content (1x), tags (3x).
 func (s *MetadataStore) KeywordSearch(query string, limit int) ([]KeywordResult, error) {
 	if strings.TrimSpace(query) == "" {
 		return nil, nil
@@ -452,27 +493,21 @@ func (s *MetadataStore) KeywordSearch(query string, limit int) ([]KeywordResult,
 	// and join with OR so any matching term surfaces results.
 	// Hyphens are treated as word separators so that "acme-integration" matches
 	// documents where "acme" and "integration" were tokenized separately.
-	raw := strings.Fields(query)
-	var terms []string
-	for _, w := range raw {
-		for _, part := range strings.Split(w, "-") {
-			part = strings.TrimSpace(part)
-			if part == "" {
-				continue
-			}
-			escaped := strings.ReplaceAll(part, `"`, `""`)
-			terms = append(terms, `"`+escaped+`"`)
-		}
+	// Stop words are filtered to reduce noise in results.
+	terms := buildFTSTerms(query, true)
+	// Fallback: if all terms were stop words, use original terms unfiltered
+	if len(terms) == 0 {
+		terms = buildFTSTerms(query, false)
 	}
 	sanitized := strings.Join(terms, " OR ")
 
 	rows, err := s.db.Query(`
 		SELECT i.id, i.type, i.title, i.content, i.tags, i.scope,
-		       -rank AS score
+		       -bm25(items_fts, 5.0, 1.0, 3.0) AS score
 		FROM items_fts f
 		JOIN items i ON i.rowid = f.rowid
 		WHERE items_fts MATCH ?
-		ORDER BY rank
+		ORDER BY bm25(items_fts, 5.0, 1.0, 3.0)
 		LIMIT ?
 	`, sanitized, limit)
 	if err != nil {

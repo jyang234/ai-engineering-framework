@@ -3,7 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"sort"
 	"time"
 
@@ -62,7 +62,7 @@ func NewSearchEngine(ctx context.Context, config Config) (*SearchEngine, error) 
 	if config.ModelsPath != "" {
 		r, rErr := reranking.NewReranker(config.ModelsPath)
 		if rErr != nil {
-			log.Printf("Warning: reranker not available: %v\n", rErr)
+			slog.Warn("reranker not available", "error", rErr)
 		} else {
 			reranker = r
 		}
@@ -106,6 +106,43 @@ func (e *SearchEngine) Close() error {
 	return nil
 }
 
+// HealthStatus reports the operational state of the search engine.
+type HealthStatus struct {
+	DBHealthy        bool   `json:"db_healthy"`
+	EmbeddingHealthy bool   `json:"embedding_healthy"`
+	VectorCount      int    `json:"vector_count"`
+	ItemCount        int    `json:"item_count"`
+	EmbeddingError   string `json:"embedding_error,omitempty"`
+}
+
+// HealthCheck probes all dependencies and returns their status.
+// It does not fail — it reports what is and isn't working.
+func (e *SearchEngine) HealthCheck(ctx context.Context) HealthStatus {
+	status := HealthStatus{}
+
+	// Check DB
+	if counts, err := e.metadata.CountItemsByType(); err == nil {
+		status.DBHealthy = true
+		for _, c := range counts {
+			status.ItemCount += c
+		}
+	}
+
+	// Check vector store
+	if vs, ok := e.vecStore.(interface{ Count() int }); ok {
+		status.VectorCount = vs.Count()
+	}
+
+	// Check embedding service
+	if err := e.embedder.Ping(ctx); err != nil {
+		status.EmbeddingError = err.Error()
+	} else {
+		status.EmbeddingHealthy = true
+	}
+
+	return status
+}
+
 // Search performs hybrid search: vector similarity + FTS5 keyword + RRF fusion,
 // with optional reranking.
 func (e *SearchEngine) Search(ctx context.Context, req SearchRequest) ([]SearchResult, error) {
@@ -121,16 +158,22 @@ func (e *SearchEngine) Search(ctx context.Context, req SearchRequest) ([]SearchR
 		}
 	}
 
-	// 1. Embed query
-	queryVec, err := e.embedder.EmbedQuery(ctx, req.Query)
-	if err != nil {
-		return nil, fmt.Errorf("failed to embed query: %w", err)
-	}
-
-	// 2. Vector search
-	vectorResults, err := e.vecStore.Search(ctx, queryVec, candidateLimit)
-	if err != nil {
-		return nil, fmt.Errorf("vector search failed: %w", err)
+	// 1. Embed query (graceful — fall back to keyword-only if embedding unavailable)
+	var vectorResults []storage.ScoredResult
+	var degraded bool
+	queryVec, embedErr := e.embedder.EmbedQuery(ctx, req.Query)
+	if embedErr != nil {
+		slog.Warn("embedding unavailable, falling back to keyword-only search", "error", embedErr)
+		degraded = true
+	} else {
+		// 2. Vector search
+		vecResults, vecErr := e.vecStore.Search(ctx, queryVec, candidateLimit)
+		if vecErr != nil {
+			slog.Warn("vector search failed, falling back to keyword-only search", "error", vecErr)
+			degraded = true
+		} else {
+			vectorResults = vecResults
+		}
 	}
 
 	// 3. Keyword search (FTS5 BM25)
@@ -139,7 +182,7 @@ func (e *SearchEngine) Search(ctx context.Context, req SearchRequest) ([]SearchR
 		kwResults, err := e.keywords.KeywordSearch(req.Query, candidateLimit)
 		if err != nil {
 			// Log but don't fail -- vector results are still valid
-			log.Printf("Warning: keyword search failed: %v\n", err)
+			slog.Warn("keyword search failed, using vector-only results", "error", err)
 		} else {
 			for _, kw := range kwResults {
 				keywordResults = append(keywordResults, SearchResult{
@@ -193,7 +236,7 @@ func (e *SearchEngine) Search(ctx context.Context, req SearchRequest) ([]SearchR
 	if e.reranker != nil && len(results) > 0 {
 		reranked, err := e.reranker.Rerank(req.Query, toDocuments(results), req.Limit)
 		if err != nil {
-			log.Printf("Warning: reranking failed: %v\n", err)
+			slog.Warn("reranking failed, using pre-rerank scores", "error", err)
 		} else {
 			results = applyRerankScores(results, reranked)
 			// Re-sort by rerank score descending
@@ -219,6 +262,13 @@ func (e *SearchEngine) Search(ctx context.Context, req SearchRequest) ([]SearchR
 	// 9. Limit results
 	if len(results) > req.Limit {
 		results = results[:req.Limit]
+	}
+
+	// 10. Mark results as degraded if embedding was unavailable
+	if degraded {
+		for i := range results {
+			results[i].Degraded = true
+		}
 	}
 
 	return results, nil
@@ -379,7 +429,7 @@ func (e *SearchEngine) Delete(ctx context.Context, id string) error {
 
 	// Delete from vector store (best-effort)
 	if err := e.vecStore.Delete(ctx, id); err != nil {
-		log.Printf("Warning: failed to delete vector for %s: %v", id, err)
+		slog.Warn("failed to delete vector", "item_id", id, "error", err)
 	}
 
 	return nil

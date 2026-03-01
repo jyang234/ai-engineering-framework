@@ -44,16 +44,16 @@ type Config struct {
 
 // Item represents a knowledge item in Codex
 type Item struct {
-	ID        string            `json:"id"`
-	Type      string            `json:"type"`      // pattern, failure, decision, context, code, doc
-	Title     string            `json:"title"`
-	Content   string            `json:"content"`
-	Tags      []string          `json:"tags,omitempty"`
-	Scope     string            `json:"scope"`     // global, project
-	Source    string            `json:"source,omitempty"` // file path or manual
-	Metadata  map[string]any    `json:"metadata,omitempty"`
-	CreatedAt time.Time         `json:"created_at"`
-	UpdatedAt time.Time         `json:"updated_at"`
+	ID        string         `json:"id"`
+	Type      string         `json:"type"` // pattern, failure, decision, context, code, doc
+	Title     string         `json:"title"`
+	Content   string         `json:"content"`
+	Tags      []string       `json:"tags,omitempty"`
+	Scope     string         `json:"scope"`            // global, project
+	Source    string         `json:"source,omitempty"` // file path or manual
+	Metadata  map[string]any `json:"metadata,omitempty"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
 }
 
 // SearchRequest represents a search query
@@ -68,14 +68,15 @@ type SearchRequest struct {
 // SearchResult represents a single search result
 type SearchResult struct {
 	Item
-	Score      float64 `json:"score"`
+	Score      float64  `json:"score"`
 	Highlights []string `json:"highlights,omitempty"`
+	Degraded   bool     `json:"degraded,omitempty"` // true when results are keyword-only due to embedding failure
 }
 
 // IndexRequest represents a request to index content
 type IndexRequest struct {
 	Content  string   `json:"content"`
-	Type     string   `json:"type"`     // code, doc, manual
+	Type     string   `json:"type"` // code, doc, manual
 	FilePath string   `json:"file_path,omitempty"`
 	Language string   `json:"language,omitempty"` // for code: go, python, typescript
 	Tags     []string `json:"tags,omitempty"`

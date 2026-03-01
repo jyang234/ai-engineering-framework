@@ -6,18 +6,29 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"fmt"
+	"log/slog"
 	"math"
 	"sync"
+	"time"
 )
+
+const vectorCacheCheckInterval = 10 * time.Second
 
 // VecStore provides brute-force vector search backed by SQLite BLOBs.
 // Vectors are loaded into memory for fast cosine similarity computation.
 // At <10K documents this is sub-millisecond and returns exact (not approximate) results.
+//
+// The in-memory cache is periodically checked for staleness against the SQLite
+// database, so vectors added by other processes become visible within
+// vectorCacheCheckInterval.
 type VecStore struct {
 	db *sql.DB
 
 	mu      sync.RWMutex
 	vectors map[string][]float32 // item_id -> normalized embedding
+
+	// Change detection for cross-process cache invalidation
+	lastCheckTime time.Time
 }
 
 // ScoredResult pairs an item ID with a similarity score.
@@ -104,9 +115,67 @@ func (vs *VecStore) Upsert(ctx context.Context, itemID string, vector []float32)
 	return nil
 }
 
+// checkStale queries the vectors table count and reloads if it differs from
+// the in-memory count. Rate-limited to avoid hammering SQLite on every search.
+func (vs *VecStore) checkStale() {
+	vs.mu.RLock()
+	lastCheck := vs.lastCheckTime
+	currentCount := len(vs.vectors)
+	vs.mu.RUnlock()
+
+	if time.Since(lastCheck) < vectorCacheCheckInterval {
+		return
+	}
+
+	var dbCount int
+	err := vs.db.QueryRow("SELECT COUNT(*) FROM vectors").Scan(&dbCount)
+	if err != nil {
+		return // Silently skip — the cache is still usable
+	}
+
+	vs.mu.Lock()
+	vs.lastCheckTime = time.Now()
+	vs.mu.Unlock()
+
+	if dbCount != currentCount {
+		// External change detected — reload
+		newVecs := make(map[string][]float32)
+		rows, err := vs.db.Query("SELECT item_id, embedding, dimensions FROM vectors")
+		if err != nil {
+			return
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var id string
+			var blob []byte
+			var dims int
+			if err := rows.Scan(&id, &blob, &dims); err != nil {
+				return
+			}
+			vec, err := blobToFloat32(blob, dims)
+			if err != nil {
+				return
+			}
+			newVecs[id] = vec
+		}
+		if rows.Err() != nil {
+			return
+		}
+
+		vs.mu.Lock()
+		vs.vectors = newVecs
+		vs.lastCheckTime = time.Now()
+		vs.mu.Unlock()
+
+		slog.Info("vector cache reloaded", "count", dbCount, "reason", "external_change")
+	}
+}
+
 // Search returns the top-K items by cosine similarity to the query vector.
 // Uses a min-heap to efficiently track only the top-K results.
 func (vs *VecStore) Search(ctx context.Context, queryVec []float32, limit int) ([]ScoredResult, error) {
+	vs.checkStale()
 	if limit <= 0 {
 		limit = 10
 	}
@@ -140,10 +209,10 @@ func (vs *VecStore) Search(ctx context.Context, queryVec []float32, limit int) (
 // minHeap implements heap.Interface for top-K selection (min at root).
 type minHeap []ScoredResult
 
-func (h minHeap) Len() int            { return len(h) }
-func (h minHeap) Less(i, j int) bool   { return h[i].Score < h[j].Score }
-func (h minHeap) Swap(i, j int)        { h[i], h[j] = h[j], h[i] }
-func (h *minHeap) Push(x any)  { *h = append(*h, x.(ScoredResult)) }
+func (h minHeap) Len() int           { return len(h) }
+func (h minHeap) Less(i, j int) bool { return h[i].Score < h[j].Score }
+func (h minHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *minHeap) Push(x any)        { *h = append(*h, x.(ScoredResult)) }
 func (h *minHeap) Pop() any {
 	old := *h
 	n := len(old)

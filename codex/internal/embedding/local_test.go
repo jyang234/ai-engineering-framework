@@ -247,3 +247,161 @@ func TestCustomURLAndModel(t *testing.T) {
 		t.Errorf("model = %q, want %q", gotModel, "custom-embed-model")
 	}
 }
+
+// =============================================================================
+// Circuit Breaker Tests
+// =============================================================================
+
+func TestCircuitBreaker_Opens(t *testing.T) {
+	var count atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count.Add(1)
+		w.WriteHeader(500)
+		w.Write([]byte("failing"))
+	}))
+	defer srv.Close()
+
+	client := NewLocalClient(WithLocalBaseURL(srv.URL))
+	ctx := context.Background()
+
+	// Exhaust retries on 3 embed calls to trigger circuit breaker
+	// Each call does localMaxRetries (3) attempts internally, but
+	// one full embed() failure counts as 1 circuit breaker failure.
+	for i := 0; i < circuitBreakerThreshold; i++ {
+		_, err := client.EmbedQuery(ctx, "test")
+		if err == nil {
+			t.Fatalf("call %d: expected error", i)
+		}
+	}
+
+	// Next call should be fast-failed by circuit breaker
+	countBefore := count.Load()
+	_, err := client.EmbedQuery(ctx, "test")
+	if err == nil {
+		t.Fatal("expected circuit breaker error")
+	}
+	if !strings.Contains(err.Error(), "circuit breaker open") {
+		t.Errorf("error = %q, want to contain 'circuit breaker open'", err.Error())
+	}
+	// No new HTTP requests should have been made
+	if count.Load() != countBefore {
+		t.Errorf("circuit breaker should have prevented HTTP request")
+	}
+}
+
+func TestCircuitBreaker_SuccessResets(t *testing.T) {
+	var callNum atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := callNum.Add(1)
+		// Fail first 3 requests (first embed call), succeed on 4th (second embed call)
+		if n <= 3 {
+			w.WriteHeader(500)
+			w.Write([]byte("failing"))
+			return
+		}
+		json.NewEncoder(w).Encode(ollamaEmbedResponse{
+			Embeddings: [][]float32{{0.1, 0.2, 0.3}},
+		})
+	}))
+	defer srv.Close()
+
+	client := NewLocalClient(WithLocalBaseURL(srv.URL))
+	ctx := context.Background()
+
+	// First call fails (uses all 3 retries) — records 1 failure
+	_, err := client.EmbedQuery(ctx, "test")
+	if err == nil {
+		t.Fatal("expected first call to fail")
+	}
+
+	// Second call succeeds — should reset the circuit breaker
+	vec, err := client.EmbedQuery(ctx, "test")
+	if err != nil {
+		t.Fatalf("expected second call to succeed: %v", err)
+	}
+	if len(vec) != 3 {
+		t.Errorf("got %d dims, want 3", len(vec))
+	}
+
+	// Verify circuit breaker is reset (consecutiveFail should be 0)
+	if client.consecutiveFail != 0 {
+		t.Errorf("consecutive failures = %d, want 0 after success", client.consecutiveFail)
+	}
+}
+
+func TestCircuitBreaker_CooldownResets(t *testing.T) {
+	client := NewLocalClient(WithLocalBaseURL("http://127.0.0.1:1")) // unreachable
+	// Manually set circuit breaker state as if it opened in the past
+	client.mu.Lock()
+	client.consecutiveFail = circuitBreakerThreshold
+	client.lastFailTime = time.Now().Add(-circuitBreakerCooldown - time.Second) // expired
+	client.mu.Unlock()
+
+	// Circuit should be considered closed now (cooldown expired)
+	if client.circuitOpen() {
+		t.Error("circuit should be closed after cooldown")
+	}
+}
+
+// =============================================================================
+// Ping Tests
+// =============================================================================
+
+func TestPing_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(ollamaEmbedResponse{
+			Embeddings: [][]float32{{0.1, 0.2, 0.3}},
+		})
+	}))
+	defer srv.Close()
+
+	client := NewLocalClient(WithLocalBaseURL(srv.URL))
+	err := client.Ping(context.Background())
+	if err != nil {
+		t.Fatalf("Ping: %v", err)
+	}
+}
+
+func TestPing_Unreachable(t *testing.T) {
+	client := NewLocalClient(WithLocalBaseURL("http://127.0.0.1:1"))
+	err := client.Ping(context.Background())
+	if err == nil {
+		t.Fatal("expected error for unreachable server")
+	}
+	if !strings.Contains(err.Error(), "embedding service unreachable") {
+		t.Errorf("error = %q, want to contain 'embedding service unreachable'", err.Error())
+	}
+}
+
+func TestPing_BypassesCircuitBreaker(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(ollamaEmbedResponse{
+			Embeddings: [][]float32{{0.1, 0.2, 0.3}},
+		})
+	}))
+	defer srv.Close()
+
+	client := NewLocalClient(WithLocalBaseURL(srv.URL))
+
+	// Manually open the circuit breaker
+	client.mu.Lock()
+	client.consecutiveFail = circuitBreakerThreshold
+	client.lastFailTime = time.Now()
+	client.mu.Unlock()
+
+	// Verify circuit is open
+	if !client.circuitOpen() {
+		t.Fatal("circuit should be open")
+	}
+
+	// Ping should bypass the circuit breaker and succeed
+	err := client.Ping(context.Background())
+	if err != nil {
+		t.Fatalf("Ping should bypass circuit breaker: %v", err)
+	}
+
+	// Successful Ping should reset the circuit breaker
+	if client.circuitOpen() {
+		t.Error("circuit should be closed after successful Ping")
+	}
+}
