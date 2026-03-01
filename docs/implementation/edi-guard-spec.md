@@ -125,7 +125,7 @@ Insert `-tags fts5` immediately after the `go (test|build|run)` token:
 {
   "hookSpecificOutput": {
     "hookEventName": "PreToolUse",
-    "toolInput": {
+    "updatedInput": {
       "command": "go test -tags fts5 ./..."
     }
   }
@@ -545,6 +545,12 @@ Read stdin with `io.LimitReader(os.Stdin, 1<<20)` (1MB limit, same as `task-sync
 ```go
 func main() {
     input := parseStdin()
+
+    // Skip non-EDI projects
+    if _, err := os.Stat(filepath.Join(input.CWD, ".edi")); os.IsNotExist(err) {
+        os.Exit(0)
+    }
+
     cfg := loadGuardConfig(input.CWD)
 
     if !cfg.Enabled {
@@ -579,7 +585,7 @@ If both build tag injection and failure advisory apply, output both in the same 
   "hookSpecificOutput": {
     "hookEventName": "PreToolUse",
     "permissionDecision": "allow",
-    "toolInput": {
+    "updatedInput": {
       "command": "go test -tags fts5 ./..."
     },
     "additionalContext": "edi-guard: 5 consecutive failures detected..."
@@ -663,9 +669,13 @@ Note: `edi-guard` does **not** need `-tags fts5` or CGO. It has no SQLite depend
 | `TestFailureCounter_Reset` | PostToolUse | counter resets to 0 |
 | `TestFailureCounter_Advisory` | 5 failures then PreToolUse | advisory in output |
 | `TestFailureCounter_AdvisoryOnce` | 6 failures, two PreToolUse calls | advisory only on first |
+| `TestBuildTagInjection_CompoundWithMake` | `make foo && go test ./...` | `make foo && go test -tags fts5 ./...` (make clause skipped, go clause injected) |
+| `TestBuildTagInjection_MultipleTags` | config `["fts5","integration"]`, `go test ./...` | `go test -tags "fts5,integration" ./...` |
+| `TestNonEdiProject` | PreToolUse, no `.edi/` directory | exit 0, no output |
 | `TestPreCompact_WritesFile` | PreCompact with task + branch | file written with correct content |
 | `TestPreCompact_MissingTask` | PreCompact, no active.yaml | file written, task line omitted |
 | `TestPreCompact_MissingGit` | PreCompact, no git repo | file written, branch line omitted |
+| `TestPreCompact_MultipleInProgressTasks` | 3 in-progress tasks | file shows 2 tasks + "(+1 more)" |
 
 ### Integration Test
 
@@ -688,15 +698,120 @@ Tests for `edi-guard` do **not** need `-tags fts5`. The binary has zero SQLite d
 
 | File | Purpose | Lines (est.) |
 |------|---------|-------------|
-| `edi/cmd/edi-guard/main.go` | Binary entry point, event dispatch, all four policies | ~200 |
-| `edi/cmd/edi-guard/main_test.go` | Unit + integration tests | ~250 |
+| `edi/cmd/edi-guard/main.go` | Binary entry point, event dispatch, all four policies | ~230 |
+| `edi/cmd/edi-guard/main_test.go` | Unit + integration tests (21 cases) | ~300 |
 | `edi/internal/config/schema.go` | Add `GuardConfig` + `DenyPattern` structs | +15 |
 | `edi/internal/launch/hooks.go` | Settings.json generation + merge | ~100 |
 | `edi/internal/launch/hooks_test.go` | Merge logic tests | ~80 |
 | `edi/internal/cli/launch.go` | Add `UpdateHooksSettings` call | +5 |
 | `edi/Makefile` | Add `edi-guard` build + install targets | +3 |
 
-Total new code: ~400 lines of Go (half of which is tests).
+Total new code: ~450 lines of Go (slightly more than half is tests).
+
+## Gaps Addressed After Review
+
+Seven underspecified areas found and resolved during spec review:
+
+### 1. Output field name is `updatedInput`, not `toolInput`
+
+The Claude Code docs use `updatedInput` (camelCase) in `hookSpecificOutput` for tool input modification. The spec originally used `toolInput`. **All output JSON examples have been corrected.**
+
+### 2. Config loading needs a `cwd` parameter
+
+`config.Load()` uses `os.Getwd()` to find the project config. But `edi-guard` receives `cwd` from the hook input JSON, and Claude Code may invoke the hook from a different working directory than the project root.
+
+**Solution**: Don't use `config.Load()`. Write a minimal `loadGuardConfig(cwd string)` function that:
+1. Reads `~/.edi/config.yaml` (global) with `loadFile()` pattern from `config/loader.go`
+2. Reads `{cwd}/.edi/config.yaml` (project) to override
+3. Only unmarshals the `guard:` section — the binary doesn't need Recall, Codex, Briefing, etc.
+
+This avoids the viper dependency in the guard binary. Direct YAML unmarshal of a minimal struct:
+
+```go
+type guardConfigFile struct {
+    Guard  GuardConfig `yaml:"guard"`
+    Agent  string      `yaml:"agent"`  // needed for PreCompact snapshot
+}
+```
+
+The binary imports `GuardConfig` and `DenyPattern` from `edi/internal/config` but does NOT call `config.Load()`.
+
+### 3. `updatedInput` and `additionalContext` can combine
+
+Confirmed from the [official docs](https://code.claude.com/docs/en/hooks): the PreToolUse `hookSpecificOutput` object supports both `updatedInput` and `additionalContext` simultaneously. The example in the docs shows them in the same JSON object.
+
+Combined output when both build tag injection and failure advisory apply:
+
+```json
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "allow",
+    "updatedInput": {
+      "command": "go test -tags fts5 ./..."
+    },
+    "additionalContext": "edi-guard: 5 consecutive failures detected..."
+  }
+}
+```
+
+### 4. `make` skip logic for compound commands
+
+The spec says "skip commands that start with `make`" but `cd edi && make test` doesn't start with `make`. And `make foo && go test ./...` has both make and a bare go command.
+
+**Rule**: If the command contains `\bgo\s+(test|build|run)\b`, check whether it appears after a `\bmake\b` in the same shell clause. The simplest implementation: split on `&&`, `||`, and `;` and process each clause independently.
+
+```go
+// Split command into clauses
+clauses := regexp.MustCompile(`\s*(?:&&|\|\||;)\s*`).Split(command, -1)
+for i, clause := range clauses {
+    clause = strings.TrimSpace(clause)
+    if strings.HasPrefix(clause, "make ") || clause == "make" {
+        continue // skip make clauses
+    }
+    if goCommandRe.MatchString(clause) && !hasRequiredTags(clause) {
+        // inject into this clause, reassemble full command
+    }
+}
+```
+
+### 5. Multiple build tags
+
+The spec says `build_tags: ["fts5"]` but the config is an array, implying multiple tags. If someone configures `build_tags: ["fts5", "integration"]`:
+
+**Rule**: Inject as a single comma-separated `-tags` flag: `-tags "fts5,integration"`. The Go toolchain accepts this format.
+
+The `hasTagRe` regex must be dynamic, checking for ALL configured tags:
+
+```go
+// Check that all required tags are present
+func hasAllTags(command string, requiredTags []string) bool {
+    for _, tag := range requiredTags {
+        re := regexp.MustCompile(`-tags[= ]+\S*\b` + regexp.QuoteMeta(tag) + `\b`)
+        if !re.MatchString(command) {
+            return false
+        }
+    }
+    return true
+}
+```
+
+### 6. Non-EDI project detection
+
+`task-sync-hook` checks for `.edi/` directory and skips non-EDI projects. `edi-guard` must do the same.
+
+**Rule**: After parsing stdin, check `os.Stat(filepath.Join(input.CWD, ".edi"))`. If it doesn't exist, exit 0 immediately. This applies to all events, not just config-dependent ones — even the failure counter should not run in non-EDI projects.
+
+### 7. Multiple in-progress tasks in PreCompact snapshot
+
+The spec says "find first task with `status: in_progress`" but there may be multiple.
+
+**Rule**: List up to 2 in-progress tasks. If more than 2 exist, write the first 2 and add `(+N more)`. Each task is one line, so 2 tasks = 2 lines, staying within the 8-line budget.
+
+```markdown
+- Task: TSK-042 — Implement PreCompact hook for edi-guard
+- Task: TSK-043 — Write edi-guard tests (+1 more)
+```
 
 ## What This Does NOT Do
 
