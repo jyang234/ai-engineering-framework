@@ -456,6 +456,28 @@ func isStopWord(word string) bool {
 	return ftsStopWords[strings.ToLower(word)]
 }
 
+// buildFTSTerms splits a query into quoted FTS5 terms joined by OR.
+// Hyphens are treated as word separators. When filterStops is true,
+// common English stop words are excluded from the result.
+func buildFTSTerms(query string, filterStops bool) []string {
+	raw := strings.Fields(query)
+	var terms []string
+	for _, w := range raw {
+		for _, part := range strings.Split(w, "-") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			if filterStops && isStopWord(part) {
+				continue
+			}
+			escaped := strings.ReplaceAll(part, `"`, `""`)
+			terms = append(terms, `"`+escaped+`"`)
+		}
+	}
+	return terms
+}
+
 // KeywordSearch performs FTS5 full-text search on items.
 // Returns results ranked by BM25 relevance score with column weighting:
 // title (5x), content (1x), tags (3x).
@@ -472,24 +494,10 @@ func (s *MetadataStore) KeywordSearch(query string, limit int) ([]KeywordResult,
 	// Hyphens are treated as word separators so that "acme-integration" matches
 	// documents where "acme" and "integration" were tokenized separately.
 	// Stop words are filtered to reduce noise in results.
-	raw := strings.Fields(query)
-	var terms []string
-	for _, w := range raw {
-		for _, part := range strings.Split(w, "-") {
-			part = strings.TrimSpace(part)
-			if part == "" || isStopWord(part) {
-				continue
-			}
-			escaped := strings.ReplaceAll(part, `"`, `""`)
-			terms = append(terms, `"`+escaped+`"`)
-		}
-	}
+	terms := buildFTSTerms(query, true)
 	// Fallback: if all terms were stop words, use original terms unfiltered
 	if len(terms) == 0 {
-		for _, w := range raw {
-			escaped := strings.ReplaceAll(w, `"`, `""`)
-			terms = append(terms, `"`+escaped+`"`)
-		}
+		terms = buildFTSTerms(query, false)
 	}
 	sanitized := strings.Join(terms, " OR ")
 
