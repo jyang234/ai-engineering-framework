@@ -759,7 +759,42 @@ func TestSearchEngine_Search(t *testing.T) {
 		}
 	})
 
-	t.Run("Given embedding fails When Search called Then returns error", func(t *testing.T) {
+	t.Run("Given embedding fails When Search called Then falls back to keyword-only results", func(t *testing.T) {
+		// Given
+		embed := NewMockEmbedder()
+		embed.QueryFunc = func(ctx context.Context, query string) ([]float32, error) {
+			return nil, ErrMockEmbedding
+		}
+
+		kwSearcher := NewMockKeywordSearcher()
+		kwSearcher.Results = []storage.KeywordResult{
+			{ID: "kw-1", Title: "Keyword Result", Content: "Found via FTS5", Score: 1.5},
+		}
+
+		engine := &SearchEngine{
+			embedder: embed,
+			keywords: kwSearcher,
+		}
+
+		// When
+		results, err := engine.Search(ctx, SearchRequest{Query: "test"})
+
+		// Then
+		if err != nil {
+			t.Fatalf("expected graceful degradation, got error: %v", err)
+		}
+		if len(results) != 1 {
+			t.Fatalf("expected 1 keyword-only result, got %d", len(results))
+		}
+		if !results[0].Degraded {
+			t.Error("expected Degraded flag to be true")
+		}
+		if results[0].ID != "kw-1" {
+			t.Errorf("expected result ID 'kw-1', got %q", results[0].ID)
+		}
+	})
+
+	t.Run("Given embedding fails and no keywords When Search called Then returns empty results", func(t *testing.T) {
 		// Given
 		embed := NewMockEmbedder()
 		embed.QueryFunc = func(ctx context.Context, query string) ([]float32, error) {
@@ -771,31 +806,46 @@ func TestSearchEngine_Search(t *testing.T) {
 		}
 
 		// When
-		_, err := engine.Search(ctx, SearchRequest{Query: "test"})
+		results, err := engine.Search(ctx, SearchRequest{Query: "test"})
 
 		// Then
-		if err == nil {
-			t.Fatal("expected error when embedding fails")
+		if err != nil {
+			t.Fatalf("expected graceful degradation, got error: %v", err)
+		}
+		if len(results) != 0 {
+			t.Errorf("expected 0 results with no keyword searcher, got %d", len(results))
 		}
 	})
 
-	t.Run("Given vector search fails When Search called Then returns error", func(t *testing.T) {
+	t.Run("Given vector search fails When Search called Then falls back to keyword-only results", func(t *testing.T) {
 		// Given
 		embed := NewMockEmbedder()
 		vectorStore := NewMockVectorStorage()
 		vectorStore.FailOnSearch = true
 
+		kwSearcher := NewMockKeywordSearcher()
+		kwSearcher.Results = []storage.KeywordResult{
+			{ID: "kw-1", Title: "Keyword Result", Content: "Found via FTS5", Score: 1.5},
+		}
+
 		engine := &SearchEngine{
 			embedder: embed,
 			vecStore: vectorStore,
+			keywords: kwSearcher,
 		}
 
 		// When
-		_, err := engine.Search(ctx, SearchRequest{Query: "test"})
+		results, err := engine.Search(ctx, SearchRequest{Query: "test"})
 
 		// Then
-		if err == nil {
-			t.Fatal("expected error when vector search fails")
+		if err != nil {
+			t.Fatalf("expected graceful degradation, got error: %v", err)
+		}
+		if len(results) != 1 {
+			t.Fatalf("expected 1 keyword-only result, got %d", len(results))
+		}
+		if !results[0].Degraded {
+			t.Error("expected Degraded flag to be true")
 		}
 	})
 
@@ -1463,6 +1513,105 @@ func TestItemToRecord(t *testing.T) {
 		}
 		if record.Title != "Title" {
 			t.Errorf("Title mismatch")
+		}
+	})
+}
+
+// =============================================================================
+// Test: HealthCheck
+// =============================================================================
+
+func TestSearchEngine_HealthCheck(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("Given all healthy When HealthCheck called Then reports all healthy", func(t *testing.T) {
+		// Given
+		metaStore := NewMockMetadataStorage()
+		metaStore.Items["p1"] = &storage.ItemRecord{ID: "p1", Type: "pattern"}
+		metaStore.Items["p2"] = &storage.ItemRecord{ID: "p2", Type: "pattern"}
+
+		embed := NewMockEmbedder()
+		vectorStore := NewMockVectorStorage()
+		vectorStore.Vectors["p1"] = []float32{1.0}
+
+		engine := &SearchEngine{
+			metadata: metaStore,
+			embedder: embed,
+			vecStore: vectorStore,
+		}
+
+		// When
+		status := engine.HealthCheck(ctx)
+
+		// Then
+		if !status.DBHealthy {
+			t.Error("expected DB to be healthy")
+		}
+		if !status.EmbeddingHealthy {
+			t.Error("expected embedding to be healthy")
+		}
+		if status.ItemCount != 2 {
+			t.Errorf("expected 2 items, got %d", status.ItemCount)
+		}
+		if status.EmbeddingError != "" {
+			t.Errorf("expected no embedding error, got %q", status.EmbeddingError)
+		}
+	})
+
+	t.Run("Given embedding down When HealthCheck called Then reports embedding unhealthy", func(t *testing.T) {
+		// Given
+		metaStore := NewMockMetadataStorage()
+		metaStore.Items["p1"] = &storage.ItemRecord{ID: "p1", Type: "pattern"}
+
+		embed := NewMockEmbedder()
+		embed.FailOnPing = true
+
+		vectorStore := NewMockVectorStorage()
+
+		engine := &SearchEngine{
+			metadata: metaStore,
+			embedder: embed,
+			vecStore: vectorStore,
+		}
+
+		// When
+		status := engine.HealthCheck(ctx)
+
+		// Then
+		if !status.DBHealthy {
+			t.Error("expected DB to be healthy")
+		}
+		if status.EmbeddingHealthy {
+			t.Error("expected embedding to be unhealthy")
+		}
+		if status.EmbeddingError == "" {
+			t.Error("expected embedding error message")
+		}
+	})
+
+	t.Run("Given DB fails When HealthCheck called Then reports DB unhealthy", func(t *testing.T) {
+		// Given
+		metaStore := NewMockMetadataStorage()
+		metaStore.FailOnStats = true
+
+		embed := NewMockEmbedder()
+		vectorStore := NewMockVectorStorage()
+
+		engine := &SearchEngine{
+			metadata: metaStore,
+			embedder: embed,
+			vecStore: vectorStore,
+		}
+
+		// When
+		status := engine.HealthCheck(ctx)
+
+		// Then
+		if status.DBHealthy {
+			t.Error("expected DB to be unhealthy")
+		}
+		if !status.EmbeddingHealthy {
+			t.Error("expected embedding to be healthy")
 		}
 	})
 }

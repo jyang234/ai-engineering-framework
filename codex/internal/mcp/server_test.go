@@ -31,6 +31,10 @@ func (e *stubEmbedder) EmbedQuery(ctx context.Context, text string) ([]float32, 
 	return e.embedFn(ctx, text)
 }
 
+func (e *stubEmbedder) Ping(ctx context.Context) error {
+	return nil
+}
+
 type stubVecStore struct {
 	upserted map[string][]float32
 	results  []storage.ScoredResult
@@ -152,11 +156,11 @@ func toolCallRequest(id int, toolName string, args map[string]interface{}) []byt
 }
 
 type testServer struct {
-	send    func(msg []byte)
-	recv    func() (map[string]interface{}, error)
-	meta    *stubMetadata
+	send     func(msg []byte)
+	recv     func() (map[string]interface{}, error)
+	meta     *stubMetadata
 	vecStore *stubVecStore
-	cleanup func()
+	cleanup  func()
 }
 
 func setupTestServer(t *testing.T, meta *stubMetadata, vecStore *stubVecStore, embedFn func(context.Context, string) ([]float32, error)) *testServer {

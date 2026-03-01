@@ -129,14 +129,24 @@ func (h *ToolHandler) handleSearch(ctx context.Context, args map[string]interfac
 		}
 	}
 
-	return map[string]interface{}{
+	response := map[string]interface{}{
 		"results": ranked,
 		"count":   len(ranked),
 		"_judge_reminder": fmt.Sprintf(
 			"Apply retrieval-judge skill: evaluate each of the %d results for relevance to query %q. Log judgment via flight_recorder_log(type='retrieval_judgment'), then show 'RECALL: X/%d results kept for %q'.",
 			len(ranked), query, len(ranked), query,
 		),
-	}, nil
+	}
+
+	// Surface degradation warning when embedding was unavailable
+	for _, r := range results {
+		if r.Degraded {
+			response["warning"] = "Results are keyword-only: embedding service unavailable"
+			break
+		}
+	}
+
+	return response, nil
 }
 
 func (h *ToolHandler) handleGet(ctx context.Context, args map[string]interface{}) (interface{}, error) {

@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
+	"time"
 
 	"github.com/anthropics/aef/codex/internal/core"
 )
@@ -178,8 +180,11 @@ func (s *Server) handleListTools(req *Request) *Response {
 }
 
 func (s *Server) handleCallTool(ctx context.Context, req *Request) *Response {
+	start := time.Now()
+
 	var params CallToolParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
+		slog.Warn("invalid tool params", "request_id", req.ID, "error", err)
 		return &Response{
 			JSONRPC: "2.0",
 			ID:      req.ID,
@@ -190,7 +195,14 @@ func (s *Server) handleCallTool(ctx context.Context, req *Request) *Response {
 	handler := NewToolHandler(s.engine, s.sessionID)
 	result, err := handler.Handle(ctx, params.Name, params.Arguments)
 
+	duration := time.Since(start)
 	if err != nil {
+		slog.Error("tool call failed",
+			"tool", params.Name,
+			"session_id", s.sessionID,
+			"duration_ms", duration.Milliseconds(),
+			"error", err,
+		)
 		return &Response{
 			JSONRPC: "2.0",
 			ID:      req.ID,
@@ -200,6 +212,12 @@ func (s *Server) handleCallTool(ctx context.Context, req *Request) *Response {
 			},
 		}
 	}
+
+	slog.Info("tool call",
+		"tool", params.Name,
+		"session_id", s.sessionID,
+		"duration_ms", duration.Milliseconds(),
+	)
 
 	resultJSON, err := json.Marshal(result)
 	if err != nil {

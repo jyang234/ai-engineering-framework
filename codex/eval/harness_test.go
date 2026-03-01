@@ -76,11 +76,23 @@ func TestE2E(t *testing.T) {
 		t.Logf("nDCG@10:     %.3f", summary.NDCGAt10)
 		t.Logf("MRR:         %.3f", summary.MRRScore)
 
-		if summary.RecallAt10 < 0.3 {
-			t.Errorf("Recall@10 too low: %.3f (min 0.3)", summary.RecallAt10)
+		// Regression thresholds — set ~25% below current benchmark to catch
+		// significant quality drops without being flaky on minor variations.
+		// Benchmark values: Recall@10=0.908, MRR=0.842 (as of 2026-02-28)
+		if summary.RecallAt10 < 0.70 {
+			t.Errorf("Recall@10 regression: %.3f (min 0.70, benchmark 0.908)", summary.RecallAt10)
 		}
-		if summary.MRRScore < 0.2 {
-			t.Errorf("MRR too low: %.3f (min 0.2)", summary.MRRScore)
+		if summary.RecallAt5 < 0.50 {
+			t.Errorf("Recall@5 regression: %.3f (min 0.50)", summary.RecallAt5)
+		}
+		if summary.PrecisionAt5 < 0.30 {
+			t.Errorf("Precision@5 regression: %.3f (min 0.30)", summary.PrecisionAt5)
+		}
+		if summary.NDCGAt10 < 0.50 {
+			t.Errorf("nDCG@10 regression: %.3f (min 0.50)", summary.NDCGAt10)
+		}
+		if summary.MRRScore < 0.55 {
+			t.Errorf("MRR regression: %.3f (min 0.55, benchmark 0.842)", summary.MRRScore)
 		}
 
 		// Per-category breakdown

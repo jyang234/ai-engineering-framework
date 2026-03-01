@@ -16,6 +16,10 @@ type Embedder interface {
 
 	// EmbedQuery embeds a search query (may use different prefix/settings).
 	EmbedQuery(ctx context.Context, query string) ([]float32, error)
+
+	// Ping verifies the embedding service is reachable.
+	// Returns nil if healthy, error with details if not.
+	Ping(ctx context.Context) error
 }
 
 // VectorStorage stores and searches vector embeddings.

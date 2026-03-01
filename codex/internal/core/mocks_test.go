@@ -26,6 +26,7 @@ type MockEmbedder struct {
 	LastText    string
 	FailOnCall  int // Fail on Nth call (0 = never fail)
 	FixedVector []float32
+	FailOnPing  bool
 }
 
 func NewMockEmbedder() *MockEmbedder {
@@ -59,16 +60,23 @@ func (m *MockEmbedder) EmbedQuery(ctx context.Context, query string) ([]float32,
 	return m.FixedVector, nil
 }
 
+func (m *MockEmbedder) Ping(ctx context.Context) error {
+	if m.FailOnPing {
+		return fmt.Errorf("mock embedding unavailable")
+	}
+	return nil
+}
+
 // MockVectorStorage implements VectorStorage for testing
 type MockVectorStorage struct {
-	mu            sync.Mutex
-	Vectors       map[string][]float32
-	UpsertFunc    func(ctx context.Context, itemID string, vector []float32) error
-	SearchFunc    func(ctx context.Context, queryVec []float32, limit int) ([]storage.ScoredResult, error)
-	UpsertCount   int
-	SearchCount   int
-	FailOnUpsert  int
-	FailOnSearch  bool
+	mu           sync.Mutex
+	Vectors      map[string][]float32
+	UpsertFunc   func(ctx context.Context, itemID string, vector []float32) error
+	SearchFunc   func(ctx context.Context, queryVec []float32, limit int) ([]storage.ScoredResult, error)
+	UpsertCount  int
+	SearchCount  int
+	FailOnUpsert int
+	FailOnSearch bool
 }
 
 func NewMockVectorStorage() *MockVectorStorage {
