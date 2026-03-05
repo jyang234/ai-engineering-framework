@@ -7,7 +7,7 @@ description: Review architectural plans for regression risk, unnecessary complex
 
 Structured framework for reviewing architectural plans before implementation begins. Catches regressions, unnecessary complexity, and over-engineering at design time — before code is written.
 
-## Phase 1: RECALL Context Loading
+## RECALL Context Loading
 
 Before reviewing the plan, load relevant context:
 

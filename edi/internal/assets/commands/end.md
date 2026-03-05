@@ -45,7 +45,17 @@ Generate a session summary and save it to history.
 
 5. **Save** approved items using `recall_add` with **structured content** matching the item type. Session metadata (session_id, agent_mode, git_branch, git_sha) is auto-injected — you do not need to include it.
 
-   **For decisions:**
+   **For approved plans** (priority candidates from plan-review):
+   ```
+   recall_add({
+     type: "decision",
+     title: "[plan topic] — architectural decisions",
+     content: "## Context\n[problem being solved]\n\n## Decision\n[key decisions from the approved plan]\n\n## Alternatives Considered\n[from the plan review]\n\n## Consequences\n[trade-offs acknowledged]\n\n## Review\nApproved by plan-review on [date]. Conditions: [if any].",
+     tags: ["plan-review", "approved", "[domain tags]"]
+   })
+   ```
+
+   **For other decisions:**
    ```
    recall_add({
      type: "decision",
