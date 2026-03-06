@@ -16,25 +16,46 @@ Generate a session summary and save it to history.
 
 2. **List** key decisions made with their rationale
 
-3. **Identify** capture candidates - things worth saving to RECALL:
+3. **Identify** capture candidates — things worth saving to RECALL:
+
+   **Priority candidates** (already reviewed and approved this session):
+   - Check `/memories/session-cache.md` for "Approved Plan:" sections
+   - These have already passed plan-review and should be presented first
+
+   **Other candidates:**
    - New patterns discovered
    - Failures encountered and fixed
-   - Important decisions with rationale
+   - Important decisions with rationale (not already covered by approved plans)
 
 4. **Present** capture candidates to user:
    ```
    I identified these items worth capturing to RECALL:
 
-   [1] Pattern: [description]
-   [2] Decision: [description]
+   Reviewed and approved this session:
+   [1] Decision: [approved plan topic] — [1-line summary of key decisions]
+
+   Other candidates:
+   [2] Pattern: [description]
    [3] Failure: [description]
 
    Capture to RECALL? [A]ll / [1-3] Select / [S]kip
    ```
 
+   If no approved plans exist this session, omit the "Reviewed and approved" section and present candidates as before.
+
 5. **Save** approved items using `recall_add` with **structured content** matching the item type. Session metadata (session_id, agent_mode, git_branch, git_sha) is auto-injected — you do not need to include it.
 
-   **For decisions:**
+   **For approved plans** (priority candidates from plan-review):
+   ```
+   recall_add({
+     type: "decision",
+     title: "[plan topic] — architectural decisions",
+     content: "## Context\n[problem being solved]\n\n## Decision\n[key decisions from the approved plan]\n\n## Alternatives Considered\n[from the plan review]\n\n## Consequences\n[trade-offs acknowledged]\n\n## Review\nApproved by plan-review on [date]. Conditions: [if any].",
+     tags: ["plan-review", "approved", "[domain tags]"]
+   })
+   ```
+
+   **For other decisions:**
    ```
    recall_add({
      type: "decision",

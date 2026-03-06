@@ -7,7 +7,7 @@ description: Review architectural plans for regression risk, unnecessary complex
 
 Structured framework for reviewing architectural plans before implementation begins. Catches regressions, unnecessary complexity, and over-engineering at design time — before code is written.
 
-## Phase 1: RECALL Context Loading
+## RECALL Context Loading
 
 Before reviewing the plan, load relevant context:
 
@@ -23,7 +23,7 @@ After filtering, write relevant findings to `/memories/session-cache.md` so they
 "Plan review for [area]: found [N] relevant RECALL items — [1-line summary of key findings]"
 ```
 
-## Phase 2: Regression Risk Assessment
+## Regression Gate
 
 Evaluate each change area for regression risk:
 
@@ -44,7 +44,7 @@ Categorize each change:
 
 Flag any change area with past failures and no explicit mitigation in the plan.
 
-## Phase 3: Complexity Assessment
+## Complexity Gate
 
 Flag these red patterns:
 
@@ -57,7 +57,7 @@ For each flagged item, classify as:
 - **Justified** — The plan explains why the complexity is necessary and the simpler alternative won't work
 - **Questioned** — The complexity may be warranted but the plan doesn't justify it
 
-## Phase 4: Over-Engineering Detection (YAGNI)
+## YAGNI Gate
 
 Check for these signals:
 
@@ -67,11 +67,13 @@ Check for these signals:
 - **Dependency count** — How many new dependencies does the plan introduce? Each is a maintenance burden.
 - **Configuration surface** — Does the plan add configurability that no current user needs?
 
-## Phase 5: Structured Output
+## Structured Output
 
 Present findings in this format:
 
-### Risk Summary
+### Regression Gate
+
+**Status:** Pass | Fail | Pass with Conditions
 
 **Critical/High risks:**
 - [Risk]: [What could go wrong] → [Suggested mitigation]
@@ -79,13 +81,17 @@ Present findings in this format:
 **Medium risks:**
 - [Risk]: [What could go wrong] → [Suggested mitigation]
 
-### Complexity Assessment
+### Complexity Gate
+
+**Status:** Pass | Fail | Pass with Conditions
 
 | Item | Classification | Notes |
 |------|---------------|-------|
 | [change] | Justified / Questioned | [why] |
 
-### YAGNI Violations
+### YAGNI Gate
+
+**Status:** Pass | Fail | Pass with Conditions
 
 - [Item]: [Why it appears to be over-engineering]
 
@@ -98,12 +104,46 @@ Present findings in this format:
 
 ### Verdict
 
-One of:
-- **Approved** — No significant concerns. Proceed to implementation.
-- **Approved with Conditions** — Proceed, but address [specific items] before or during implementation.
-- **Revise** — Significant concerns that should be addressed before implementation begins. [List specific concerns.]
+Derived from gate statuses:
+- **Approved** — All gates pass. Proceed to implementation.
+- **Approved with Conditions** — All gates pass, but conditions must be addressed before or during implementation. [List conditions and which gate they came from.]
+- **Revise** — One or more gates failed. [List failed gates with specific concerns.]
 
-## Phase 6: Post-Review
+Example: "Revise — Complexity Gate failed (novel event sourcing pattern introduced without justification), YAGNI Gate failed (3 new config keys with no current consumer)."
+
+## Persist Approved Decisions
+
+If the verdict is **Approved** or **Approved with Conditions**:
+
+Write the following to `/memories/session-cache.md`:
+
+```markdown
+## Approved Plan: [plan topic]
+**Verdict:** [Approved | Approved with Conditions]
+**Date:** [current date]
+**Conditions:** [if any, otherwise omit]
+
+### Decisions
+- [Decision 1]: [rationale]
+- [Decision 2]: [rationale]
+
+### Scope
+- **In scope:** [what the plan covers]
+- **Out of scope:** [explicit exclusions]
+
+### Key Constraints
+- [Constraint 1]
+- [Constraint 2]
+
+### Components Affected
+- [component]: [what changes]
+```
+
+Keep this concise — one line per decision, one line per scope item. This is working memory, not documentation.
+
+If the verdict is **Revise**, do not write to `/memories/`. The plan is not yet approved.
+
+## Post-Review
 
 Log findings to the flight recorder:
 
@@ -115,7 +155,10 @@ flight_recorder_log({
     critical_risks: N,
     high_risks: N,
     yagni_violations: N,
-    verdict: "[verdict]"
+    verdict: "[verdict]",
+    plan_approved: true|false,
+    plan_topic: "[brief topic]",
+    conditions: ["condition 1", "condition 2"]
   }
 })
 ```

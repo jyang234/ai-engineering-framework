@@ -12,6 +12,38 @@ Ralph executes tasks autonomously with fresh context windows — each task must 
 
 ## Workflow
 
+### Phase 0: Load Prior Context
+
+Before starting discovery, check for existing approved plans:
+
+1. **Same-session context:** Read `/memories/session-cache.md` for "Approved Plan:" sections
+2. **Cross-session context:** Query RECALL for recent decisions in the relevant domain:
+   ```
+   recall_search({query: "[project/feature area]", types: ["decision"]})
+   ```
+   Apply retrieval-judge to filter results.
+
+If an approved plan is found:
+
+```
+I found an approved plan for [topic] from [this session / a prior session].
+
+Decisions already made:
+- [Decision 1]
+- [Decision 2]
+
+Scope: [in-scope summary]
+Constraints: [key constraints]
+
+I will use these as the foundation for the PRD. Let me confirm:
+1. Is this still the plan we are executing?
+2. Any changes since the review?
+```
+
+If confirmed, skip Phase 1 discovery questions that are already answered by the plan. Proceed to Phase 2 (Story Breakdown) with the plan decisions pre-loaded.
+
+If no approved plan is found, proceed to Phase 1 as normal.
+
 ### Phase 1: Discovery
 
 Interview the user to understand:
@@ -33,6 +65,7 @@ Break the work into independent user stories:
 
 For each story, ensure the description contains ALL context Ralph will need:
 
+- **Decisions from approved plan** — if Phase 0 loaded an approved plan, every relevant decision must appear in the story description. Do not assume Ralph has access to the plan.
 - Architecture decisions that affect implementation
 - Technology choices and constraints
 - File paths and naming conventions to follow
